@@ -18,7 +18,7 @@ export type Message = {
 export type ChatTabState = {
   messages: Message[];
   selectedModel: string;
-  modelEffort: 'low' | 'medium' | 'high';
+  modelEffort: 'low' | 'medium' | 'high' | 'ultracode';
   mode: 'normal' | 'fast';
   attachments: Attachment[];
   loading: boolean;
@@ -35,7 +35,7 @@ type ChatStore = {
 
   // Model/settings operations
   setModel: (tabId: string, model: string) => void;
-  setEffort: (tabId: string, effort: 'low' | 'medium' | 'high') => void;
+  setEffort: (tabId: string, effort: 'low' | 'medium' | 'high' | 'ultracode') => void;
   setMode: (tabId: string, mode: 'normal' | 'fast') => void;
   setLoading: (tabId: string, loading: boolean) => void;
 

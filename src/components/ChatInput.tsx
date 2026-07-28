@@ -94,6 +94,23 @@ export default function ChatInput({ tabId }: ChatInputProps) {
     }
   };
 
+  const handleEffortCycle = () => {
+    const efforts: Array<'low' | 'medium' | 'high' | 'ultracode'> = ['low', 'medium', 'high', 'ultracode'];
+    const currentIndex = efforts.indexOf(tab.modelEffort);
+    const nextIndex = (currentIndex + 1) % efforts.length;
+    setEffort(tabId, efforts[nextIndex]);
+  };
+
+  const getEffortLabel = (effort: string): string => {
+    const labels: Record<string, string> = {
+      low: 'Low',
+      medium: 'Med',
+      high: 'High',
+      ultracode: 'Ultra',
+    };
+    return labels[effort] || effort;
+  };
+
   return (
     <div className="chat-input-container">
       {tab.attachments.length > 0 && (
@@ -165,26 +182,14 @@ export default function ChatInput({ tabId }: ChatInputProps) {
           </select>
         </div>
 
-        <div className="control-group">
-          <label>Effort</label>
-          <div className="effort-options">
-            {(['low', 'medium', 'high'] as const).map((effort) => (
-              <label key={effort} className="effort-label">
-                <input
-                  type="radio"
-                  name="effort"
-                  value={effort}
-                  checked={tab.modelEffort === effort}
-                  onChange={() => setEffort(tabId, effort)}
-                  disabled={tab.loading}
-                />
-                <span className="effort-text">
-                  {effort.charAt(0).toUpperCase() + effort.slice(1)}
-                </span>
-              </label>
-            ))}
-          </div>
-        </div>
+        <button
+          className="effort-btn"
+          onClick={handleEffortCycle}
+          disabled={tab.loading}
+          title="Cycle effort level: Low → Med → High → Ultra"
+        >
+          {getEffortLabel(tab.modelEffort)}
+        </button>
 
         <div className="control-group">
           <label>Mode</label>

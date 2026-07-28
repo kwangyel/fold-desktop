@@ -220,39 +220,30 @@
   cursor: not-allowed;
 }
 
-.effort-options {
-  display: flex;
-  gap: 4px;
-}
-
-.effort-label {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 3px;
-  transition: background 0.2s ease;
-  font-size: 11px;
-}
-
-.effort-label:hover {
+.effort-btn {
+  padding: 6px 12px;
   background: var(--panel-2);
-}
-
-.effort-label input[type='radio'] {
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
-  width: 14px;
-  height: 14px;
-  margin: 0;
+  transition: all 0.2s ease;
+  white-space: nowrap;
 }
 
-.effort-label input[type='radio']:disabled {
+.effort-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: white;
+}
+
+.effort-btn:active:not(:disabled) {
+  background: var(--accent);
+}
+
+.effort-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
-}
-
-.effort-text {
-  white-space: nowrap;
-  color: var(--text);
 }
