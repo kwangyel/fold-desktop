@@ -191,22 +191,24 @@ export default function ChatInput({ tabId }: ChatInputProps) {
           {getEffortLabel(tab.modelEffort)}
         </button>
 
-        <div className="control-group">
-          <label>Mode</label>
-          <div className="mode-toggle">
-            {(['normal', 'fast'] as const).map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                className={`mode-btn ${tab.mode === mode ? 'active' : ''}`}
-                onClick={() => setMode(tabId, mode)}
-                disabled={tab.loading}
-              >
-                {mode.charAt(0).toUpperCase() + mode.slice(1)}
-              </button>
-            ))}
-          </div>
-        </div>
+        <button
+          type="button"
+          className={`fast-mode-btn ${tab.mode === 'fast' ? 'active' : ''}`}
+          onClick={() => setMode(tabId, tab.mode === 'fast' ? 'normal' : 'fast')}
+          disabled={tab.loading}
+          title={tab.mode === 'fast' ? 'Fast mode on' : 'Fast mode off'}
+          aria-label={tab.mode === 'fast' ? 'Disable fast mode' : 'Enable fast mode'}
+          aria-pressed={tab.mode === 'fast'}
+        >
+          <svg
+            className="fast-mode-icon"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            aria-hidden="true"
+          >
+            <path d="M13 2L3 14h8l-1 8 10-12h-8l1-8z" />
+          </svg>
+        </button>
       </div>
 
       <input
