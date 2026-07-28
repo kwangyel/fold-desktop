@@ -11,8 +11,24 @@
   height: 28px;
   flex-shrink: 0;
   background: transparent;
-  -webkit-app-region: drag;
   border-bottom: 1px solid var(--border);
+  display: flex;
+}
+
+.titlebar-drag {
+  flex: 1;
+  height: 100%;
+  -webkit-app-region: drag;
+  /* Leave room for macOS traffic-light buttons in overlay titlebar mode */
+  padding-left: 78px;
+}
+
+/* Allow dragging the window, but not on interactive elements */
+button,
+input,
+textarea,
+select {
+  -webkit-app-region: no-drag;
 }
 
 .workspace {
