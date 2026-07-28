@@ -15,6 +15,14 @@
   border-bottom: 1px solid var(--border);
 }
 
+/* Allow dragging the window, but not on interactive elements */
+button,
+input,
+textarea,
+select {
+  -webkit-app-region: no-drag;
+}
+
 .workspace {
   display: flex;
   flex: 1;
