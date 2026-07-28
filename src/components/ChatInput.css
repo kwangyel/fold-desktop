@@ -133,3 +133,126 @@
 .send-btn {
   font-weight: bold;
 }
+
+.input-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.control-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.control-group label {
+  color: var(--muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.model-select {
+  padding: 6px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.model-select:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.model-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(124, 92, 255, 0.1);
+}
+
+.model-select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.model-select option {
+  background: var(--panel);
+  color: var(--text);
+}
+
+.mode-toggle {
+  display: flex;
+  gap: 4px;
+  background: var(--panel-2);
+  padding: 2px;
+  border-radius: 4px;
+}
+
+.mode-btn {
+  padding: 6px 12px;
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.mode-btn:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.mode-btn.active {
+  background: var(--accent);
+  color: white;
+}
+
+.mode-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.effort-options {
+  display: flex;
+  gap: 4px;
+}
+
+.effort-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 3px;
+  transition: background 0.2s ease;
+  font-size: 11px;
+}
+
+.effort-label:hover {
+  background: var(--panel-2);
+}
+
+.effort-label input[type='radio'] {
+  cursor: pointer;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+
+.effort-label input[type='radio']:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.effort-text {
+  white-space: nowrap;
+  color: var(--text);
+}
