@@ -1,16 +1,14 @@
 import { useState } from "react";
 import FileExplorer from "./FileExplorer";
 import ChangesList from "./ChangesList";
-import DiffView from "./DiffView";
 import TerminalPanel from "./TerminalPanel";
 import "./RightPane.css";
 
-type TopTab = "explorer" | "changes" | "diff";
+type TopTab = "explorer" | "changes";
 
 const TOP_TABS: { id: TopTab; label: string }[] = [
   { id: "explorer", label: "Explorer" },
   { id: "changes", label: "Changes" },
-  { id: "diff", label: "Diff" },
 ];
 
 export default function RightPane() {
@@ -33,7 +31,6 @@ export default function RightPane() {
         <div className="right-pane-top-body">
           {activeTab === "explorer" && <FileExplorer />}
           {activeTab === "changes" && <ChangesList />}
-          {activeTab === "diff" && <DiffView />}
         </div>
       </div>
 

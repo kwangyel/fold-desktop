@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { MOCK_DIFFS } from "../data/mockWorkspace";
+import { useCenterViewStore } from "../store/centerViewStore";
 import "./ChangesList.css";
 
 interface ChangedFile {
@@ -25,6 +27,18 @@ const STATUS_LABELS: Record<ChangedFile["status"], string> = {
 
 export default function ChangesList() {
   const [selected, setSelected] = useState<string | null>(null);
+  const openDiffTab = useCenterViewStore((state) => state.openDiffTab);
+  const activeTabId = useCenterViewStore((state) => state.activeTabId);
+  const tabs = useCenterViewStore((state) => state.tabs);
+  const activeDiffPath = tabs.find((tab) => tab.id === activeTabId && tab.type === "diff")?.filePath;
+
+  const handleSelect = (file: ChangedFile) => {
+    setSelected(file.path);
+    const diff = MOCK_DIFFS[file.path];
+    if (diff) {
+      openDiffTab(file.path, diff.original, diff.modified);
+    }
+  };
 
   return (
     <div className="changes-list">
@@ -34,8 +48,8 @@ export default function ChangesList() {
       {MOCK_CHANGES.map((file) => (
         <div
           key={file.path}
-          className={`change-row ${selected === file.path ? "selected" : ""}`}
-          onClick={() => setSelected(file.path)}
+          className={`change-row ${selected === file.path || activeDiffPath === file.path ? "selected" : ""}`}
+          onClick={() => handleSelect(file)}
         >
           <span className={`change-status status-${file.status}`}>
             {STATUS_LABELS[file.status]}

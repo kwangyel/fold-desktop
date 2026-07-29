@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import MonotoneFileIcon from "./fileIcons/MonotoneFileIcon";
 import { resolveFileIconKind } from "./fileIcons/fileIconMap";
+import { useCenterViewStore } from "../store/centerViewStore";
 import "./FileExplorer.css";
 
 interface FileNode {
@@ -18,12 +19,13 @@ const MOCK_TREE: FileNode[] = [
         name: "components",
         type: "folder",
         children: [
-          { name: "App.tsx", type: "file" },
+          { name: "CenterPane.tsx", type: "file" },
           { name: "ChatInput.tsx", type: "file" },
           { name: "RightPane.tsx", type: "file" },
         ],
       },
       { name: "store", type: "folder", children: [{ name: "chatStore.ts", type: "file" }] },
+      { name: "App.tsx", type: "file" },
       { name: "main.tsx", type: "file" },
     ],
   },
@@ -46,13 +48,48 @@ const MOCK_TREE: FileNode[] = [
   { name: "README.md", type: "file" },
 ];
 
-function FileTreeNode({ node, depth = 0 }: { node: FileNode; depth?: number }) {
+interface FileTreeNodeProps {
+  node: FileNode;
+  depth?: number;
+  path: string;
+}
+
+function FileTreeNode({ node, depth = 0, path }: FileTreeNodeProps) {
   const [expanded, setExpanded] = useState(depth < 2);
+  const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const openFileTab = useCenterViewStore((state) => state.openFileTab);
+  const activeTabId = useCenterViewStore((state) => state.activeTabId);
+  const tabs = useCenterViewStore((state) => state.tabs);
+  const activeEditorPath = tabs.find((tab) => tab.id === activeTabId && tab.type === "editor")?.filePath;
+  const isOpen = tabs.some((tab) => tab.type === "editor" && tab.filePath === path);
+
+  const handleFileClick = () => {
+    if (clickTimerRef.current) {
+      clearTimeout(clickTimerRef.current);
+    }
+    clickTimerRef.current = setTimeout(() => {
+      openFileTab(path, false);
+      clickTimerRef.current = null;
+    }, 200);
+  };
+
+  const handleFileDoubleClick = () => {
+    if (clickTimerRef.current) {
+      clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+    }
+    openFileTab(path, true);
+  };
 
   if (node.type === "file") {
     const iconKind = resolveFileIconKind(node.name);
     return (
-      <div className="file-tree-item file" style={{ paddingLeft: depth * 14 + 8 }}>
+      <div
+        className={`file-tree-item file ${activeEditorPath === path ? "selected" : ""} ${isOpen && activeEditorPath !== path ? "open" : ""}`}
+        style={{ paddingLeft: depth * 14 + 8 }}
+        onClick={handleFileClick}
+        onDoubleClick={handleFileDoubleClick}
+      >
         <MonotoneFileIcon kind={iconKind} className="file-tree-icon" />
         <span className="file-tree-name">{node.name}</span>
       </div>
@@ -74,7 +111,12 @@ function FileTreeNode({ node, depth = 0 }: { node: FileNode; depth?: number }) {
       </div>
       {expanded &&
         node.children?.map((child) => (
-          <FileTreeNode key={child.name} node={child} depth={depth + 1} />
+          <FileTreeNode
+            key={child.name}
+            node={child}
+            depth={depth + 1}
+            path={`${path}/${child.name}`}
+          />
         ))}
     </div>
   );
@@ -84,7 +126,7 @@ export default function FileExplorer() {
   return (
     <div className="file-explorer">
       {MOCK_TREE.map((node) => (
-        <FileTreeNode key={node.name} node={node} />
+        <FileTreeNode key={node.name} node={node} path={node.name} />
       ))}
     </div>
   );
