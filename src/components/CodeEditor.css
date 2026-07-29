@@ -125,6 +125,15 @@
   margin-left: 8px;
 }
 
+.center-editor-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .center-content {
   flex: 1;
   min-height: 0;

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { getWorkspaceFileContent } from "../data/mockWorkspace";
+import { readFile } from "../lib/git";
 
 export type CenterTabType = "chat" | "editor" | "diff";
 
@@ -10,6 +10,7 @@ export type CenterTab = {
   isPreview?: boolean;
   filePath?: string;
   fileContent?: string;
+  fileLoading?: boolean;
   diffOriginal?: string;
   diffModified?: string;
 };
@@ -18,11 +19,13 @@ function fileName(path: string): string {
   return path.split("/").pop() ?? path;
 }
 
-function loadFileContent(path: string): string {
-  return (
-    getWorkspaceFileContent(path) ??
-    `// File not found in workspace mock data\n// Path: ${path}\n`
-  );
+function editorTabFields(path: string): Pick<CenterTab, "label" | "filePath" | "fileContent" | "fileLoading"> {
+  return {
+    label: fileName(path),
+    filePath: path,
+    fileContent: "",
+    fileLoading: true,
+  };
 }
 
 const INITIAL_CHAT_TAB: CenterTab = {
@@ -45,7 +48,43 @@ type CenterViewStore = {
   updateTabContent: (id: string, content: string) => void;
 };
 
-export const useCenterViewStore = create<CenterViewStore>((set) => ({
+function loadFileContent(
+  set: (fn: (state: CenterViewStore) => Partial<CenterViewStore>) => void,
+  tabId: string,
+  path: string,
+) {
+  void readFile(path)
+    .then((content) => {
+      set((state) => {
+        const tab = state.tabs.find((t) => t.id === tabId);
+        if (!tab || tab.filePath !== path) return state;
+        return {
+          tabs: state.tabs.map((t) =>
+            t.id === tabId ? { ...t, fileContent: content, fileLoading: false } : t,
+          ),
+        };
+      });
+    })
+    .catch((err) => {
+      set((state) => {
+        const tab = state.tabs.find((t) => t.id === tabId);
+        if (!tab || tab.filePath !== path) return state;
+        return {
+          tabs: state.tabs.map((t) =>
+            t.id === tabId
+              ? {
+                  ...t,
+                  fileContent: `// Failed to read file\n// ${String(err)}\n`,
+                  fileLoading: false,
+                }
+              : t,
+          ),
+        };
+      });
+    });
+}
+
+export const useCenterViewStore = create<CenterViewStore>((set, get) => ({
   tabs: [INITIAL_CHAT_TAB],
   activeTabId: INITIAL_CHAT_TAB.id,
 
@@ -59,68 +98,57 @@ export const useCenterViewStore = create<CenterViewStore>((set) => ({
   },
 
   openFileTab: (path, pin = false) => {
-    set((state) => {
-      const existing = state.tabs.find(
-        (tab) => tab.type === "editor" && tab.filePath === path,
-      );
-      if (existing) {
-        const tabs = pin
+    const state = get();
+    const existing = state.tabs.find(
+      (tab) => tab.type === "editor" && tab.filePath === path,
+    );
+    if (existing) {
+      set({
+        tabs: pin
           ? state.tabs.map((tab) =>
               tab.id === existing.id ? { ...tab, isPreview: false } : tab,
             )
-          : state.tabs;
-        return { tabs, activeTabId: existing.id };
-      }
+          : state.tabs,
+        activeTabId: existing.id,
+      });
+      return;
+    }
 
-      const content = loadFileContent(path);
-      const previewTab = state.tabs.find(
-        (tab) => tab.type === "editor" && tab.isPreview,
-      );
+    const previewTab = state.tabs.find(
+      (tab) => tab.type === "editor" && tab.isPreview,
+    );
 
-      if (!pin && previewTab) {
-        const tabs = state.tabs.map((tab) =>
+    if (previewTab) {
+      const tabId = previewTab.id;
+      set({
+        tabs: state.tabs.map((tab) =>
           tab.id === previewTab.id
             ? {
                 ...tab,
-                label: fileName(path),
-                filePath: path,
-                fileContent: content,
+                ...editorTabFields(path),
+                isPreview: pin ? false : tab.isPreview,
               }
             : tab,
-        );
-        return { tabs, activeTabId: previewTab.id };
-      }
+        ),
+        activeTabId: tabId,
+      });
+      loadFileContent(set, tabId, path);
+      return;
+    }
 
-      if (pin && previewTab) {
-        const tabs = state.tabs.map((tab) =>
-          tab.id === previewTab.id
-            ? {
-                ...tab,
-                isPreview: false,
-                label: fileName(path),
-                filePath: path,
-                fileContent: content,
-              }
-            : tab,
-        );
-        return { tabs, activeTabId: previewTab.id };
-      }
+    const id = `file-${Date.now()}`;
+    const tab: CenterTab = {
+      id,
+      type: "editor",
+      isPreview: !pin,
+      ...editorTabFields(path),
+    };
 
-      const id = `file-${Date.now()}`;
-      const tab: CenterTab = {
-        id,
-        type: "editor",
-        label: fileName(path),
-        isPreview: !pin,
-        filePath: path,
-        fileContent: content,
-      };
-
-      return {
-        tabs: [...state.tabs, tab],
-        activeTabId: id,
-      };
+    set({
+      tabs: [...state.tabs, tab],
+      activeTabId: id,
     });
+    loadFileContent(set, id, path);
   },
 
   openDiffTab: (path, original, modified) => {
@@ -192,7 +220,6 @@ export const useCenterViewStore = create<CenterViewStore>((set) => ({
     set((state) => {
       const tab = state.tabs.find((t) => t.id === id);
       if (!tab || state.tabs.length <= 1) return state;
-      if (tab.type === "editor" && tab.isPreview) return state;
 
       const index = state.tabs.findIndex((t) => t.id === id);
       if (index === -1) return state;
