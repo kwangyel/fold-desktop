@@ -1,6 +1,8 @@
+import { useEffect } from "react";
 import ChatInterface from "./ChatInterface";
 import CodeEditor from "./CodeEditor";
 import DiffPane from "./DiffPane";
+import { closeActiveTab } from "../lib/closeActiveTab";
 import { useCenterViewStore } from "../store/centerViewStore";
 import { useChatStore } from "../store/chatStore";
 import "./CodeEditor.css";
@@ -31,6 +33,17 @@ export default function CenterPane() {
     }
   };
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "w" || e.shiftKey) return;
+      if (closeActiveTab()) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const renderTabContent = () => {
     if (!activeTab) return null;
 
@@ -38,7 +51,19 @@ export default function CenterPane() {
       case "chat":
         return <ChatInterface tabId={activeTab.id} />;
       case "editor":
-        if (!activeTab.filePath || activeTab.fileContent === undefined) return null;
+        if (!activeTab.filePath) return null;
+        if (activeTab.fileLoading) {
+          return (
+            <>
+              <div className="center-editor-header">
+                <span className="file-path">{activeTab.filePath}</span>
+                <span className="view-badge">Editor</span>
+              </div>
+              <div className="center-editor-loading">Loading…</div>
+            </>
+          );
+        }
+        if (activeTab.fileContent === undefined) return null;
         return (
           <>
             <div className="center-editor-header">
@@ -75,10 +100,7 @@ export default function CenterPane() {
     }
   };
 
-  const canCloseTab = (tab: (typeof tabs)[number]) => {
-    if (tab.type === "editor" && tab.isPreview) return false;
-    return tabs.length > 1;
-  };
+  const canCloseTab = () => tabs.length > 1;
 
   return (
     <section className="center">
@@ -91,16 +113,18 @@ export default function CenterPane() {
             onDoubleClick={() => handleTabDoubleClick(tab.id, tab.type, tab.isPreview)}
           >
             <span className="tab-label">{tab.label}</span>
-            {canCloseTab(tab) && (
-              <span
+            {canCloseTab() && (
+              <button
+                type="button"
                 className="close"
+                aria-label={`Close ${tab.label}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   handleCloseTab(tab.id, tab.type);
                 }}
               >
                 ×
-              </span>
+              </button>
             )}
           </div>
         ))}
