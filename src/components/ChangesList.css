@@ -6,11 +6,41 @@
 }
 
 .changes-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
   font-size: 11px;
   color: var(--muted);
   font-weight: 500;
+}
+
+.changes-refresh {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 2px;
+  line-height: 1;
+}
+
+.changes-refresh:hover {
+  color: var(--text);
+}
+
+.changes-error {
+  padding: 8px 12px;
+  color: #f87171;
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+
+.changes-empty {
+  padding: 12px;
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .change-row {
@@ -28,6 +58,38 @@
 
 .change-row.selected {
   background: rgba(124, 92, 255, 0.12);
+}
+
+.change-row.read {
+  opacity: 0.45;
+}
+
+.change-actions {
+  display: none;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.change-row:hover .change-actions {
+  display: flex;
+}
+
+.change-action {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 3px;
+  line-height: 1;
+}
+
+.change-action:hover {
+  color: var(--text);
+}
+
+.change-action.discard:hover {
+  color: #f87171;
 }
 
 .change-status {

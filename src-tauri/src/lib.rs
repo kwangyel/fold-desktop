@@ -1,7 +1,9 @@
+mod git;
 mod pty;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
+
 
 use tauri::ipc::Channel;
 use tauri::State;
@@ -76,7 +78,12 @@ pub fn run() {
             pty_spawn,
             pty_write,
             pty_resize,
-            pty_kill
+            pty_kill,
+            git::git_changes,
+            git::git_file_diff,
+            git::git_discard,
+            git::read_file,
+            git::write_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

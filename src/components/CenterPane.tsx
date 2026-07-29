@@ -1,6 +1,6 @@
 import ChatInterface from "./ChatInterface";
 import CodeEditor from "./CodeEditor";
-import CodeDiffViewer from "./CodeDiffViewer";
+import DiffPane from "./DiffPane";
 import { useCenterViewStore } from "../store/centerViewStore";
 import { useChatStore } from "../store/chatStore";
 import "./CodeEditor.css";
@@ -62,18 +62,13 @@ export default function CenterPane() {
           return null;
         }
         return (
-          <>
-            <div className="center-editor-header">
-              <span className="file-path">{activeTab.filePath}</span>
-              <span className="view-badge">Diff</span>
-            </div>
-            <CodeDiffViewer
-              key={activeTab.id}
-              filePath={activeTab.filePath}
-              original={activeTab.diffOriginal}
-              modified={activeTab.diffModified}
-            />
-          </>
+          <DiffPane
+            key={activeTab.id}
+            tabId={activeTab.id}
+            filePath={activeTab.filePath}
+            original={activeTab.diffOriginal}
+            modified={activeTab.diffModified}
+          />
         );
       default:
         return null;

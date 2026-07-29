@@ -1,0 +1,155 @@
+import { useEffect, useRef, useState } from "react";
+import CodeDiffViewer, { DiffLayout } from "./CodeDiffViewer";
+import CodeEditor from "./CodeEditor";
+import { getFileDiff, writeFile } from "../lib/git";
+import { markReadAndAdvance } from "../lib/diffActions";
+import { useCenterViewStore } from "../store/centerViewStore";
+import { useChangesStore } from "../store/changesStore";
+import "./CodeEditor.css";
+
+interface DiffPaneProps {
+  tabId: string;
+  filePath: string;
+  original: string;
+  modified: string;
+}
+
+type ViewMode = "diff" | "edit";
+
+export default function DiffPane({ tabId, filePath, original, modified }: DiffPaneProps) {
+  const [viewMode, setViewMode] = useState<ViewMode>("diff");
+  const [layout, setLayout] = useState<DiffLayout>("unified");
+  const [editContent, setEditContent] = useState(modified);
+  const [copied, setCopied] = useState(false);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
+
+  const updateDiffContent = useCenterViewStore((state) => state.updateDiffContent);
+  const isRead = useChangesStore((state) => state.readPaths.has(filePath));
+
+  // Reset local edit buffer whenever the underlying file/content changes.
+  useEffect(() => {
+    setEditContent(modified);
+    setViewMode("diff");
+  }, [filePath, modified]);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(viewMode === "edit" ? editContent : modified);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      /* clipboard unavailable */
+    }
+  };
+
+  const handleSave = async () => {
+    setSaveState("saving");
+    try {
+      await writeFile(filePath, editContent);
+      const diff = await getFileDiff(filePath);
+      updateDiffContent(tabId, diff.original, diff.modified);
+      void useChangesStore.getState().refresh();
+      setSaveState("saved");
+      setTimeout(() => setSaveState("idle"), 1200);
+    } catch (err) {
+      setSaveState("idle");
+      window.alert(`Failed to save: ${err}`);
+    }
+  };
+
+  // Auto-save on Cmd/Ctrl+S while editing. A ref keeps the handler fresh
+  // without re-registering the listener on every keystroke.
+  const saveRef = useRef(handleSave);
+  saveRef.current = handleSave;
+  useEffect(() => {
+    if (viewMode !== "edit") return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        void saveRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [viewMode]);
+
+  return (
+    <>
+      <div className="center-editor-header diff-toolbar">
+        <span className="file-path" title={filePath}>
+          {filePath}
+        </span>
+        <div className="diff-toolbar-actions">
+          <div className="diff-toggle-group">
+            <button
+              className={viewMode === "diff" ? "active" : ""}
+              onClick={() => setViewMode("diff")}
+            >
+              Diff
+            </button>
+            <button
+              className={viewMode === "edit" ? "active" : ""}
+              onClick={() => setViewMode("edit")}
+            >
+              Edit
+            </button>
+          </div>
+
+          {viewMode === "diff" && (
+            <div className="diff-toggle-group">
+              <button
+                className={layout === "unified" ? "active" : ""}
+                onClick={() => setLayout("unified")}
+                title="Unified view"
+              >
+                Unified
+              </button>
+              <button
+                className={layout === "split" ? "active" : ""}
+                onClick={() => setLayout("split")}
+                title="Side-by-side view"
+              >
+                Split
+              </button>
+            </div>
+          )}
+
+          <button className="diff-tool-btn" onClick={() => void handleCopy()}>
+            {copied ? "Copied" : "Copy"}
+          </button>
+
+          {viewMode === "edit" && saveState !== "idle" && (
+            <span className="diff-save-status">
+              {saveState === "saving" ? "Saving…" : "Saved ✓"}
+            </span>
+          )}
+
+          <button
+            className="diff-tool-btn"
+            onClick={() => void markReadAndAdvance(filePath)}
+            title="Mark as read and show next"
+          >
+            {isRead ? "Read ✓" : "Mark read"}
+          </button>
+        </div>
+      </div>
+
+      {viewMode === "edit" ? (
+        <CodeEditor
+          key={`${tabId}-edit`}
+          filePath={filePath}
+          content={editContent}
+          onChange={setEditContent}
+        />
+      ) : (
+        <CodeDiffViewer
+          key={`${tabId}-${layout}`}
+          filePath={filePath}
+          original={original}
+          modified={modified}
+          layout={layout}
+        />
+      )}
+    </>
+  );
+}

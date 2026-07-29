@@ -1,23 +1,9 @@
-import { useState } from "react";
-import { MOCK_DIFFS } from "../data/mockWorkspace";
+import { useEffect } from "react";
+import { ChangedFile, discardFile } from "../lib/git";
+import { openDiffForPath } from "../lib/diffActions";
+import { useChangesStore } from "../store/changesStore";
 import { useCenterViewStore } from "../store/centerViewStore";
 import "./ChangesList.css";
-
-interface ChangedFile {
-  path: string;
-  status: "modified" | "added" | "deleted";
-  additions: number;
-  deletions: number;
-}
-
-const MOCK_CHANGES: ChangedFile[] = [
-  { path: "src/components/RightPane.tsx", status: "modified", additions: 42, deletions: 18 },
-  { path: "src/components/XTerminal.tsx", status: "added", additions: 95, deletions: 0 },
-  { path: "src/components/TerminalPanel.tsx", status: "added", additions: 68, deletions: 0 },
-  { path: "src-tauri/src/pty.rs", status: "added", additions: 102, deletions: 0 },
-  { path: "src-tauri/src/lib.rs", status: "modified", additions: 55, deletions: 3 },
-  { path: "package.json", status: "modified", additions: 2, deletions: 0 },
-];
 
 const STATUS_LABELS: Record<ChangedFile["status"], string> = {
   modified: "M",
@@ -26,41 +12,108 @@ const STATUS_LABELS: Record<ChangedFile["status"], string> = {
 };
 
 export default function ChangesList() {
-  const [selected, setSelected] = useState<string | null>(null);
-  const openDiffTab = useCenterViewStore((state) => state.openDiffTab);
+  const changes = useChangesStore((state) => state.changes);
+  const loading = useChangesStore((state) => state.loading);
+  const error = useChangesStore((state) => state.error);
+  const readPaths = useChangesStore((state) => state.readPaths);
+  const refresh = useChangesStore((state) => state.refresh);
+  const toggleRead = useChangesStore((state) => state.toggleRead);
+
   const activeTabId = useCenterViewStore((state) => state.activeTabId);
   const tabs = useCenterViewStore((state) => state.tabs);
-  const activeDiffPath = tabs.find((tab) => tab.id === activeTabId && tab.type === "diff")?.filePath;
+  const closeDiffTab = useCenterViewStore((state) => state.closeDiffTab);
+  const activeDiffPath = tabs.find(
+    (tab) => tab.id === activeTabId && tab.type === "diff",
+  )?.filePath;
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
 
   const handleSelect = (file: ChangedFile) => {
-    setSelected(file.path);
-    const diff = MOCK_DIFFS[file.path];
-    if (diff) {
-      openDiffTab(file.path, diff.original, diff.modified);
+    void openDiffForPath(file.path);
+  };
+
+  const handleDiscard = async (e: React.MouseEvent, file: ChangedFile) => {
+    e.stopPropagation();
+    const ok = window.confirm(
+      `Discard changes to ${file.path}? This cannot be undone.`,
+    );
+    if (!ok) return;
+    try {
+      await discardFile(file.path, file.isUntracked);
+    } catch (err) {
+      window.alert(`Failed to discard: ${err}`);
+      return;
     }
+    if (activeDiffPath === file.path) closeDiffTab();
+    await refresh();
   };
 
   return (
     <div className="changes-list">
       <div className="changes-header">
-        <span className="changes-count">{MOCK_CHANGES.length} changed files</span>
-      </div>
-      {MOCK_CHANGES.map((file) => (
-        <div
-          key={file.path}
-          className={`change-row ${selected === file.path || activeDiffPath === file.path ? "selected" : ""}`}
-          onClick={() => handleSelect(file)}
+        <span className="changes-count">
+          {loading ? "Loading…" : `${changes.length} changed files`}
+        </span>
+        <button
+          className="changes-refresh"
+          onClick={() => void refresh()}
+          title="Refresh"
         >
-          <span className={`change-status status-${file.status}`}>
-            {STATUS_LABELS[file.status]}
-          </span>
-          <span className="change-path">{file.path}</span>
-          <span className="change-stats">
-            {file.additions > 0 && <span className="stat-add">+{file.additions}</span>}
-            {file.deletions > 0 && <span className="stat-del">-{file.deletions}</span>}
-          </span>
-        </div>
-      ))}
+          ⟳
+        </button>
+      </div>
+      {error && <div className="changes-error">{error}</div>}
+      {!loading && changes.length === 0 && !error && (
+        <div className="changes-empty">No changes</div>
+      )}
+      {changes.map((file) => {
+        const isRead = readPaths.has(file.path);
+        return (
+          <div
+            key={file.path}
+            className={`change-row ${activeDiffPath === file.path ? "selected" : ""} ${
+              isRead ? "read" : ""
+            }`}
+            onClick={() => handleSelect(file)}
+          >
+            <span className={`change-status status-${file.status}`}>
+              {STATUS_LABELS[file.status]}
+            </span>
+            <span className="change-path" title={file.path}>
+              {file.path}
+            </span>
+            <span className="change-stats">
+              {file.additions > 0 && (
+                <span className="stat-add">+{file.additions}</span>
+              )}
+              {file.deletions > 0 && (
+                <span className="stat-del">-{file.deletions}</span>
+              )}
+            </span>
+            <div className="change-actions">
+              <button
+                className="change-action"
+                title={isRead ? "Mark as unread" : "Mark as read"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleRead(file.path);
+                }}
+              >
+                {isRead ? "○" : "●"}
+              </button>
+              <button
+                className="change-action discard"
+                title="Discard changes"
+                onClick={(e) => void handleDiscard(e, file)}
+              >
+                ↺
+              </button>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

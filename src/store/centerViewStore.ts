@@ -37,6 +37,8 @@ type CenterViewStore = {
   addChatTab: () => void;
   openFileTab: (path: string, pin?: boolean) => void;
   openDiffTab: (path: string, original: string, modified: string) => void;
+  updateDiffContent: (id: string, original: string, modified: string) => void;
+  closeDiffTab: () => void;
   pinTab: (id: string) => void;
   closeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
@@ -122,20 +124,60 @@ export const useCenterViewStore = create<CenterViewStore>((set) => ({
   },
 
   openDiffTab: (path, original, modified) => {
-    const id = `diff-${Date.now()}`;
-    const tab: CenterTab = {
-      id,
-      type: "diff",
-      label: `${fileName(path)} (diff)`,
-      filePath: path,
-      diffOriginal: original,
-      diffModified: modified,
-    };
+    set((state) => {
+      // Reuse the single diff tab if one is already open (review flow).
+      const existing = state.tabs.find((tab) => tab.type === "diff");
+      if (existing) {
+        const tabs = state.tabs.map((tab) =>
+          tab.id === existing.id
+            ? {
+                ...tab,
+                label: `${fileName(path)} (diff)`,
+                filePath: path,
+                diffOriginal: original,
+                diffModified: modified,
+              }
+            : tab,
+        );
+        return { tabs, activeTabId: existing.id };
+      }
 
+      const id = `diff-${Date.now()}`;
+      const tab: CenterTab = {
+        id,
+        type: "diff",
+        label: `${fileName(path)} (diff)`,
+        filePath: path,
+        diffOriginal: original,
+        diffModified: modified,
+      };
+      return { tabs: [...state.tabs, tab], activeTabId: id };
+    });
+  },
+
+  updateDiffContent: (id, original, modified) => {
     set((state) => ({
-      tabs: [...state.tabs, tab],
-      activeTabId: id,
+      tabs: state.tabs.map((tab) =>
+        tab.id === id
+          ? { ...tab, diffOriginal: original, diffModified: modified }
+          : tab,
+      ),
     }));
+  },
+
+  closeDiffTab: () => {
+    set((state) => {
+      const diff = state.tabs.find((tab) => tab.type === "diff");
+      if (!diff || state.tabs.length <= 1) return state;
+      const index = state.tabs.findIndex((t) => t.id === diff.id);
+      const newTabs = state.tabs.filter((t) => t.id !== diff.id);
+      let activeTabId = state.activeTabId;
+      if (state.activeTabId === diff.id) {
+        const newIndex = Math.min(index, newTabs.length - 1);
+        activeTabId = newTabs[newIndex].id;
+      }
+      return { tabs: newTabs, activeTabId };
+    });
   },
 
   pinTab: (id) => {
