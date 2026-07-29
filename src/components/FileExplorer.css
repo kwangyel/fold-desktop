@@ -21,7 +21,15 @@
 }
 
 .file-tree-item.file {
-  cursor: default;
+  cursor: pointer;
+}
+
+.file-tree-item.file.selected {
+  background: rgba(124, 92, 255, 0.16);
+}
+
+.file-tree-item.file.open:not(.selected) {
+  color: var(--text);
 }
 
 .file-tree-chevron {

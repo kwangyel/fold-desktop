@@ -1,59 +1,33 @@
-import { useState } from "react";
 import ChatInterface from "./ChatInterface";
-
-type TabType = "chat" | "editor" | "project";
-
-type Tab = {
-  id: string;
-  label: string;
-  type: TabType;
-};
-
-const INITIAL_TABS: Tab[] = [
-  {
-    id: "chat-1",
-    label: "Chat",
-    type: "chat",
-  },
-];
+import CodeEditor from "./CodeEditor";
+import CodeDiffViewer from "./CodeDiffViewer";
+import { useCenterViewStore } from "../store/centerViewStore";
+import { useChatStore } from "../store/chatStore";
+import "./CodeEditor.css";
 
 export default function CenterPane() {
-  const [tabs, setTabs] = useState<Tab[]>(INITIAL_TABS);
-  const [active, setActive] = useState(0);
+  const tabs = useCenterViewStore((state) => state.tabs);
+  const activeTabId = useCenterViewStore((state) => state.activeTabId);
+  const addChatTab = useCenterViewStore((state) => state.addChatTab);
+  const closeTab = useCenterViewStore((state) => state.closeTab);
+  const setActiveTab = useCenterViewStore((state) => state.setActiveTab);
+  const pinTab = useCenterViewStore((state) => state.pinTab);
+  const updateTabContent = useCenterViewStore((state) => state.updateTabContent);
+  const deleteChatTab = useChatStore((state) => state.deleteTab);
 
-  const handleAddTab = () => {
-    const newId = `chat-${Date.now()}`;
-    const newTab: Tab = {
-      id: newId,
-      label: "Chat",
-      type: "chat",
-    };
-    setTabs([...tabs, newTab]);
-    setActive(tabs.length);
-  };
+  const activeTab = tabs.find((tab) => tab.id === activeTabId);
 
-  const handleCloseTab = (index: number) => {
-    const newTabs = tabs.filter((_, i) => i !== index);
-    if (newTabs.length === 0) return;
-
-    setTabs(newTabs);
-    if (active >= newTabs.length) {
-      setActive(newTabs.length - 1);
+  const handleCloseTab = (tabId: string, tabType: string) => {
+    if (tabs.length <= 1) return;
+    if (tabType === "chat") {
+      deleteChatTab(tabId);
     }
+    closeTab(tabId);
   };
 
-  const activeTab = tabs[active];
-
-  const getTabLabel = (tab: Tab): string => {
-    switch (tab.type) {
-      case "chat":
-        return "Chat";
-      case "editor":
-        return tab.label;
-      case "project":
-        return tab.label;
-      default:
-        return tab.label;
+  const handleTabDoubleClick = (tabId: string, tabType: string, isPreview?: boolean) => {
+    if (tabType === "editor" && isPreview) {
+      pinTab(tabId);
     }
   };
 
@@ -64,43 +38,82 @@ export default function CenterPane() {
       case "chat":
         return <ChatInterface tabId={activeTab.id} />;
       case "editor":
+        if (!activeTab.filePath || activeTab.fileContent === undefined) return null;
         return (
-          <div className="pane-body">
-            CodeMirror 6 editor will mount here ({activeTab.label})
-          </div>
+          <>
+            <div className="center-editor-header">
+              <span className="file-path">{activeTab.filePath}</span>
+              <span className="view-badge">Editor</span>
+            </div>
+            <CodeEditor
+              key={activeTab.id}
+              filePath={activeTab.filePath}
+              content={activeTab.fileContent}
+              onChange={(content) => updateTabContent(activeTab.id, content)}
+            />
+          </>
         );
-      case "project":
+      case "diff":
+        if (
+          !activeTab.filePath ||
+          activeTab.diffOriginal === undefined ||
+          activeTab.diffModified === undefined
+        ) {
+          return null;
+        }
         return (
-          <div className="pane-body">
-            Project view will mount here ({activeTab.label})
-          </div>
+          <>
+            <div className="center-editor-header">
+              <span className="file-path">{activeTab.filePath}</span>
+              <span className="view-badge">Diff</span>
+            </div>
+            <CodeDiffViewer
+              key={activeTab.id}
+              filePath={activeTab.filePath}
+              original={activeTab.diffOriginal}
+              modified={activeTab.diffModified}
+            />
+          </>
         );
       default:
-        return <div className="pane-body">Unknown tab type</div>;
+        return null;
     }
+  };
+
+  const canCloseTab = (tab: (typeof tabs)[number]) => {
+    if (tab.type === "editor" && tab.isPreview) return false;
+    return tabs.length > 1;
   };
 
   return (
     <section className="center">
       <div className="tabbar">
-        {tabs.map((tab, i) => (
+        {tabs.map((tab) => (
           <div
             key={tab.id}
-            className={`tab ${i === active ? "active" : ""}`}
-            onClick={() => setActive(i)}
+            className={`tab ${tab.id === activeTabId ? "active" : ""} ${tab.isPreview ? "preview" : ""}`}
+            onClick={() => setActiveTab(tab.id)}
+            onDoubleClick={() => handleTabDoubleClick(tab.id, tab.type, tab.isPreview)}
           >
-            <span>{getTabLabel(tab)}</span>
-            <span className="close" onClick={(e) => {
-              e.stopPropagation();
-              handleCloseTab(i);
-            }}>×</span>
+            <span className="tab-label">{tab.label}</span>
+            {canCloseTab(tab) && (
+              <span
+                className="close"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleCloseTab(tab.id, tab.type);
+                }}
+              >
+                ×
+              </span>
+            )}
           </div>
         ))}
-        <div className="tab-add" onClick={handleAddTab}>
+        <div className="tab-add" onClick={addChatTab}>
           +
         </div>
       </div>
-      {renderTabContent()}
+      <div className="center-content">{renderTabContent()}</div>
     </section>
   );
 }

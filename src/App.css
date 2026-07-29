@@ -233,6 +233,14 @@ select {
   border-bottom-color: var(--accent);
 }
 
+.tab.preview .tab-label {
+  font-style: italic;
+}
+
+.tab.preview:not(.active) {
+  color: var(--muted);
+}
+
 .tab .close {
   opacity: 0;
   color: var(--muted);
