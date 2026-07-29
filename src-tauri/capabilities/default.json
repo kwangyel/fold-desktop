@@ -8,6 +8,8 @@
     "core:window:allow-start-dragging",
     "core:window:allow-toggle-maximize",
     "pty-commands",
-    "git-commands"
+    "git-commands",
+    "project-commands",
+    "dialog:default"
   ]
 }

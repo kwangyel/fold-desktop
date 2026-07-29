@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "project-commands"
+description = "Project create/open/list/select commands"
+commands.allow = ["list_projects", "create_project", "open_project", "is_git_repo", "set_active_project", "remove_project"]

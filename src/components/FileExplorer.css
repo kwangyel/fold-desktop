@@ -6,6 +6,12 @@
   font-size: 12px;
 }
 
+.file-explorer-empty {
+  padding: 14px 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .file-tree-item {
   display: flex;
   align-items: center;

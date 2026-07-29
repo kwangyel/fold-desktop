@@ -14,6 +14,12 @@ export interface FileDiff {
   modified: string;
 }
 
+export interface DirEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+}
+
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
@@ -47,6 +53,11 @@ export async function getFileDiff(path: string): Promise<FileDiff> {
 export async function discardFile(path: string, isUntracked: boolean): Promise<void> {
   if (!isTauri()) return;
   await invoke("git_discard", { path, isUntracked });
+}
+
+export async function listDir(path: string): Promise<DirEntry[]> {
+  if (!isTauri()) return [];
+  return invoke<DirEntry[]>("list_dir", { path });
 }
 
 export async function readFile(path: string): Promise<string> {

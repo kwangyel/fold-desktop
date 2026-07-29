@@ -1,59 +1,116 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { IconFolderPlus, IconFolderOpen, IconBrandGithub, IconTrash } from "@tabler/icons-react";
+import { useProjectStore } from "../store/projectStore";
+import ProjectDialog from "./ProjectDialog";
 
-type Project = {
-  id: string;
-  name: string;
-  branch: string;
-  status: "running" | "idle" | "warn";
-};
-
-const MOCK_PROJECTS: Project[] = [
-  { id: "1", name: "fold-desktop", branch: "edinburgh · 2m ago", status: "running" },
-  { id: "2", name: "web-dashboard", branch: "main · 14m ago", status: "idle" },
-  { id: "3", name: "api-gateway", branch: "feat/auth · 1h ago", status: "warn" },
-  { id: "4", name: "docs-site", branch: "main · yesterday", status: "idle" },
-  { id: "5", name: "cli-tools", branch: "refactor · 3d ago", status: "idle" },
-];
+type DialogMode = "create" | "open" | null;
+type ContextMenu = { id: string; name: string; x: number; y: number };
 
 export default function Sidebar() {
-  const [selected, setSelected] = useState("1");
+  const projects = useProjectStore((s) => s.projects);
+  const activeId = useProjectStore((s) => s.activeId);
+  const load = useProjectStore((s) => s.load);
+  const select = useProjectStore((s) => s.select);
+  const remove = useProjectStore((s) => s.remove);
+
+  const [dialog, setDialog] = useState<DialogMode>(null);
+  const [menu, setMenu] = useState<ContextMenu | null>(null);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // Dismiss the context menu on any outside interaction.
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenu(null);
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [menu]);
 
   return (
     <aside className="sidebar">
       <div className="new-project">
         <div className="section-header">
-          <span>New Project</span>
+          <span>Projects</span>
         </div>
-        <div className="field">
-          <label>Repository path</label>
-          <input placeholder="/path/to/repo" />
+        <div className="project-actions">
+          <button className="primary-btn" onClick={() => setDialog("create")}>
+            <IconFolderPlus size={15} stroke={2} />
+            Create Project
+          </button>
+          <button className="ghost-btn full" onClick={() => setDialog("open")}>
+            <IconFolderOpen size={15} stroke={2} />
+            Open Existing
+          </button>
         </div>
-        <div className="field">
-          <label>Project name</label>
-          <input placeholder="my-project" />
-        </div>
-        <button className="primary-btn">Create Project</button>
       </div>
 
       <div className="projects">
-        <div className="section-header">
-          <span>Projects</span>
-          <button className="icon-btn" title="Add project">+</button>
-        </div>
-        {MOCK_PROJECTS.map((p) => (
-          <div
-            key={p.id}
-            className={`project-row ${selected === p.id ? "active" : ""}`}
-            onClick={() => setSelected(p.id)}
-          >
-            <span className={`status-dot ${p.status === "idle" ? "idle" : p.status === "warn" ? "warn" : ""}`} />
-            <div className="meta">
-              <div className="name">{p.name}</div>
-              <div className="sub">{p.branch}</div>
-            </div>
+        {projects.length === 0 ? (
+          <div className="projects-empty">
+            No projects yet. Create or open one to get started.
           </div>
-        ))}
+        ) : (
+          projects.map((p) => (
+            <div
+              key={p.id}
+              className={`project-row ${activeId === p.id ? "active" : ""}`}
+              onClick={() => select(p.id)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setMenu({ id: p.id, name: p.name, x: e.clientX, y: e.clientY });
+              }}
+              title={p.path}
+            >
+              <span className={`status-dot ${activeId === p.id ? "" : "idle"}`} />
+              <div className="meta">
+                <div className="name">{p.name}</div>
+                <div className="sub">{p.path}</div>
+              </div>
+              {p.createdOnGithub && (
+                <IconBrandGithub
+                  size={14}
+                  className="gh-badge"
+                  title="Marked for GitHub"
+                />
+              )}
+            </div>
+          ))
+        )}
       </div>
+
+      {menu && (
+        <div
+          className="context-menu"
+          style={{ top: menu.y, left: menu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            className="context-menu-item danger"
+            onClick={() => {
+              remove(menu.id);
+              setMenu(null);
+            }}
+          >
+            <IconTrash size={14} stroke={1.75} />
+            Remove from list
+          </button>
+        </div>
+      )}
+
+      {dialog && (
+        <ProjectDialog mode={dialog} onClose={() => setDialog(null)} />
+      )}
     </aside>
   );
 }

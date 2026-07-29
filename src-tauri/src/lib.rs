@@ -1,21 +1,26 @@
 mod git;
+mod projects;
 mod pty;
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 
 use tauri::ipc::Channel;
-use tauri::State;
+use tauri::{Manager, State};
 
-struct AppState {
+pub struct AppState {
     sessions: Mutex<HashMap<String, pty::PtySession>>,
+    /// Absolute path of the currently selected project, if any.
+    pub active_project: Mutex<Option<PathBuf>>,
 }
 
 impl Default for AppState {
     fn default() -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
+            active_project: Mutex::new(None),
         }
     }
 }
@@ -28,7 +33,12 @@ fn pty_spawn(
     on_output: Channel,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let session = pty::PtySession::spawn(&pty::default_shell(), cols, rows, on_output)?;
+    let cwd = state
+        .active_project
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
+    let session = pty::PtySession::spawn(&pty::default_shell(), cols, rows, cwd, on_output)?;
     state
         .sessions
         .lock()
@@ -73,7 +83,17 @@ fn pty_kill(id: String, state: State<'_, AppState>) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
+        .setup(|app| {
+            // Restore the last active project into runtime state on launch.
+            let handle = app.handle().clone();
+            let state = app.state::<AppState>();
+            if let Err(e) = projects::load_active(&handle, &state) {
+                eprintln!("failed to load active project: {e}");
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             pty_spawn,
             pty_write,
@@ -82,8 +102,15 @@ pub fn run() {
             git::git_changes,
             git::git_file_diff,
             git::git_discard,
+            git::list_dir,
             git::read_file,
-            git::write_file
+            git::write_file,
+            projects::list_projects,
+            projects::create_project,
+            projects::open_project,
+            projects::is_git_repo,
+            projects::set_active_project,
+            projects::remove_project
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
