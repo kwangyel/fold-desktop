@@ -1,74 +1,35 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import MonotoneFileIcon from "./fileIcons/MonotoneFileIcon";
 import { resolveFileIconKind } from "./fileIcons/fileIconMap";
 import { useCenterViewStore } from "../store/centerViewStore";
+import { useProjectStore } from "../store/projectStore";
+import { DirEntry, listDir } from "../lib/git";
 import "./FileExplorer.css";
 
-interface FileNode {
-  name: string;
-  type: "file" | "folder";
-  children?: FileNode[];
-}
-
-const MOCK_TREE: FileNode[] = [
-  {
-    name: "src",
-    type: "folder",
-    children: [
-      {
-        name: "components",
-        type: "folder",
-        children: [
-          { name: "CenterPane.tsx", type: "file" },
-          { name: "ChatInput.tsx", type: "file" },
-          { name: "RightPane.tsx", type: "file" },
-        ],
-      },
-      { name: "store", type: "folder", children: [{ name: "chatStore.ts", type: "file" }] },
-      { name: "App.tsx", type: "file" },
-      { name: "main.tsx", type: "file" },
-    ],
-  },
-  {
-    name: "src-tauri",
-    type: "folder",
-    children: [
-      {
-        name: "src",
-        type: "folder",
-        children: [
-          { name: "lib.rs", type: "file" },
-          { name: "pty.rs", type: "file" },
-        ],
-      },
-      { name: "Cargo.toml", type: "file" },
-    ],
-  },
-  { name: "package.json", type: "file" },
-  { name: "README.md", type: "file" },
-];
-
 interface FileTreeNodeProps {
-  node: FileNode;
-  depth?: number;
-  path: string;
+  entry: DirEntry;
+  depth: number;
 }
 
-function FileTreeNode({ node, depth = 0, path }: FileTreeNodeProps) {
-  const [expanded, setExpanded] = useState(depth < 2);
+function FileTreeNode({ entry, depth }: FileTreeNodeProps) {
+  const [expanded, setExpanded] = useState(false);
+  const [children, setChildren] = useState<DirEntry[] | null>(null);
   const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const openFileTab = useCenterViewStore((state) => state.openFileTab);
   const activeTabId = useCenterViewStore((state) => state.activeTabId);
   const tabs = useCenterViewStore((state) => state.tabs);
-  const activeEditorPath = tabs.find((tab) => tab.id === activeTabId && tab.type === "editor")?.filePath;
-  const isOpen = tabs.some((tab) => tab.type === "editor" && tab.filePath === path);
+  const activeEditorPath = tabs.find(
+    (tab) => tab.id === activeTabId && tab.type === "editor",
+  )?.filePath;
+  const isOpen = tabs.some(
+    (tab) => tab.type === "editor" && tab.filePath === entry.path,
+  );
 
   const handleFileClick = () => {
-    if (clickTimerRef.current) {
-      clearTimeout(clickTimerRef.current);
-    }
+    if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
     clickTimerRef.current = setTimeout(() => {
-      openFileTab(path, false);
+      openFileTab(entry.path, false);
       clickTimerRef.current = null;
     }, 200);
   };
@@ -78,56 +39,101 @@ function FileTreeNode({ node, depth = 0, path }: FileTreeNodeProps) {
       clearTimeout(clickTimerRef.current);
       clickTimerRef.current = null;
     }
-    openFileTab(path, true);
+    openFileTab(entry.path, true);
   };
 
-  if (node.type === "file") {
-    const iconKind = resolveFileIconKind(node.name);
+  async function toggleFolder() {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && children === null) {
+      try {
+        setChildren(await listDir(entry.path));
+      } catch {
+        setChildren([]);
+      }
+    }
+  }
+
+  if (!entry.isDir) {
+    const iconKind = resolveFileIconKind(entry.name);
     return (
       <div
-        className={`file-tree-item file ${activeEditorPath === path ? "selected" : ""} ${isOpen && activeEditorPath !== path ? "open" : ""}`}
+        className={`file-tree-item file ${activeEditorPath === entry.path ? "selected" : ""} ${isOpen && activeEditorPath !== entry.path ? "open" : ""}`}
         style={{ paddingLeft: depth * 14 + 8 }}
         onClick={handleFileClick}
         onDoubleClick={handleFileDoubleClick}
       >
         <MonotoneFileIcon kind={iconKind} className="file-tree-icon" />
-        <span className="file-tree-name">{node.name}</span>
+        <span className="file-tree-name">{entry.name}</span>
       </div>
     );
   }
 
-  const iconKind = resolveFileIconKind(node.name, true, expanded);
+  const iconKind = resolveFileIconKind(entry.name, true, expanded);
 
   return (
     <div className="file-tree-folder">
       <div
         className="file-tree-item folder"
         style={{ paddingLeft: depth * 14 + 8 }}
-        onClick={() => setExpanded(!expanded)}
+        onClick={toggleFolder}
       >
         <span className="file-tree-chevron">{expanded ? "▾" : "▸"}</span>
         <MonotoneFileIcon kind={iconKind} className="file-tree-icon" />
-        <span className="file-tree-name">{node.name}</span>
+        <span className="file-tree-name">{entry.name}</span>
       </div>
       {expanded &&
-        node.children?.map((child) => (
-          <FileTreeNode
-            key={child.name}
-            node={child}
-            depth={depth + 1}
-            path={`${path}/${child.name}`}
-          />
+        children?.map((child) => (
+          <FileTreeNode key={child.path} entry={child} depth={depth + 1} />
         ))}
     </div>
   );
 }
 
 export default function FileExplorer() {
+  const activeId = useProjectStore((s) => s.activeId);
+  const [roots, setRoots] = useState<DirEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!activeId) {
+      setRoots([]);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    listDir("")
+      .then((entries) => {
+        if (!cancelled) setRoots(entries);
+      })
+      .catch(() => {
+        if (!cancelled) setRoots([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeId]);
+
+  if (!activeId) {
+    return (
+      <div className="file-explorer">
+        <div className="file-explorer-empty">No project open</div>
+      </div>
+    );
+  }
+
   return (
     <div className="file-explorer">
-      {MOCK_TREE.map((node) => (
-        <FileTreeNode key={node.name} node={node} path={node.name} />
-      ))}
+      {loading && roots.length === 0 ? (
+        <div className="file-explorer-empty">Loading…</div>
+      ) : (
+        roots.map((entry) => (
+          <FileTreeNode key={entry.path} entry={entry} depth={0} />
+        ))
+      )}
     </div>
   );
 }

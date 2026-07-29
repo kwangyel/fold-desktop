@@ -2,6 +2,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::Serialize;
+use tauri::State;
+
+use crate::AppState;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,9 +23,28 @@ pub struct FileDiff {
     modified: String,
 }
 
-/// Resolve the repository root by running `git rev-parse --show-toplevel`
-/// from the app process working directory.
-fn repo_root() -> Result<PathBuf, String> {
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirEntry {
+    name: String,
+    /// Repo-relative path (POSIX separators).
+    path: String,
+    is_dir: bool,
+}
+
+/// Resolve the repository root. When a project is selected, its directory is the
+/// root; otherwise fall back to `git rev-parse --show-toplevel` from the app
+/// process working directory.
+fn repo_root(state: &State<'_, AppState>) -> Result<PathBuf, String> {
+    if let Some(active) = state
+        .active_project
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone()
+    {
+        return Ok(active);
+    }
+
     let output = Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .output()
@@ -65,8 +87,8 @@ fn git_in_root(root: &Path, args: &[&str]) -> Result<std::process::Output, Strin
 
 /// List all uncommitted changes (staged + unstaged + untracked) vs HEAD.
 #[tauri::command]
-pub fn git_changes() -> Result<Vec<ChangedFile>, String> {
-    let root = repo_root()?;
+pub fn git_changes(state: State<'_, AppState>) -> Result<Vec<ChangedFile>, String> {
+    let root = repo_root(&state)?;
 
     // Line-count deltas vs HEAD for tracked files.
     let numstat = git_in_root(&root, &["diff", "HEAD", "--numstat"])?;
@@ -142,8 +164,8 @@ pub fn git_changes() -> Result<Vec<ChangedFile>, String> {
 
 /// Return the HEAD version (original) and working-tree version (modified) of a file.
 #[tauri::command]
-pub fn git_file_diff(path: String) -> Result<FileDiff, String> {
-    let root = repo_root()?;
+pub fn git_file_diff(path: String, state: State<'_, AppState>) -> Result<FileDiff, String> {
+    let root = repo_root(&state)?;
     let abs = safe_join(&root, &path)?;
 
     // Original = contents at HEAD. Empty for newly added files.
@@ -163,8 +185,12 @@ pub fn git_file_diff(path: String) -> Result<FileDiff, String> {
 /// Discard working-tree changes for a file. Untracked files are deleted; tracked
 /// files are restored from HEAD (both staged and unstaged changes are reverted).
 #[tauri::command]
-pub fn git_discard(path: String, is_untracked: bool) -> Result<(), String> {
-    let root = repo_root()?;
+pub fn git_discard(
+    path: String,
+    is_untracked: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let root = repo_root(&state)?;
     let abs = safe_join(&root, &path)?;
 
     if is_untracked {
@@ -179,18 +205,57 @@ pub fn git_discard(path: String, is_untracked: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// List the entries of a repo-relative directory (`""` = project root),
+/// folders first then files, both alphabetical. Skips the `.git` directory.
+#[tauri::command]
+pub fn list_dir(path: String, state: State<'_, AppState>) -> Result<Vec<DirEntry>, String> {
+    let root = repo_root(&state)?;
+    let dir = if path.is_empty() {
+        root.clone()
+    } else {
+        safe_join(&root, &path)?
+    };
+
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(&dir).map_err(|e| format!("failed to read dir: {e}"))? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == ".git" {
+            continue;
+        }
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        let rel = if path.is_empty() {
+            name.clone()
+        } else {
+            format!("{}/{}", path.trim_end_matches('/'), name)
+        };
+        entries.push(DirEntry { name, path: rel, is_dir });
+    }
+
+    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+    });
+    Ok(entries)
+}
+
 /// Read a repo-relative file from disk.
 #[tauri::command]
-pub fn read_file(path: String) -> Result<String, String> {
-    let root = repo_root()?;
+pub fn read_file(path: String, state: State<'_, AppState>) -> Result<String, String> {
+    let root = repo_root(&state)?;
     let abs = safe_join(&root, &path)?;
     std::fs::read_to_string(&abs).map_err(|e| format!("failed to read file: {e}"))
 }
 
 /// Write a repo-relative file to disk.
 #[tauri::command]
-pub fn write_file(path: String, content: String) -> Result<(), String> {
-    let root = repo_root()?;
+pub fn write_file(
+    path: String,
+    content: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let root = repo_root(&state)?;
     let abs = safe_join(&root, &path)?;
     std::fs::write(&abs, content).map_err(|e| format!("failed to write file: {e}"))
 }

@@ -1,4 +1,4 @@
 [[permission]]
 identifier = "git-commands"
 description = "Git and filesystem commands for the Changes tab"
-commands.allow = ["git_changes", "git_file_diff", "git_discard", "read_file", "write_file"]
+commands.allow = ["git_changes", "git_file_diff", "git_discard", "list_dir", "read_file", "write_file"]

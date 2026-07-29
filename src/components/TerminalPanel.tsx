@@ -1,5 +1,6 @@
 import { useState } from "react";
 import XTerminal from "./XTerminal";
+import { useProjectStore } from "../store/projectStore";
 import "./TerminalPanel.css";
 
 interface TerminalTab {
@@ -21,6 +22,8 @@ const INITIAL_TERMINAL = createTerminalTab();
 export default function TerminalPanel() {
   const [terminals, setTerminals] = useState<TerminalTab[]>([INITIAL_TERMINAL]);
   const [activeId, setActiveId] = useState(INITIAL_TERMINAL.id);
+  // Restart terminals in the new working directory when the project changes.
+  const activeProject = useProjectStore((s) => s.activeId);
 
   const addTerminal = () => {
     const tab = createTerminalTab();
@@ -68,7 +71,11 @@ export default function TerminalPanel() {
       </div>
       <div className="terminal-panel-body">
         {terminals.map((t) => (
-          <XTerminal key={t.id} id={t.id} active={t.id === activeId} />
+          <XTerminal
+            key={`${t.id}-${activeProject ?? "none"}`}
+            id={t.id}
+            active={t.id === activeId}
+          />
         ))}
       </div>
     </div>

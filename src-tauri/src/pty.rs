@@ -1,4 +1,5 @@
 use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::thread;
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
@@ -21,6 +22,7 @@ impl PtySession {
         shell: &str,
         cols: u16,
         rows: u16,
+        cwd: Option<PathBuf>,
         on_output: Channel,
     ) -> Result<Self, String> {
         let pair = native_pty_system()
@@ -34,8 +36,14 @@ impl PtySession {
 
         let mut cmd = CommandBuilder::new(shell);
         cmd.env("TERM", "xterm-256color");
-        if let Some(home) = dirs_home() {
-            cmd.cwd(home);
+        // Prefer the active project directory; fall back to the home directory.
+        match cwd.filter(|p| p.is_dir()) {
+            Some(dir) => cmd.cwd(dir),
+            None => {
+                if let Some(home) = dirs_home() {
+                    cmd.cwd(home);
+                }
+            }
         }
 
         let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;

@@ -126,6 +126,68 @@ select {
   background: var(--accent-dim);
 }
 
+.project-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.project-actions .primary-btn,
+.project-actions .ghost-btn.full {
+  margin-top: 0;
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.projects-empty {
+  padding: 16px 8px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.project-row .gh-badge {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 1100;
+  min-width: 160px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  padding: 4px;
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  padding: 7px 10px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.context-menu-item:hover {
+  background: var(--panel-2);
+}
+
+.context-menu-item.danger {
+  color: var(--warn);
+}
+
 .projects {
   padding: 12px 8px;
   flex: 1;
