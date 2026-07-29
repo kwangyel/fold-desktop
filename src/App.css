@@ -269,18 +269,4 @@ select {
 }
 
 /* ---------- Right Pane ---------- */
-.right {
-  width: 420px;
-  flex-shrink: 0;
-  background: var(--panel);
-  border-left: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.right .pane-body {
-  background: #101014;
-  color: #666;
-  font-family: "SF Mono", "Menlo", monospace;
-}
+/* Layout styles live in RightPane.css */

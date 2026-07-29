@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "pty-commands"
+description = "PTY terminal commands"
+commands.allow = ["pty_spawn", "pty_write", "pty_resize", "pty_kill"]

@@ -4,13 +4,27 @@
   padding: 12px 16px;
   background: var(--panel);
   border-top: 1px solid var(--border);
-  gap: 8px;
+}
+
+.chat-input-box {
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.chat-input-box:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(124, 92, 255, 0.1);
 }
 
 .attachments-preview {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+  padding: 8px 12px 0;
 }
 
 .attachment-badge {
@@ -18,7 +32,7 @@
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
-  background: var(--panel-2);
+  background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 4px;
   font-size: 12px;
@@ -54,24 +68,16 @@
   color: var(--text);
 }
 
-.chat-input-wrapper {
-  display: flex;
-  gap: 8px;
-  align-items: flex-end;
-}
-
 .message-input {
   flex: 1;
   padding: 10px 12px;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
+  background: transparent;
+  border: none;
   color: var(--text);
-  border-radius: 6px;
   font-family: inherit;
   font-size: 13px;
   line-height: 1.4;
   resize: none;
-  transition: all 0.2s ease;
   max-height: 120px;
 }
 
@@ -81,13 +87,20 @@
 
 .message-input:focus {
   outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(124, 92, 255, 0.1);
 }
 
 .message-input:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.chat-input-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
 }
 
 .input-actions {
@@ -97,9 +110,9 @@
 
 .attach-btn,
 .send-btn {
-  padding: 8px 12px;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
   color: var(--text);
   border-radius: 4px;
   cursor: pointer;
@@ -108,15 +121,14 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 36px;
-  min-height: 36px;
+  min-width: 32px;
+  min-height: 32px;
 }
 
 .attach-btn:hover:not(:disabled),
 .send-btn:hover:not(:disabled) {
   background: var(--accent);
   color: white;
-  border-color: var(--accent);
 }
 
 .attach-btn:active:not(:disabled),
@@ -137,7 +149,7 @@
 .input-toolbar {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
@@ -155,9 +167,9 @@
 }
 
 .model-select {
-  padding: 6px 10px;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
+  padding: 4px 8px;
+  background: transparent;
+  border: none;
   color: var(--text);
   border-radius: 4px;
   font-size: 12px;
@@ -166,13 +178,12 @@
 }
 
 .model-select:hover:not(:disabled) {
-  border-color: var(--accent);
+  background: rgba(124, 92, 255, 0.1);
 }
 
 .model-select:focus {
   outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(124, 92, 255, 0.1);
+  background: rgba(124, 92, 255, 0.1);
 }
 
 .model-select:disabled {
@@ -189,12 +200,12 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   padding: 0;
-  background: var(--panel-2);
+  background: transparent;
   color: var(--muted);
-  border: 1px solid var(--border);
+  border: none;
   border-radius: 4px;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -207,14 +218,12 @@
 
 .fast-mode-btn:hover:not(:disabled) {
   color: var(--text);
-  border-color: var(--accent);
+  background: rgba(124, 92, 255, 0.1);
 }
 
 .fast-mode-btn.active {
   background: rgba(124, 92, 255, 0.2);
   color: var(--accent);
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px rgba(124, 92, 255, 0.25);
 }
 
 .fast-mode-btn:disabled {
@@ -223,10 +232,10 @@
 }
 
 .effort-btn {
-  padding: 6px 12px;
-  background: var(--panel-2);
+  padding: 4px 10px;
+  background: transparent;
   color: var(--text);
-  border: 1px solid var(--border);
+  border: none;
   border-radius: 4px;
   font-size: 12px;
   font-weight: 500;
@@ -236,13 +245,12 @@
 }
 
 .effort-btn:hover:not(:disabled) {
-  border-color: var(--accent);
-  background: var(--accent-dim);
-  color: white;
+  background: rgba(124, 92, 255, 0.1);
+  color: var(--accent);
 }
 
 .effort-btn:active:not(:disabled) {
-  background: var(--accent);
+  background: rgba(124, 92, 255, 0.2);
 }
 
 .effort-btn:disabled {

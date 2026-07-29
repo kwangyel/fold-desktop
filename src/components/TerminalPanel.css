@@ -1,0 +1,17 @@
+.terminal-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.terminal-tabbar {
+  flex-shrink: 0;
+}
+
+.terminal-panel-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  background: #101014;
+}
