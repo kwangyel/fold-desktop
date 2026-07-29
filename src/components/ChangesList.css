@@ -1,0 +1,75 @@
+.changes-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  font-size: 12px;
+}
+
+.changes-header {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.change-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.change-row:hover {
+  background: var(--panel-2);
+}
+
+.change-row.selected {
+  background: rgba(124, 92, 255, 0.12);
+}
+
+.change-status {
+  font-size: 10px;
+  font-weight: 700;
+  width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.status-modified {
+  color: var(--warn);
+}
+
+.status-added {
+  color: var(--success);
+}
+
+.status-deleted {
+  color: #f87171;
+}
+
+.change-path {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.change-stats {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-family: "SF Mono", Menlo, monospace;
+}
+
+.stat-add {
+  color: var(--success);
+}
+
+.stat-del {
+  color: #f87171;
+}

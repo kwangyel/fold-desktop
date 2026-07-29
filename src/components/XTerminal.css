@@ -1,0 +1,18 @@
+.xterminal-container {
+  position: absolute;
+  inset: 0;
+  padding: 4px;
+  display: none;
+}
+
+.xterminal-container.active {
+  display: block;
+}
+
+.xterminal-container .xterm {
+  height: 100%;
+}
+
+.xterminal-container .xterm-viewport {
+  overflow-y: auto;
+}

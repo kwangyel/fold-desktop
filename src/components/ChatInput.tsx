@@ -113,25 +113,25 @@ export default function ChatInput({ tabId }: ChatInputProps) {
 
   return (
     <div className="chat-input-container">
-      {tab.attachments.length > 0 && (
-        <div className="attachments-preview">
-          {tab.attachments.map((att) => (
-            <div key={att.id} className="attachment-badge">
-              <span className="attachment-icon">📎</span>
-              <span className="attachment-name">{att.name}</span>
-              <button
-                className="attachment-remove"
-                onClick={() => removeAttachment(tabId, att.id)}
-                aria-label="Remove attachment"
-              >
-                ×
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+      <div className="chat-input-box">
+        {tab.attachments.length > 0 && (
+          <div className="attachments-preview">
+            {tab.attachments.map((att) => (
+              <div key={att.id} className="attachment-badge">
+                <span className="attachment-icon">📎</span>
+                <span className="attachment-name">{att.name}</span>
+                <button
+                  className="attachment-remove"
+                  onClick={() => removeAttachment(tabId, att.id)}
+                  aria-label="Remove attachment"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
 
-      <div className="chat-input-wrapper">
         <textarea
           value={message}
           onChange={(e) => setMessage(e.target.value)}
@@ -142,73 +142,75 @@ export default function ChatInput({ tabId }: ChatInputProps) {
           rows={3}
         />
 
-        <div className="input-actions">
-          <button
-            className="attach-btn"
-            onClick={handleAttachmentClick}
-            disabled={tab.loading}
-            title="Attach file"
-            aria-label="Attach file"
-          >
-            📎
-          </button>
+        <div className="chat-input-footer">
+          <div className="input-toolbar">
+            <div className="control-group">
+              <label>Model</label>
+              <select
+                value={tab.selectedModel}
+                onChange={(e) => setModel(tabId, e.target.value)}
+                className="model-select"
+                disabled={tab.loading}
+              >
+                {MODELS.map((model) => (
+                  <option key={model} value={model}>
+                    {model}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          <button
-            className="send-btn"
-            onClick={handleSend}
-            disabled={!message.trim() || tab.loading}
-            title="Send message"
-            aria-label="Send message"
-          >
-            {tab.loading ? '⏳' : '▶'}
-          </button>
+            <button
+              className="effort-btn"
+              onClick={handleEffortCycle}
+              disabled={tab.loading}
+              title="Cycle effort level: Low → Med → High → Ultra"
+            >
+              {getEffortLabel(tab.modelEffort)}
+            </button>
+
+            <button
+              type="button"
+              className={`fast-mode-btn ${tab.mode === 'fast' ? 'active' : ''}`}
+              onClick={() => setMode(tabId, tab.mode === 'fast' ? 'normal' : 'fast')}
+              disabled={tab.loading}
+              title={tab.mode === 'fast' ? 'Fast mode on' : 'Fast mode off'}
+              aria-label={tab.mode === 'fast' ? 'Disable fast mode' : 'Enable fast mode'}
+              aria-pressed={tab.mode === 'fast'}
+            >
+              <svg
+                className="fast-mode-icon"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path d="M13 2L3 14h8l-1 8 10-12h-8l1-8z" />
+              </svg>
+            </button>
+          </div>
+
+          <div className="input-actions">
+            <button
+              className="attach-btn"
+              onClick={handleAttachmentClick}
+              disabled={tab.loading}
+              title="Attach file"
+              aria-label="Attach file"
+            >
+              📎
+            </button>
+
+            <button
+              className="send-btn"
+              onClick={handleSend}
+              disabled={!message.trim() || tab.loading}
+              title="Send message"
+              aria-label="Send message"
+            >
+              {tab.loading ? '⏳' : '▶'}
+            </button>
+          </div>
         </div>
-      </div>
-
-      <div className="input-toolbar">
-        <div className="control-group">
-          <label>Model</label>
-          <select
-            value={tab.selectedModel}
-            onChange={(e) => setModel(tabId, e.target.value)}
-            className="model-select"
-            disabled={tab.loading}
-          >
-            {MODELS.map((model) => (
-              <option key={model} value={model}>
-                {model}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <button
-          className="effort-btn"
-          onClick={handleEffortCycle}
-          disabled={tab.loading}
-          title="Cycle effort level: Low → Med → High → Ultra"
-        >
-          {getEffortLabel(tab.modelEffort)}
-        </button>
-
-        <button
-          type="button"
-          className={`fast-mode-btn ${tab.mode === 'fast' ? 'active' : ''}`}
-          onClick={() => setMode(tabId, tab.mode === 'fast' ? 'normal' : 'fast')}
-          disabled={tab.loading}
-          title={tab.mode === 'fast' ? 'Fast mode on' : 'Fast mode off'}
-          aria-label={tab.mode === 'fast' ? 'Disable fast mode' : 'Enable fast mode'}
-          aria-pressed={tab.mode === 'fast'}
-        >
-          <svg
-            className="fast-mode-icon"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-            aria-hidden="true"
-          >
-            <path d="M13 2L3 14h8l-1 8 10-12h-8l1-8z" />
-          </svg>
-        </button>
       </div>
 
       <input
