@@ -89,7 +89,7 @@ pub fn run() {
   },
   "package.json": {
     original: `{
-  "name": "conductor-clone",
+  "name": "fold",
   "dependencies": {
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

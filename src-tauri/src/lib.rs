@@ -97,6 +97,28 @@ pub fn run() {
             if let Err(e) = projects::load_active(&handle, &state) {
                 eprintln!("failed to load active project: {e}");
             }
+
+            if let Some(window) = app.get_webview_window("main") {
+                #[cfg(target_os = "macos")]
+                {
+                    use window_vibrancy::{
+                        apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState,
+                    };
+                    let _ = apply_vibrancy(
+                        &window,
+                        NSVisualEffectMaterial::ContentBackground,
+                        Some(NSVisualEffectState::FollowsWindowActiveState),
+                        Some(10.0),
+                    );
+                }
+
+                #[cfg(target_os = "windows")]
+                {
+                    use window_vibrancy::apply_blur;
+                    let _ = apply_blur(&window, Some((30, 30, 34, 255)));
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

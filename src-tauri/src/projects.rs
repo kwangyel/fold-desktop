@@ -166,9 +166,9 @@ fn commit_all(repo: &Path, message: &str) -> Result<(), String> {
         repo,
         &[
             "-c",
-            "user.email=conductor-clone@local",
+            "user.email=fold@local",
             "-c",
-            "user.name=Conductor Clone",
+            "user.name=Fold",
             "commit",
             "--allow-empty",
             "-m",
@@ -246,13 +246,13 @@ fn sanitize_slug(name: &str) -> String {
 }
 
 /// Shared parent for all worktrees of a project:
-/// `~/conductor-clone/workspaces/<project-slug>/`
+/// `~/fold/workspaces/<project-slug>/`
 fn workspaces_root(project_name: &str) -> Result<PathBuf, String> {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .map_err(|_| "could not resolve home directory".to_string())?;
     let root = PathBuf::from(home)
-        .join("conductor-clone")
+        .join("fold")
         .join("workspaces")
         .join(sanitize_slug(project_name));
     std::fs::create_dir_all(&root).map_err(|e| format!("failed to create workspaces dir: {e}"))?;

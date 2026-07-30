@@ -5,6 +5,8 @@
   width: 100vw;
   background: var(--bg);
   color: var(--text);
+  border-radius: 10px;
+  overflow: hidden;
 }
 
 .titlebar {
