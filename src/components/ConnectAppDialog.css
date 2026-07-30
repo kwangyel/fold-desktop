@@ -1,0 +1,162 @@
+/* Reuses .dialog-overlay / .dialog / .dialog-* from ProjectDialog.css. */
+@import "./ProjectDialog.css";
+
+.app-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.app-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.app-row.disabled {
+  opacity: 0.5;
+}
+
+.app-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  color: var(--text);
+  background: var(--panel-2);
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.app-icon.github {
+  background: #24292f;
+  color: #fff;
+}
+
+.app-icon.gitlab {
+  background: #fc6d26;
+  color: #fff;
+}
+
+.app-icon.linear {
+  background: #5e6ad2;
+  color: #fff;
+}
+
+.app-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.app-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.app-sub {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Beat App.css `.primary-btn { width: 100% }` so the row action stays compact. */
+.app-row .app-connect-btn {
+  width: auto;
+  margin-top: 0;
+  padding: 5px 12px;
+  font-size: 12px;
+  line-height: 1.2;
+  flex-shrink: 0;
+}
+
+.app-connected-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.app-connected {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--success);
+  flex-shrink: 0;
+}
+
+.device-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.device-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.device-label code {
+  color: var(--text);
+  background: var(--bg);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.device-code {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 12px;
+  cursor: pointer;
+}
+
+.device-code:hover {
+  border-color: var(--accent);
+}
+
+.device-code svg {
+  color: var(--muted);
+}
+
+.device-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "github-commands"
+description = "GitHub CLI (gh) commands for connecting a GitHub account"
+commands.allow = ["gh_auth_status", "gh_auth_login", "gh_auth_cancel", "gh_auth_logout", "open_external"]

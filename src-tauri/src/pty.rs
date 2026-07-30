@@ -25,6 +25,19 @@ impl PtySession {
         cwd: Option<PathBuf>,
         on_output: Channel,
     ) -> Result<Self, String> {
+        Self::spawn_command(shell, &[], cols, rows, cwd, on_output)
+    }
+
+    /// Spawn an arbitrary program with arguments inside a PTY, streaming its
+    /// output. Shared implementation used by `spawn` (shell with no args).
+    pub fn spawn_command(
+        program: &str,
+        args: &[&str],
+        cols: u16,
+        rows: u16,
+        cwd: Option<PathBuf>,
+        on_output: Channel,
+    ) -> Result<Self, String> {
         let pair = native_pty_system()
             .openpty(PtySize {
                 rows,
@@ -34,7 +47,10 @@ impl PtySession {
             })
             .map_err(|e| e.to_string())?;
 
-        let mut cmd = CommandBuilder::new(shell);
+        let mut cmd = CommandBuilder::new(program);
+        for arg in args {
+            cmd.arg(arg);
+        }
         cmd.env("TERM", "xterm-256color");
         // Prefer the active project directory; fall back to the home directory.
         match cwd.filter(|p| p.is_dir()) {
