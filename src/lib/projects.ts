@@ -2,11 +2,22 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { isTauri } from "./git";
 
+export interface Worktree {
+  id: string;
+  name: string;
+  branch: string;
+  path: string;
+  /** Archived worktrees keep their branch but their folder has been deleted. */
+  archived: boolean;
+}
+
 export interface Project {
   id: string;
   name: string;
   path: string;
   createdOnGithub: boolean;
+  worktrees: Worktree[];
+  activeWorktreeId: string | null;
 }
 
 export interface ProjectsState {
@@ -25,6 +36,22 @@ function basename(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
+function normalizeProject(p: Project): Project {
+  return {
+    ...p,
+    worktrees: p.worktrees ?? [],
+    activeWorktreeId: p.activeWorktreeId ?? null,
+  };
+}
+
+/** Absolute path the explorer/terminal should use — only the active worktree. */
+export function workspacePath(project: Project): string | null {
+  const active = project.activeWorktreeId
+    ? project.worktrees.find((w) => w.id === project.activeWorktreeId)
+    : undefined;
+  return active?.path ?? null;
+}
+
 // --- Public API --------------------------------------------------------------
 
 /** Open a native folder picker. Returns the chosen absolute path, or null. */
@@ -39,7 +66,11 @@ export async function pickFolder(title?: string): Promise<string | null> {
 
 export async function listProjects(): Promise<ProjectsState> {
   if (!isTauri()) return mockState;
-  return invoke<ProjectsState>("list_projects");
+  const state = await invoke<ProjectsState>("list_projects");
+  return {
+    projects: state.projects.map(normalizeProject),
+    activeId: state.activeId,
+  };
 }
 
 export async function createProject(
@@ -53,6 +84,8 @@ export async function createProject(
       name: name.trim(),
       path: `${parent.replace(/[\\/]+$/, "")}/${name.trim()}`,
       createdOnGithub: createGithub,
+      worktrees: [],
+      activeWorktreeId: null,
     };
     mockState = {
       projects: [...mockState.projects, project],
@@ -60,7 +93,9 @@ export async function createProject(
     };
     return project;
   }
-  return invoke<Project>("create_project", { parent, name, createGithub });
+  return normalizeProject(
+    await invoke<Project>("create_project", { parent, name, createGithub }),
+  );
 }
 
 export async function openProject(
@@ -75,6 +110,8 @@ export async function openProject(
       name: name.trim() || basename(path),
       path,
       createdOnGithub: createGithub,
+      worktrees: [],
+      activeWorktreeId: null,
     };
     mockState = {
       projects: [...mockState.projects, project],
@@ -82,7 +119,9 @@ export async function openProject(
     };
     return project;
   }
-  return invoke<Project>("open_project", { path, name, createGithub, initGit });
+  return normalizeProject(
+    await invoke<Project>("open_project", { path, name, createGithub, initGit }),
+  );
 }
 
 /** Whether the folder is already a git repository. */
@@ -99,6 +138,115 @@ export async function setActiveProject(id: string): Promise<void> {
   await invoke("set_active_project", { id });
 }
 
+export async function createWorktree(
+  projectId: string,
+  name: string,
+  branch?: string,
+): Promise<Project> {
+  if (!isTauri()) {
+    const project = mockState.projects.find((p) => p.id === projectId);
+    if (!project) throw new Error("project not found");
+    const slug = name.trim().toLowerCase().replace(/\s+/g, "-") || "workspace";
+    const worktree: Worktree = {
+      id: `w${Date.now()}`,
+      name: name.trim(),
+      branch: branch?.trim() || `ws/${slug}`,
+      path: `${project.path}-workspaces/${slug}`,
+      archived: false,
+    };
+    const updated: Project = {
+      ...project,
+      worktrees: [...project.worktrees, worktree],
+      activeWorktreeId: worktree.id,
+    };
+    mockState = {
+      projects: mockState.projects.map((p) => (p.id === projectId ? updated : p)),
+      activeId: projectId,
+    };
+    return updated;
+  }
+  return normalizeProject(
+    await invoke<Project>("create_worktree", {
+      projectId,
+      name,
+      branch: branch || null,
+    }),
+  );
+}
+
+export async function setActiveWorktree(
+  projectId: string,
+  worktreeId: string,
+): Promise<Project> {
+  if (!isTauri()) {
+    const project = mockState.projects.find((p) => p.id === projectId);
+    if (!project) throw new Error("project not found");
+    const updated: Project = { ...project, activeWorktreeId: worktreeId };
+    mockState = {
+      projects: mockState.projects.map((p) => (p.id === projectId ? updated : p)),
+      activeId: projectId,
+    };
+    return updated;
+  }
+  return normalizeProject(
+    await invoke<Project>("set_active_worktree", { projectId, worktreeId }),
+  );
+}
+
+export async function removeWorktree(
+  projectId: string,
+  worktreeId: string,
+): Promise<Project> {
+  if (!isTauri()) {
+    const project = mockState.projects.find((p) => p.id === projectId);
+    if (!project) throw new Error("project not found");
+    const worktrees = project.worktrees.filter((w) => w.id !== worktreeId);
+    const updated: Project = {
+      ...project,
+      worktrees,
+      activeWorktreeId:
+        project.activeWorktreeId === worktreeId
+          ? worktrees[0]?.id ?? null
+          : project.activeWorktreeId,
+    };
+    mockState = {
+      projects: mockState.projects.map((p) => (p.id === projectId ? updated : p)),
+      activeId: mockState.activeId,
+    };
+    return updated;
+  }
+  return normalizeProject(
+    await invoke<Project>("remove_worktree", { projectId, worktreeId }),
+  );
+}
+
+export async function archiveWorktree(
+  projectId: string,
+  worktreeId: string,
+): Promise<Project> {
+  if (!isTauri()) {
+    const project = mockState.projects.find((p) => p.id === projectId);
+    if (!project) throw new Error("project not found");
+    const worktrees = project.worktrees.map((w) =>
+      w.id === worktreeId ? { ...w, archived: true } : w,
+    );
+    const updated: Project = {
+      ...project,
+      worktrees,
+      activeWorktreeId:
+        project.activeWorktreeId === worktreeId ? null : project.activeWorktreeId,
+    };
+    mockState = {
+      projects: mockState.projects.map((p) => (p.id === projectId ? updated : p)),
+      activeId: mockState.activeId,
+    };
+    return updated;
+  }
+  return normalizeProject(
+    await invoke<Project>("archive_worktree", { projectId, worktreeId }),
+  );
+}
+
 export async function removeProject(id: string): Promise<ProjectsState> {
   if (!isTauri()) {
     const projects = mockState.projects.filter((p) => p.id !== id);
@@ -107,5 +255,9 @@ export async function removeProject(id: string): Promise<ProjectsState> {
     mockState = { projects, activeId };
     return mockState;
   }
-  return invoke<ProjectsState>("remove_project", { id });
+  const state = await invoke<ProjectsState>("remove_project", { id });
+  return {
+    projects: state.projects.map(normalizeProject),
+    activeId: state.activeId,
+  };
 }

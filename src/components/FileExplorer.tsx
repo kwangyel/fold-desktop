@@ -92,11 +92,13 @@ function FileTreeNode({ entry, depth }: FileTreeNodeProps) {
 
 export default function FileExplorer() {
   const activeId = useProjectStore((s) => s.activeId);
+  // Reload when the isolated worktree path changes (not only the project id).
+  const activePath = useProjectStore((s) => s.activePath);
   const [roots, setRoots] = useState<DirEntry[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!activeId) {
+    if (!activeId || !activePath) {
       setRoots([]);
       return;
     }
@@ -115,12 +117,14 @@ export default function FileExplorer() {
     return () => {
       cancelled = true;
     };
-  }, [activeId]);
+  }, [activeId, activePath]);
 
-  if (!activeId) {
+  if (!activeId || !activePath) {
     return (
       <div className="file-explorer">
-        <div className="file-explorer-empty">No project open</div>
+        <div className="file-explorer-empty">
+          {!activeId ? "No project open" : "No worktree selected"}
+        </div>
       </div>
     );
   }
@@ -129,6 +133,8 @@ export default function FileExplorer() {
     <div className="file-explorer">
       {loading && roots.length === 0 ? (
         <div className="file-explorer-empty">Loading…</div>
+      ) : roots.length === 0 ? (
+        <div className="file-explorer-empty">Empty worktree</div>
       ) : (
         roots.map((entry) => (
           <FileTreeNode key={entry.path} entry={entry} depth={0} />

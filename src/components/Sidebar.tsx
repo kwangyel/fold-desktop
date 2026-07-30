@@ -1,19 +1,54 @@
 import { useEffect, useState } from "react";
-import { IconFolderPlus, IconFolderOpen, IconBrandGithub, IconTrash } from "@tabler/icons-react";
+import {
+  IconFolderPlus,
+  IconFolderOpen,
+  IconBrandGithub,
+  IconTrash,
+  IconArchive,
+  IconPlus,
+  IconGitBranch,
+} from "@tabler/icons-react";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import { useProjectStore } from "../store/projectStore";
+import { isTauri } from "../lib/git";
+import { pickWorktreeName } from "../lib/worktreeNames";
 import ProjectDialog from "./ProjectDialog";
 
 type DialogMode = "create" | "open" | null;
-type ContextMenu = { id: string; name: string; x: number; y: number };
+type ContextMenu =
+  | { kind: "project"; id: string; name: string; x: number; y: number }
+  | {
+      kind: "worktree";
+      projectId: string;
+      worktreeId: string;
+      name: string;
+      archived: boolean;
+      x: number;
+      y: number;
+    };
+
+/** Native confirm dialog in Tauri, browser confirm otherwise. */
+async function confirmDelete(message: string, title: string): Promise<boolean> {
+  if (isTauri()) {
+    return confirm(message, { title, kind: "warning" });
+  }
+  return window.confirm(message);
+}
 
 export default function Sidebar() {
   const projects = useProjectStore((s) => s.projects);
   const activeId = useProjectStore((s) => s.activeId);
+  const error = useProjectStore((s) => s.error);
   const load = useProjectStore((s) => s.load);
   const select = useProjectStore((s) => s.select);
+  const selectWorktree = useProjectStore((s) => s.selectWorktree);
+  const addWorktree = useProjectStore((s) => s.addWorktree);
   const remove = useProjectStore((s) => s.remove);
+  const removeWorktree = useProjectStore((s) => s.removeWorktree);
+  const archiveWorktree = useProjectStore((s) => s.archiveWorktree);
 
   const [dialog, setDialog] = useState<DialogMode>(null);
+  const [creatingId, setCreatingId] = useState<string | null>(null);
   const [menu, setMenu] = useState<ContextMenu | null>(null);
 
   useEffect(() => {
@@ -36,6 +71,22 @@ export default function Sidebar() {
       window.removeEventListener("keydown", onKey);
     };
   }, [menu]);
+
+  async function createWorktree(projectId: string) {
+    if (creatingId) return;
+    const project = useProjectStore.getState().projects.find((p) => p.id === projectId);
+    if (!project) return;
+
+    const name = pickWorktreeName(project.worktrees.map((w) => w.name));
+    setCreatingId(projectId);
+    try {
+      await addWorktree(projectId, name);
+    } catch {
+      // Error is stored on the project store for display.
+    } finally {
+      setCreatingId(null);
+    }
+  }
 
   return (
     <aside className="sidebar">
@@ -61,32 +112,104 @@ export default function Sidebar() {
             No projects yet. Create or open one to get started.
           </div>
         ) : (
-          projects.map((p) => (
-            <div
-              key={p.id}
-              className={`project-row ${activeId === p.id ? "active" : ""}`}
-              onClick={() => select(p.id)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setMenu({ id: p.id, name: p.name, x: e.clientX, y: e.clientY });
-              }}
-              title={p.path}
-            >
-              <span className={`status-dot ${activeId === p.id ? "" : "idle"}`} />
-              <div className="meta">
-                <div className="name">{p.name}</div>
-                <div className="sub">{p.path}</div>
+          projects.map((p) => {
+            const isActiveProject = activeId === p.id;
+            const activeWtId = isActiveProject ? p.activeWorktreeId : null;
+            const isCreating = creatingId === p.id;
+            // Archived worktrees are hidden here (shown in a separate section).
+            const activeWorktrees = p.worktrees.filter((w) => !w.archived);
+            return (
+              <div key={p.id} className="project-group">
+                <div
+                  className={`project-row ${isActiveProject && !activeWorktrees.length ? "active" : ""} ${isActiveProject ? "project-selected" : ""}`}
+                  onClick={() => select(p.id)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setMenu({
+                      kind: "project",
+                      id: p.id,
+                      name: p.name,
+                      x: e.clientX,
+                      y: e.clientY,
+                    });
+                  }}
+                  title={p.path}
+                >
+                  <span
+                    className={`status-dot ${isActiveProject ? "" : "idle"}`}
+                  />
+                  <div className="meta">
+                    <div className="name">{p.name}</div>
+                    <div className="sub">
+                      {activeWorktrees.length > 0
+                        ? `${activeWorktrees.length} worktree${activeWorktrees.length === 1 ? "" : "s"}`
+                        : p.path}
+                    </div>
+                  </div>
+                  {p.createdOnGithub && (
+                    <IconBrandGithub
+                      size={14}
+                      className="gh-badge"
+                      title="Marked for GitHub"
+                    />
+                  )}
+                  <button
+                    className="icon-btn project-plus"
+                    type="button"
+                    title="New worktree"
+                    disabled={isCreating}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void createWorktree(p.id);
+                    }}
+                  >
+                    <IconPlus size={14} stroke={2} />
+                  </button>
+                </div>
+
+                {activeWorktrees.length > 0 && (
+                  <div className="worktree-list">
+                    {activeWorktrees.map((wt) => {
+                      const isActive = isActiveProject && activeWtId === wt.id;
+                      return (
+                        <div
+                          key={wt.id}
+                          className={`worktree-row ${isActive ? "active" : ""}`}
+                          onClick={() => void selectWorktree(p.id, wt.id)}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setMenu({
+                              kind: "worktree",
+                              projectId: p.id,
+                              worktreeId: wt.id,
+                              name: wt.name,
+                              archived: false,
+                              x: e.clientX,
+                              y: e.clientY,
+                            });
+                          }}
+                          title={wt.path}
+                        >
+                          <IconGitBranch
+                            size={13}
+                            stroke={1.75}
+                            className="worktree-icon"
+                          />
+                          <div className="meta">
+                            <div className="name">{wt.name}</div>
+                            <div className="sub">{wt.branch}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
-              {p.createdOnGithub && (
-                <IconBrandGithub
-                  size={14}
-                  className="gh-badge"
-                  title="Marked for GitHub"
-                />
-              )}
-            </div>
-          ))
+            );
+          })
         )}
+        {error && <div className="projects-error">{error}</div>}
       </div>
 
       {menu && (
@@ -95,16 +218,50 @@ export default function Sidebar() {
           style={{ top: menu.y, left: menu.x }}
           onClick={(e) => e.stopPropagation()}
         >
-          <button
-            className="context-menu-item danger"
-            onClick={() => {
-              remove(menu.id);
-              setMenu(null);
-            }}
-          >
-            <IconTrash size={14} stroke={1.75} />
-            Remove from list
-          </button>
+          {menu.kind === "project" ? (
+            <button
+              className="context-menu-item danger"
+              onClick={() => {
+                remove(menu.id);
+                setMenu(null);
+              }}
+            >
+              <IconTrash size={14} stroke={1.75} />
+              Remove from list
+            </button>
+          ) : (
+            <>
+              {!menu.archived && (
+                <button
+                  className="context-menu-item"
+                  onClick={() => {
+                    void archiveWorktree(menu.projectId, menu.worktreeId);
+                    setMenu(null);
+                  }}
+                >
+                  <IconArchive size={14} stroke={1.75} />
+                  Archive worktree
+                </button>
+              )}
+              <button
+                className="context-menu-item danger"
+                onClick={() => {
+                  const { projectId, worktreeId, name } = menu;
+                  setMenu(null);
+                  void (async () => {
+                    const ok = await confirmDelete(
+                      `Delete worktree "${name}" and its branch? This cannot be undone.`,
+                      "Remove worktree",
+                    );
+                    if (ok) await removeWorktree(projectId, worktreeId);
+                  })();
+                }}
+              >
+                <IconTrash size={14} stroke={1.75} />
+                Remove worktree
+              </button>
+            </>
+          )}
         </div>
       )}
 

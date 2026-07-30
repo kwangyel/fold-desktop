@@ -110,7 +110,11 @@ pub fn run() {
             projects::open_project,
             projects::is_git_repo,
             projects::set_active_project,
-            projects::remove_project
+            projects::create_worktree,
+            projects::set_active_worktree,
+            projects::remove_project,
+            projects::remove_worktree,
+            projects::archive_worktree
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

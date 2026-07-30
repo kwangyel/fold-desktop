@@ -149,9 +149,116 @@ select {
   line-height: 1.5;
 }
 
+.projects-error {
+  padding: 8px 10px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--warn);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.project-row .project-plus:disabled {
+  opacity: 0.4;
+  cursor: wait;
+}
+
 .project-row .gh-badge {
   color: var(--muted);
   flex-shrink: 0;
+}
+
+.project-row .project-plus {
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.project-row:hover .project-plus,
+.project-row.project-selected .project-plus {
+  opacity: 1;
+}
+
+.project-group {
+  margin-bottom: 4px;
+}
+
+.worktree-list {
+  padding: 2px 0 6px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.worktree-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.worktree-row:hover {
+  background: var(--panel-2);
+}
+
+.worktree-row.active {
+  background: rgba(124, 92, 255, 0.16);
+}
+
+.worktree-row .worktree-icon {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.worktree-row.active .worktree-icon {
+  color: var(--accent);
+}
+
+.worktree-row .meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.worktree-row .name {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.worktree-row .sub {
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.worktree-list.archived {
+  padding-top: 0;
+}
+
+.worktree-section-header {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 4px 10px 2px;
+}
+
+.worktree-row.archived {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.worktree-row.archived:hover {
+  background: transparent;
 }
 
 .context-menu {
