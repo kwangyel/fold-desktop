@@ -1,4 +1,5 @@
 mod git;
+mod github;
 mod projects;
 mod pty;
 
@@ -11,9 +12,12 @@ use tauri::ipc::Channel;
 use tauri::{Manager, State};
 
 pub struct AppState {
-    sessions: Mutex<HashMap<String, pty::PtySession>>,
+    pub sessions: Mutex<HashMap<String, pty::PtySession>>,
     /// Absolute path of the currently selected project, if any.
     pub active_project: Mutex<Option<PathBuf>>,
+    /// Cancel flag for an in-progress `gh auth login`; setting it stops the
+    /// monitored child. `None` when no login flow is running.
+    pub gh_login: Mutex<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>>,
 }
 
 impl Default for AppState {
@@ -21,6 +25,7 @@ impl Default for AppState {
         Self {
             sessions: Mutex::new(HashMap::new()),
             active_project: Mutex::new(None),
+            gh_login: Mutex::new(None),
         }
     }
 }
@@ -114,7 +119,12 @@ pub fn run() {
             projects::set_active_worktree,
             projects::remove_project,
             projects::remove_worktree,
-            projects::archive_worktree
+            projects::archive_worktree,
+            github::gh_auth_status,
+            github::gh_auth_login,
+            github::gh_auth_cancel,
+            github::gh_auth_logout,
+            github::open_external
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

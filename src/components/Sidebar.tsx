@@ -7,14 +7,16 @@ import {
   IconArchive,
   IconPlus,
   IconGitBranch,
+  IconPlug,
 } from "@tabler/icons-react";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { useProjectStore } from "../store/projectStore";
 import { isTauri } from "../lib/git";
 import { pickWorktreeName } from "../lib/worktreeNames";
 import ProjectDialog from "./ProjectDialog";
+import ConnectAppDialog from "./ConnectAppDialog";
 
-type DialogMode = "create" | "open" | null;
+type DialogMode = "create" | "open" | "connect" | null;
 type ContextMenu =
   | { kind: "project"; id: string; name: string; x: number; y: number }
   | {
@@ -102,6 +104,10 @@ export default function Sidebar() {
           <button className="ghost-btn full" onClick={() => setDialog("open")}>
             <IconFolderOpen size={15} stroke={2} />
             Open Existing
+          </button>
+          <button className="ghost-btn full" onClick={() => setDialog("connect")}>
+            <IconPlug size={15} stroke={2} />
+            Connect App
           </button>
         </div>
       </div>
@@ -265,8 +271,12 @@ export default function Sidebar() {
         </div>
       )}
 
-      {dialog && (
-        <ProjectDialog mode={dialog} onClose={() => setDialog(null)} />
+      {dialog === "connect" ? (
+        <ConnectAppDialog onClose={() => setDialog(null)} />
+      ) : (
+        dialog && (
+          <ProjectDialog mode={dialog} onClose={() => setDialog(null)} />
+        )
       )}
     </aside>
   );
