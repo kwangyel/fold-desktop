@@ -8,11 +8,28 @@ use crate::AppState;
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct Worktree {
+    id: String,
+    name: String,
+    branch: String,
+    path: String,
+    /// Archived worktrees keep their branch but have their folder deleted.
+    #[serde(default)]
+    archived: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct Project {
     id: String,
     name: String,
+    /// Original repository checkout (source for `git worktree add`).
     path: String,
     created_on_github: bool,
+    #[serde(default)]
+    worktrees: Vec<Worktree>,
+    #[serde(default)]
+    active_worktree_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -49,14 +66,34 @@ fn write_file(app: &AppHandle, data: &ProjectsFile) -> Result<(), String> {
     std::fs::write(&path, contents).map_err(|e| format!("failed to write projects.json: {e}"))
 }
 
-/// Reflect the active project's path into the shared runtime state.
+/// Reflect the active workspace path into the shared runtime state.
+///
+/// Important: this must be the *worktree* directory (isolated copy), never the
+/// common parent folder that contains multiple worktrees. Explorer + terminal
+/// both read this path.
 fn set_active_path(state: &State<'_, AppState>, path: Option<PathBuf>) -> Result<(), String> {
     *state.active_project.lock().map_err(|e| e.to_string())? = path;
     Ok(())
 }
 
-fn find_path<'a>(data: &'a ProjectsFile, id: &str) -> Option<&'a Project> {
+fn find_project<'a>(data: &'a ProjectsFile, id: &str) -> Option<&'a Project> {
     data.projects.iter().find(|p| p.id == id)
+}
+
+fn find_project_mut<'a>(data: &'a mut ProjectsFile, id: &str) -> Option<&'a mut Project> {
+    data.projects.iter_mut().find(|p| p.id == id)
+}
+
+/// Resolve the path that explorer/terminal should use for a project.
+/// Only an explicit active worktree counts — never the main checkout or a
+/// sibling worktree fallback.
+fn workspace_path(project: &Project) -> Option<PathBuf> {
+    let id = project.active_worktree_id.as_ref()?;
+    project
+        .worktrees
+        .iter()
+        .find(|w| &w.id == id)
+        .map(|wt| PathBuf::from(&wt.path))
 }
 
 /// Load the persisted active project into runtime state (called at startup).
@@ -65,18 +102,17 @@ pub fn load_active(app: &AppHandle, state: &State<'_, AppState>) -> Result<(), S
     let path = data
         .active_id
         .as_ref()
-        .and_then(|id| find_path(&data, id))
-        .map(|p| PathBuf::from(&p.path));
+        .and_then(|id| find_project(&data, id))
+        .and_then(workspace_path);
     set_active_path(state, path)
 }
 
-fn new_id() -> String {
-    // Timestamp-based id is good enough for a local list.
+fn new_id(prefix: &str) -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    format!("p{nanos}")
+    format!("{prefix}{nanos}")
 }
 
 fn git_init(dir: &Path) -> Result<(), String> {
@@ -87,6 +123,168 @@ fn git_init(dir: &Path) -> Result<(), String> {
         .map_err(|e| format!("failed to run git init: {e}"))?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(())
+}
+
+fn git_in(dir: &Path, args: &[&str]) -> Result<std::process::Output, String> {
+    Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .map_err(|e| format!("failed to run git {}: {e}", args.join(" ")))
+}
+
+fn git_ok(dir: &Path, args: &[&str]) -> bool {
+    git_in(dir, args).map(|o| o.status.success()).unwrap_or(false)
+}
+
+fn git_stdout(dir: &Path, args: &[&str]) -> Result<String, String> {
+    let output = git_in(dir, args)?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            format!("git {} failed", args.join(" "))
+        } else {
+            stderr
+        });
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn commit_all(repo: &Path, message: &str) -> Result<(), String> {
+    let add = git_in(repo, &["add", "-A"])?;
+    if !add.status.success() {
+        let stderr = String::from_utf8_lossy(&add.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            "git add failed".to_string()
+        } else {
+            stderr
+        });
+    }
+    let commit = git_in(
+        repo,
+        &[
+            "-c",
+            "user.email=conductor-clone@local",
+            "-c",
+            "user.name=Conductor Clone",
+            "commit",
+            "--allow-empty",
+            "-m",
+            message,
+        ],
+    )?;
+    if !commit.status.success() {
+        let stderr = String::from_utf8_lossy(&commit.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            "failed to create commit for worktree".to_string()
+        } else {
+            stderr
+        });
+    }
+    Ok(())
+}
+
+/// Prefer `main`, then `master`, then current `HEAD`.
+fn default_base_ref(repo: &Path) -> String {
+    for candidate in ["main", "master"] {
+        if git_ok(repo, &["rev-parse", "--verify", candidate]) {
+            return candidate.to_string();
+        }
+    }
+    "HEAD".to_string()
+}
+
+fn head_tree_is_empty(repo: &Path) -> bool {
+    match git_stdout(repo, &["ls-tree", "-r", "--name-only", "HEAD"]) {
+        Ok(names) => names.is_empty(),
+        Err(_) => true,
+    }
+}
+
+fn working_tree_has_files(repo: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(repo) else {
+        return false;
+    };
+    entries.filter_map(|e| e.ok()).any(|e| e.file_name() != *".git")
+}
+
+/// Make sure the repo has a commit that includes the project files so a new
+/// worktree is not an empty checkout.
+fn ensure_base_commit(repo: &Path) -> Result<(), String> {
+    let has_head = git_ok(repo, &["rev-parse", "--verify", "HEAD"]);
+    if !has_head {
+        // Fresh repo: commit whatever is on disk (may be empty).
+        return commit_all(repo, "Initial commit");
+    }
+    // Recover from an empty root commit when files exist but were never added.
+    if head_tree_is_empty(repo) && working_tree_has_files(repo) {
+        return commit_all(repo, "Add project files");
+    }
+    Ok(())
+}
+
+/// Sanitize a name for use as a folder / branch segment.
+fn sanitize_slug(name: &str) -> String {
+    let mut out = String::new();
+    for ch in name.trim().chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            out.push(ch.to_ascii_lowercase());
+        } else if ch.is_whitespace() || ch == '/' {
+            if !out.ends_with('-') {
+                out.push('-');
+            }
+        }
+    }
+    let trimmed = out.trim_matches('-').to_string();
+    if trimmed.is_empty() {
+        "workspace".to_string()
+    } else {
+        trimmed
+    }
+}
+
+/// Shared parent for all worktrees of a project:
+/// `~/conductor-clone/workspaces/<project-slug>/`
+fn workspaces_root(project_name: &str) -> Result<PathBuf, String> {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| "could not resolve home directory".to_string())?;
+    let root = PathBuf::from(home)
+        .join("conductor-clone")
+        .join("workspaces")
+        .join(sanitize_slug(project_name));
+    std::fs::create_dir_all(&root).map_err(|e| format!("failed to create workspaces dir: {e}"))?;
+    Ok(root)
+}
+
+/// Create an isolated git worktree under the common project folder, starting
+/// from the project's main branch so all committed files are checked out.
+fn add_worktree(repo: &Path, dest: &Path, branch: &str) -> Result<(), String> {
+    if dest.exists() {
+        return Err(format!("{} already exists", dest.display()));
+    }
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create worktree parent: {e}"))?;
+    }
+
+    let base = default_base_ref(repo);
+    let dest_s = dest.to_string_lossy().to_string();
+
+    // New branch from main/master (full file tree), checked out in `dest`.
+    let output = git_in(
+        repo,
+        &["worktree", "add", "-b", branch, &dest_s, &base],
+    )?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            "git worktree add failed".to_string()
+        } else {
+            stderr
+        });
     }
     Ok(())
 }
@@ -116,17 +314,20 @@ pub fn create_project(
     git_init(&dir)?;
 
     let project = Project {
-        id: new_id(),
+        id: new_id("p"),
         name: name.to_string(),
         path: dir.to_string_lossy().to_string(),
         created_on_github: create_github,
+        worktrees: Vec::new(),
+        active_worktree_id: None,
     };
 
     let mut data = read_file(&app)?;
     data.projects.push(project.clone());
     data.active_id = Some(project.id.clone());
     write_file(&app, &data)?;
-    set_active_path(&state, Some(dir))?;
+    // No worktree yet — explorer/terminal stay empty until one is created.
+    set_active_path(&state, None)?;
     Ok(project)
 }
 
@@ -172,20 +373,22 @@ pub fn open_project(
     if let Some(existing) = data.projects.iter().find(|p| p.path == path).cloned() {
         data.active_id = Some(existing.id.clone());
         write_file(&app, &data)?;
-        set_active_path(&state, Some(dir))?;
+        set_active_path(&state, workspace_path(&existing))?;
         return Ok(existing);
     }
 
     let project = Project {
-        id: new_id(),
+        id: new_id("p"),
         name,
         path: dir.to_string_lossy().to_string(),
         created_on_github: create_github,
+        worktrees: Vec::new(),
+        active_worktree_id: None,
     };
     data.projects.push(project.clone());
     data.active_id = Some(project.id.clone());
     write_file(&app, &data)?;
-    set_active_path(&state, Some(dir))?;
+    set_active_path(&state, None)?;
     Ok(project)
 }
 
@@ -196,12 +399,97 @@ pub fn set_active_project(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let mut data = read_file(&app)?;
-    let path = find_path(&data, &id)
-        .map(|p| PathBuf::from(&p.path))
+    let project = find_project(&data, &id)
+        .cloned()
         .ok_or_else(|| "project not found".to_string())?;
     data.active_id = Some(id);
     write_file(&app, &data)?;
-    set_active_path(&state, Some(path))
+    set_active_path(&state, workspace_path(&project))
+}
+
+/// Create a new branch + worktree under the common project folder and activate it.
+#[tauri::command]
+pub fn create_worktree(
+    app: AppHandle,
+    project_id: String,
+    name: String,
+    branch: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Project, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("worktree name is required".to_string());
+    }
+    let slug = sanitize_slug(name);
+    let branch_name = branch
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("ws/{slug}"));
+
+    let mut data = read_file(&app)?;
+    let project = find_project_mut(&mut data, &project_id)
+        .ok_or_else(|| "project not found".to_string())?;
+
+    let repo = PathBuf::from(&project.path);
+    if !repo.join(".git").exists() {
+        return Err("project is not a git repository".to_string());
+    }
+    ensure_base_commit(&repo)?;
+
+    let dest = workspaces_root(&project.name)?.join(&slug);
+    if project.worktrees.iter().any(|w| w.path == dest.to_string_lossy()) {
+        return Err(format!("worktree already registered at {}", dest.display()));
+    }
+
+    add_worktree(&repo, &dest, &branch_name)?;
+
+    let worktree = Worktree {
+        id: new_id("w"),
+        name: name.to_string(),
+        branch: branch_name,
+        // Absolute path to the isolated copy — this is what explorer/terminal use.
+        path: dest.to_string_lossy().to_string(),
+        archived: false,
+    };
+
+    project.worktrees.push(worktree.clone());
+    project.active_worktree_id = Some(worktree.id.clone());
+    let updated = project.clone();
+
+    data.active_id = Some(project_id);
+    write_file(&app, &data)?;
+    // Point runtime state at the worktree folder itself (not the common parent).
+    set_active_path(&state, Some(dest))?;
+    Ok(updated)
+}
+
+/// Select a worktree within a project; explorer + terminal follow its path.
+#[tauri::command]
+pub fn set_active_worktree(
+    app: AppHandle,
+    project_id: String,
+    worktree_id: String,
+    state: State<'_, AppState>,
+) -> Result<Project, String> {
+    let mut data = read_file(&app)?;
+    let project = find_project_mut(&mut data, &project_id)
+        .ok_or_else(|| "project not found".to_string())?;
+
+    let wt = project
+        .worktrees
+        .iter()
+        .find(|w| w.id == worktree_id)
+        .cloned()
+        .ok_or_else(|| "worktree not found".to_string())?;
+
+    project.active_worktree_id = Some(worktree_id);
+    let updated = project.clone();
+    data.active_id = Some(project_id);
+    write_file(&app, &data)?;
+    set_active_path(&state, Some(PathBuf::from(&wt.path)))?;
+    Ok(updated)
 }
 
 #[tauri::command]
@@ -219,8 +507,102 @@ pub fn remove_project(
     let path = data
         .active_id
         .as_ref()
-        .and_then(|aid| find_path(&data, aid))
-        .map(|p| PathBuf::from(&p.path));
+        .and_then(|aid| find_project(&data, aid))
+        .and_then(workspace_path);
     set_active_path(&state, path)?;
     Ok(data)
+}
+
+/// Remove a worktree from the project list (and from git's worktree registry).
+#[tauri::command]
+pub fn remove_worktree(
+    app: AppHandle,
+    project_id: String,
+    worktree_id: String,
+    state: State<'_, AppState>,
+) -> Result<Project, String> {
+    let mut data = read_file(&app)?;
+    let project = find_project_mut(&mut data, &project_id)
+        .ok_or_else(|| "project not found".to_string())?;
+
+    let idx = project
+        .worktrees
+        .iter()
+        .position(|w| w.id == worktree_id)
+        .ok_or_else(|| "worktree not found".to_string())?;
+    let removed = project.worktrees.remove(idx);
+
+    let removed_was_active = project.active_worktree_id.as_deref() == Some(worktree_id.as_str());
+    if removed_was_active {
+        // Do not fall back to main or another worktree — clear selection.
+        project.active_worktree_id = None;
+    }
+
+    // Best-effort: unregister + delete the worktree folder, then delete the
+    // branch (force, since it may hold unmerged commits). This also handles
+    // removing an already-archived worktree — the folder is gone, but the
+    // `branch -D` still fires.
+    let repo = PathBuf::from(&project.path);
+    let _ = git_in(&repo, &["worktree", "remove", "--force", &removed.path]);
+    let _ = std::fs::remove_dir_all(&removed.path);
+    let _ = git_in(&repo, &["worktree", "prune"]);
+    let _ = git_in(&repo, &["branch", "-D", &removed.branch]);
+
+    let updated = project.clone();
+    write_file(&app, &data)?;
+    set_active_path(
+        &state,
+        if removed_was_active {
+            None
+        } else {
+            workspace_path(&updated)
+        },
+    )?;
+    Ok(updated)
+}
+
+/// Archive a worktree: keep the entry and its git branch, but delete the
+/// isolated folder and unregister it from git. One-way (no restore in the UI).
+#[tauri::command]
+pub fn archive_worktree(
+    app: AppHandle,
+    project_id: String,
+    worktree_id: String,
+    state: State<'_, AppState>,
+) -> Result<Project, String> {
+    let mut data = read_file(&app)?;
+    let project = find_project_mut(&mut data, &project_id)
+        .ok_or_else(|| "project not found".to_string())?;
+
+    let wt = project
+        .worktrees
+        .iter_mut()
+        .find(|w| w.id == worktree_id)
+        .ok_or_else(|| "worktree not found".to_string())?;
+    wt.archived = true;
+    let path = wt.path.clone();
+
+    let removed_was_active = project.active_worktree_id.as_deref() == Some(worktree_id.as_str());
+    if removed_was_active {
+        // Do not fall back to main or another worktree — clear selection.
+        project.active_worktree_id = None;
+    }
+
+    // Best-effort: unregister + delete the worktree folder, but KEEP the branch.
+    let repo = PathBuf::from(&project.path);
+    let _ = git_in(&repo, &["worktree", "remove", "--force", &path]);
+    let _ = std::fs::remove_dir_all(&path);
+    let _ = git_in(&repo, &["worktree", "prune"]);
+
+    let updated = project.clone();
+    write_file(&app, &data)?;
+    set_active_path(
+        &state,
+        if removed_was_active {
+            None
+        } else {
+            workspace_path(&updated)
+        },
+    )?;
+    Ok(updated)
 }

@@ -22,8 +22,8 @@ const INITIAL_TERMINAL = createTerminalTab();
 export default function TerminalPanel() {
   const [terminals, setTerminals] = useState<TerminalTab[]>([INITIAL_TERMINAL]);
   const [activeId, setActiveId] = useState(INITIAL_TERMINAL.id);
-  // Restart terminals in the new working directory when the project changes.
-  const activeProject = useProjectStore((s) => s.activeId);
+  // Restart terminals in the new working directory when the worktree changes.
+  const activePath = useProjectStore((s) => s.activePath);
 
   const addTerminal = () => {
     const tab = createTerminalTab();
@@ -70,13 +70,17 @@ export default function TerminalPanel() {
         </div>
       </div>
       <div className="terminal-panel-body">
-        {terminals.map((t) => (
-          <XTerminal
-            key={`${t.id}-${activeProject ?? "none"}`}
-            id={t.id}
-            active={t.id === activeId}
-          />
-        ))}
+        {activePath ? (
+          terminals.map((t) => (
+            <XTerminal
+              key={`${t.id}-${activePath}`}
+              id={t.id}
+              active={t.id === activeId}
+            />
+          ))
+        ) : (
+          <div className="terminal-empty">No worktree selected</div>
+        )}
       </div>
     </div>
   );

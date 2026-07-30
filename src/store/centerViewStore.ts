@@ -42,6 +42,8 @@ type CenterViewStore = {
   openDiffTab: (path: string, original: string, modified: string) => void;
   updateDiffContent: (id: string, original: string, modified: string) => void;
   closeDiffTab: () => void;
+  /** Drop editor/diff tabs when switching projects or worktrees. */
+  closeWorkspaceTabs: () => void;
   pinTab: (id: string) => void;
   closeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
@@ -205,6 +207,18 @@ export const useCenterViewStore = create<CenterViewStore>((set, get) => ({
         activeTabId = newTabs[newIndex].id;
       }
       return { tabs: newTabs, activeTabId };
+    });
+  },
+
+  closeWorkspaceTabs: () => {
+    set((state) => {
+      const tabs = state.tabs.filter((tab) => tab.type === "chat");
+      const nextTabs = tabs.length > 0 ? tabs : [INITIAL_CHAT_TAB];
+      const activeStillOpen = nextTabs.some((t) => t.id === state.activeTabId);
+      return {
+        tabs: nextTabs,
+        activeTabId: activeStillOpen ? state.activeTabId : nextTabs[0].id,
+      };
     });
   },
 
