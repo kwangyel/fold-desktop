@@ -44,10 +44,10 @@ export async function setupAppMenu(): Promise<void> {
 
   if (navigator.platform.toLowerCase().includes("mac")) {
     const appMenu = await Submenu.new({
-      text: "Conductor Clone",
+      text: "Fold",
       items: [
         await PredefinedMenuItem.new({
-          item: { About: { name: "Conductor Clone", version: "0.1.0" } },
+          item: { About: { name: "Fold", version: "0.1.0" } },
         }),
         await PredefinedMenuItem.new({ item: "Separator" }),
         await PredefinedMenuItem.new({ item: "Hide" }),
