@@ -8,6 +8,7 @@ import {
   IconPlus,
   IconGitBranch,
   IconPlug,
+  IconRobot,
 } from "@tabler/icons-react";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { useProjectStore } from "../store/projectStore";
@@ -15,9 +16,10 @@ import { isTauri } from "../lib/git";
 import { pickWorktreeName } from "../lib/worktreeNames";
 import ProjectDialog from "./ProjectDialog";
 import ConnectAppDialog from "./ConnectAppDialog";
+import ConnectHarnessDialog from "./ConnectHarnessDialog";
 import UserMenu from "./UserMenu";
 
-type DialogMode = "create" | "open" | "connect" | null;
+type DialogMode = "create" | "open" | "connect" | "harness" | null;
 type ContextMenu =
   | { kind: "project"; id: string; name: string; x: number; y: number }
   | {
@@ -110,6 +112,10 @@ export default function Sidebar() {
           <button className="ghost-btn full" onClick={() => setDialog("connect")}>
             <IconPlug size={15} stroke={2} />
             Connect App
+          </button>
+          <button className="ghost-btn full" onClick={() => setDialog("harness")}>
+            <IconRobot size={15} stroke={2} />
+            Connect Harness
           </button>
         </div>
       </div>
@@ -275,6 +281,8 @@ export default function Sidebar() {
 
       {dialog === "connect" ? (
         <ConnectAppDialog onClose={() => setDialog(null)} />
+      ) : dialog === "harness" ? (
+        <ConnectHarnessDialog onClose={() => setDialog(null)} />
       ) : (
         dialog && (
           <ProjectDialog mode={dialog} onClose={() => setDialog(null)} />
