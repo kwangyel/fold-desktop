@@ -1,3 +1,4 @@
+mod auth;
 mod git;
 mod github;
 mod projects;
@@ -87,8 +88,19 @@ fn pty_kill(id: String, state: State<'_, AppState>) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    // Single-instance must be registered first on Windows/Linux so a second
+    // launch (from the browser opening the deep link) forwards its argv — which
+    // carries the `com.fold.dev://` URL — into the already-running app rather
+    // than starting a new process. Not needed on macOS (handled via onOpenUrl).
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {}));
+
+    builder
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_http::init())
         .manage(AppState::default())
         .setup(|app| {
             // Restore the last active project into runtime state on launch.
@@ -96,6 +108,16 @@ pub fn run() {
             let state = app.state::<AppState>();
             if let Err(e) = projects::load_active(&handle, &state) {
                 eprintln!("failed to load active project: {e}");
+            }
+
+            // Register the `com.fold.dev://` scheme at runtime so it resolves
+            // during `tauri dev` (in release the installer registers it).
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                if let Err(e) = app.deep_link().register_all() {
+                    eprintln!("failed to register deep link scheme: {e}");
+                }
             }
 
             if let Some(window) = app.get_webview_window("main") {
@@ -146,7 +168,10 @@ pub fn run() {
             github::gh_auth_login,
             github::gh_auth_cancel,
             github::gh_auth_logout,
-            github::open_external
+            github::open_external,
+            auth::auth_save_token,
+            auth::auth_get_token,
+            auth::auth_clear_token
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

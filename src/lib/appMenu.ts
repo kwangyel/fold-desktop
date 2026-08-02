@@ -1,6 +1,7 @@
 import { Menu, MenuItem, PredefinedMenuItem, Submenu } from "@tauri-apps/api/menu";
 import { closeActiveTab } from "./closeActiveTab";
 import { isTauri } from "./git";
+import { useAuthStore } from "../store/authStore";
 
 export async function setupAppMenu(): Promise<void> {
   if (!isTauri()) return;
@@ -14,9 +15,21 @@ export async function setupAppMenu(): Promise<void> {
     },
   });
 
+  const signOut = await MenuItem.new({
+    id: "sign-out",
+    text: "Sign Out",
+    action: () => {
+      void useAuthStore.getState().logout();
+    },
+  });
+
   const fileMenu = await Submenu.new({
     text: "File",
-    items: [closeTab],
+    items: [
+      closeTab,
+      await PredefinedMenuItem.new({ item: "Separator" }),
+      signOut,
+    ],
   });
 
   const editMenu = await Submenu.new({

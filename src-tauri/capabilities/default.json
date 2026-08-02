@@ -12,6 +12,12 @@
     "git-commands",
     "project-commands",
     "github-commands",
-    "dialog:default"
+    "auth-commands",
+    "dialog:default",
+    "deep-link:default",
+    {
+      "identifier": "http:default",
+      "allow": [{ "url": "https://fold.optulus.com/*" }]
+    }
   ]
 }
