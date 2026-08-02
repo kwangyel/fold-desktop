@@ -43,6 +43,9 @@ export const useAuthStore = create<AuthStore>((set, get) => {
     finishing = true;
     try {
       const user = decodeJwt(token);
+      if (!user) {
+        throw new Error("Received a malformed token. Please try again.");
+      }
       if (isExpired(user)) {
         throw new Error("Received an expired token. Please try again.");
       }
@@ -78,6 +81,12 @@ export const useAuthStore = create<AuthStore>((set, get) => {
     error: null,
 
     init: async () => {
+      // Browser dev (`npm run dev` without Tauri) can't reach the backend HTTP
+      // helpers; show the workspace with mock data like the rest of the app.
+      if (!isTauri()) {
+        set({ status: "signedIn", token: null, user: null });
+        return;
+      }
       await ensureDeepLink();
       try {
         const token = await getToken();
@@ -119,6 +128,9 @@ export const useAuthStore = create<AuthStore>((set, get) => {
               await finish(token);
               return;
             }
+            // Bound the worst case if the backend returns `pending` promptly
+            // instead of holding the connection for the full timeout.
+            await new Promise((r) => setTimeout(r, 1000));
           } catch (e) {
             if (get().status === "signingIn") {
               set({ status: "signedOut", error: String(e) });

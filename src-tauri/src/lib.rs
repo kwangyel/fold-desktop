@@ -90,12 +90,22 @@ fn pty_kill(id: String, state: State<'_, AppState>) -> Result<(), String> {
 pub fn run() {
     let builder = tauri::Builder::default();
 
-    // Single-instance must be registered first on Windows/Linux so a second
-    // launch (from the browser opening the deep link) forwards its argv — which
-    // carries the `com.fold.dev://` URL — into the already-running app rather
-    // than starting a new process. Not needed on macOS (handled via onOpenUrl).
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {}));
+    // Single-instance must be registered FIRST (before deep-link) so that when
+    // the browser opens the `com.fold.dev://` deep link and the OS launches a
+    // second copy of the app, that copy forwards the URL to the already-running
+    // instance and then exits — instead of leaving a duplicate window open.
+    // The `deep-link` feature makes the plugin forward the callback URL (from
+    // argv on Windows/Linux, from the launch event on macOS) to the primary
+    // instance's deep-link `onOpenUrl` listener. We also focus the existing
+    // window so it comes to the front.
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.show();
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
+    }));
 
     builder
         .plugin(tauri_plugin_dialog::init())

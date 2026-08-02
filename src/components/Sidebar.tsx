@@ -15,6 +15,7 @@ import { isTauri } from "../lib/git";
 import { pickWorktreeName } from "../lib/worktreeNames";
 import ProjectDialog from "./ProjectDialog";
 import ConnectAppDialog from "./ConnectAppDialog";
+import UserMenu from "./UserMenu";
 
 type DialogMode = "create" | "open" | "connect" | null;
 type ContextMenu =
@@ -92,6 +93,7 @@ export default function Sidebar() {
 
   return (
     <aside className="sidebar">
+      <UserMenu />
       <div className="new-project">
         <div className="section-header">
           <span>Projects</span>
