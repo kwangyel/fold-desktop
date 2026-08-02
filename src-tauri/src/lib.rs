@@ -1,3 +1,4 @@
+mod auth;
 mod git;
 mod github;
 mod projects;
@@ -87,8 +88,29 @@ fn pty_kill(id: String, state: State<'_, AppState>) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    // Single-instance must be registered FIRST (before deep-link) so that when
+    // the browser opens the `com.fold.dev://` deep link and the OS launches a
+    // second copy of the app, that copy forwards the URL to the already-running
+    // instance and then exits — instead of leaving a duplicate window open.
+    // The `deep-link` feature makes the plugin forward the callback URL (from
+    // argv on Windows/Linux, from the launch event on macOS) to the primary
+    // instance's deep-link `onOpenUrl` listener. We also focus the existing
+    // window so it comes to the front.
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.show();
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
+    }));
+
+    builder
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_http::init())
         .manage(AppState::default())
         .setup(|app| {
             // Restore the last active project into runtime state on launch.
@@ -96,6 +118,16 @@ pub fn run() {
             let state = app.state::<AppState>();
             if let Err(e) = projects::load_active(&handle, &state) {
                 eprintln!("failed to load active project: {e}");
+            }
+
+            // Register the `com.fold.dev://` scheme at runtime so it resolves
+            // during `tauri dev` (in release the installer registers it).
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                if let Err(e) = app.deep_link().register_all() {
+                    eprintln!("failed to register deep link scheme: {e}");
+                }
             }
 
             if let Some(window) = app.get_webview_window("main") {
@@ -146,7 +178,10 @@ pub fn run() {
             github::gh_auth_login,
             github::gh_auth_cancel,
             github::gh_auth_logout,
-            github::open_external
+            github::open_external,
+            auth::auth_save_token,
+            auth::auth_get_token,
+            auth::auth_clear_token
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

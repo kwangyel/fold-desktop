@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "auth-commands"
+description = "Persist and read the backend session token (GitHub login)"
+commands.allow = ["auth_save_token", "auth_get_token", "auth_clear_token"]
