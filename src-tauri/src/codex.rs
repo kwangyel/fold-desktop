@@ -197,17 +197,13 @@ pub fn codex_status() -> Result<CodexStatus, String> {
     }
 
     let bin = resolve_codex_bin().ok_or_else(|| "Codex CLI not found".to_string())?;
-    if login_status_ok(&bin) || auth_file_present() {
-        let method = if auth_file_present() && env_auth_method().is_none() {
-            // File/keychain login is typically ChatGPT subscription auth.
-            "subscription"
-        } else {
-            "subscription"
-        };
+    // Prefer the cheap auth.json check before spawning `codex login status`.
+    if auth_file_present() || login_status_ok(&bin) {
         return Ok(CodexStatus {
             installed: true,
             authenticated: true,
-            method: Some(method.to_string()),
+            // File/keychain login is typically ChatGPT subscription auth.
+            method: Some("subscription".to_string()),
         });
     }
 

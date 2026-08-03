@@ -25,12 +25,17 @@ type CursorStore = {
   /** Disconnect in flight. */
   disconnecting: boolean;
   error: string | null;
-  refresh: () => Promise<void>;
+  refresh: (opts?: { force?: boolean }) => Promise<void>;
   connect: (apiKey: string) => Promise<void>;
   disconnect: () => Promise<void>;
   openApiKeyDocs: () => Promise<void>;
   openCliDocs: () => Promise<void>;
 };
+
+const STATUS_TTL_MS = 15_000;
+
+let inflightRefresh: Promise<void> | null = null;
+let checkedAt = 0;
 
 export const useCursorStore = create<CursorStore>((set, get) => ({
   authenticated: false,
@@ -43,21 +48,34 @@ export const useCursorStore = create<CursorStore>((set, get) => ({
   disconnecting: false,
   error: null,
 
-  refresh: async () => {
-    set({ checking: true, error: null });
-    try {
-      const status = await cursorStatus();
-      set({
-        authenticated: status.authenticated,
-        method: status.method,
-        apiKeyName: status.apiKeyName,
-        userEmail: status.userEmail,
-        cliInstalled: status.cliInstalled,
-        checking: false,
-      });
-    } catch (e) {
-      set({ error: String(e), checking: false });
+  refresh: async (opts) => {
+    const force = opts?.force ?? false;
+    if (!force && checkedAt && Date.now() - checkedAt < STATUS_TTL_MS) {
+      return;
     }
+    if (inflightRefresh) return inflightRefresh;
+
+    inflightRefresh = (async () => {
+      set({ checking: true, error: null });
+      try {
+        const status = await cursorStatus();
+        checkedAt = Date.now();
+        set({
+          authenticated: status.authenticated,
+          method: status.method,
+          apiKeyName: status.apiKeyName,
+          userEmail: status.userEmail,
+          cliInstalled: status.cliInstalled,
+          checking: false,
+        });
+      } catch (e) {
+        set({ error: String(e), checking: false });
+      } finally {
+        inflightRefresh = null;
+      }
+    })();
+
+    return inflightRefresh;
   },
 
   connect: async (apiKey) => {
@@ -70,6 +88,7 @@ export const useCursorStore = create<CursorStore>((set, get) => ({
     set({ connecting: true, error: null });
     try {
       const status = await cursorConnect(trimmed);
+      checkedAt = Date.now();
       set({
         authenticated: status.authenticated,
         method: status.method,
@@ -89,6 +108,7 @@ export const useCursorStore = create<CursorStore>((set, get) => ({
     set({ disconnecting: true, error: null });
     try {
       const status = await cursorDisconnect();
+      checkedAt = Date.now();
       set({
         authenticated: false,
         method: null,

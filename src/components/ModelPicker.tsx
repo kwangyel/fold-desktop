@@ -27,7 +27,11 @@ export default function ModelPicker({
   const refresh = useHarnessStore((s) => s.refresh);
 
   useEffect(() => {
-    void refresh();
+    // Defer so first paint isn't competing with CLI status / model listing.
+    const id = window.setTimeout(() => {
+      void refresh();
+    }, 0);
+    return () => window.clearTimeout(id);
   }, [refresh]);
 
   useEffect(() => {

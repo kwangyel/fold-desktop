@@ -1,12 +1,10 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from "react";
 import {
   IconCheck,
   IconExternalLink,
   IconLoader2,
   IconRefresh,
 } from "@tabler/icons-react";
-import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
 import { HARNESS_CATALOG, harnessMeta } from "../lib/harnesses";
 import { useClaudeStore } from "../store/claudeStore";
 import { useCodexStore } from "../store/codexStore";
@@ -14,8 +12,9 @@ import { useCursorStore } from "../store/cursorStore";
 import { useHarnessStore } from "../store/harnessStore";
 import { useOpenCodeStore } from "../store/opencodeStore";
 import HarnessIcon from "./icons/HarnessIcon";
-import "@xterm/xterm/css/xterm.css";
 import "./ConnectHarnessDialog.css";
+
+const LoginTerminal = lazy(() => import("./LoginTerminal"));
 
 function methodLabel(method: string | null): string {
   if (method === "apiKey") return "API key";
@@ -23,64 +22,17 @@ function methodLabel(method: string | null): string {
   return method ?? "connected";
 }
 
-type LoginTerminalProps = {
-  subscribeLoginOutput: (listener: (data: Uint8Array) => void) => () => void;
-  writeLogin: (data: string) => Promise<void>;
-  cursorColor?: string;
-};
-
-function LoginTerminal({
-  subscribeLoginOutput,
-  writeLogin,
-  cursorColor = "#d97757",
-}: LoginTerminalProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const termRef = useRef<Terminal | null>(null);
+/** Refresh models only after a login flow completes (not on initial status load). */
+function useRefreshModelsAfterLogin(connecting: boolean, authenticated: boolean) {
+  const refreshModels = useHarnessStore((s) => s.refreshModels);
+  const wasConnecting = useRef(false);
 
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const term = new Terminal({
-      fontFamily: '"SF Mono", Menlo, monospace',
-      fontSize: 11,
-      lineHeight: 1.2,
-      cursorBlink: true,
-      convertEol: true,
-      theme: {
-        background: "#101014",
-        foreground: "#e6e6e6",
-        cursor: cursorColor,
-        selectionBackground: "rgba(217, 119, 87, 0.3)",
-      },
-    });
-    const fit = new FitAddon();
-    term.loadAddon(fit);
-    term.open(container);
-    fit.fit();
-    termRef.current = term;
-
-    const unsub = subscribeLoginOutput((bytes) => {
-      term.write(bytes);
-    });
-
-    const dataSub = term.onData((data) => {
-      void writeLogin(data);
-    });
-
-    const observer = new ResizeObserver(() => fit.fit());
-    observer.observe(container);
-
-    return () => {
-      observer.disconnect();
-      dataSub.dispose();
-      unsub();
-      term.dispose();
-      termRef.current = null;
-    };
-  }, [subscribeLoginOutput, writeLogin, cursorColor]);
-
-  return <div ref={containerRef} className="harness-login-terminal" />;
+    if (wasConnecting.current && !connecting && authenticated) {
+      void refreshModels();
+    }
+    wasConnecting.current = connecting;
+  }, [connecting, authenticated, refreshModels]);
 }
 
 function ClaudeCodeRow() {
@@ -95,17 +47,8 @@ function ClaudeCodeRow() {
   const openInstallDocs = useClaudeStore((s) => s.openInstallDocs);
   const subscribeLoginOutput = useClaudeStore((s) => s.subscribeLoginOutput);
   const writeLogin = useClaudeStore((s) => s.writeLogin);
-  const refreshHarnessModels = useHarnessStore((s) => s.refresh);
 
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  useEffect(() => {
-    if (authenticated) {
-      void refreshHarnessModels();
-    }
-  }, [authenticated, refreshHarnessModels]);
+  useRefreshModelsAfterLogin(connecting, authenticated);
 
   const harness = HARNESS_CATALOG[0];
   return (
@@ -128,7 +71,7 @@ function ClaudeCodeRow() {
             className="ghost-btn harness-refresh-btn"
             type="button"
             disabled={checking || connecting}
-            onClick={() => void refresh()}
+            onClick={() => void refresh({ force: true })}
             title="Recheck Claude Code connection"
             aria-label="Refresh Claude Code status"
           >
@@ -172,10 +115,12 @@ function ClaudeCodeRow() {
             <IconLoader2 size={14} className="spin" />
             Waiting for authorization… complete login in the terminal below.
           </div>
-          <LoginTerminal
-            subscribeLoginOutput={subscribeLoginOutput}
-            writeLogin={writeLogin}
-          />
+          <Suspense fallback={<div className="harness-login-terminal" />}>
+            <LoginTerminal
+              subscribeLoginOutput={subscribeLoginOutput}
+              writeLogin={writeLogin}
+            />
+          </Suspense>
         </div>
       )}
 
@@ -196,17 +141,8 @@ function CodexRow() {
   const openInstallDocs = useCodexStore((s) => s.openInstallDocs);
   const subscribeLoginOutput = useCodexStore((s) => s.subscribeLoginOutput);
   const writeLogin = useCodexStore((s) => s.writeLogin);
-  const refreshHarnessModels = useHarnessStore((s) => s.refresh);
 
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  useEffect(() => {
-    if (authenticated) {
-      void refreshHarnessModels();
-    }
-  }, [authenticated, refreshHarnessModels]);
+  useRefreshModelsAfterLogin(connecting, authenticated);
 
   const harness = harnessMeta("codex");
   return (
@@ -229,7 +165,7 @@ function CodexRow() {
             className="ghost-btn harness-refresh-btn"
             type="button"
             disabled={checking || connecting}
-            onClick={() => void refresh()}
+            onClick={() => void refresh({ force: true })}
             title="Recheck Codex connection"
             aria-label="Refresh Codex status"
           >
@@ -273,11 +209,13 @@ function CodexRow() {
             <IconLoader2 size={14} className="spin" />
             Waiting for authorization… complete ChatGPT / API key login below.
           </div>
-          <LoginTerminal
-            subscribeLoginOutput={subscribeLoginOutput}
-            writeLogin={writeLogin}
-            cursorColor="#10a37f"
-          />
+          <Suspense fallback={<div className="harness-login-terminal" />}>
+            <LoginTerminal
+              subscribeLoginOutput={subscribeLoginOutput}
+              writeLogin={writeLogin}
+              cursorColor="#10a37f"
+            />
+          </Suspense>
         </div>
       )}
 
@@ -299,17 +237,8 @@ function OpenCodeRow() {
   const openInstallDocs = useOpenCodeStore((s) => s.openInstallDocs);
   const subscribeLoginOutput = useOpenCodeStore((s) => s.subscribeLoginOutput);
   const writeLogin = useOpenCodeStore((s) => s.writeLogin);
-  const refreshHarnessModels = useHarnessStore((s) => s.refresh);
 
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  useEffect(() => {
-    if (authenticated) {
-      void refreshHarnessModels();
-    }
-  }, [authenticated, refreshHarnessModels]);
+  useRefreshModelsAfterLogin(connecting, authenticated);
 
   const harness = harnessMeta("opencode");
   let subtitle = harness.description;
@@ -336,7 +265,7 @@ function OpenCodeRow() {
             className="ghost-btn harness-refresh-btn"
             type="button"
             disabled={checking || connecting}
-            onClick={() => void refresh()}
+            onClick={() => void refresh({ force: true })}
             title="Recheck OpenCode connection"
             aria-label="Refresh OpenCode status"
           >
@@ -380,11 +309,13 @@ function OpenCodeRow() {
             <IconLoader2 size={14} className="spin" />
             Select a provider and paste an API key in the terminal below.
           </div>
-          <LoginTerminal
-            subscribeLoginOutput={subscribeLoginOutput}
-            writeLogin={writeLogin}
-            cursorColor="#2563eb"
-          />
+          <Suspense fallback={<div className="harness-login-terminal" />}>
+            <LoginTerminal
+              subscribeLoginOutput={subscribeLoginOutput}
+              writeLogin={writeLogin}
+              cursorColor="#2563eb"
+            />
+          </Suspense>
         </div>
       )}
 
@@ -408,17 +339,9 @@ function CursorRow() {
   const disconnect = useCursorStore((s) => s.disconnect);
   const openApiKeyDocs = useCursorStore((s) => s.openApiKeyDocs);
   const openCliDocs = useCursorStore((s) => s.openCliDocs);
-  const refreshHarnessModels = useHarnessStore((s) => s.refresh);
+  const refreshModels = useHarnessStore((s) => s.refreshModels);
 
   const [apiKey, setApiKey] = useState("");
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  useEffect(() => {
-    void refreshHarnessModels();
-  }, [authenticated, refreshHarnessModels]);
 
   const harness = harnessMeta("cursor");
 
@@ -438,14 +361,14 @@ function CursorRow() {
     await connect(apiKey);
     if (useCursorStore.getState().authenticated) {
       setApiKey("");
-      void refreshHarnessModels();
+      void refreshModels();
     }
   }
 
   async function onDisconnect() {
     await disconnect();
     setApiKey("");
-    void refreshHarnessModels();
+    void refreshModels();
   }
 
   return (
@@ -462,7 +385,7 @@ function CursorRow() {
             className="ghost-btn harness-refresh-btn"
             type="button"
             disabled={checking || connecting || disconnecting}
-            onClick={() => void refresh()}
+            onClick={() => void refresh({ force: true })}
             title="Recheck Cursor connection"
             aria-label="Refresh Cursor status"
           >
@@ -572,6 +495,16 @@ export default function ConnectHarnessDialog({
 
   const anyConnecting =
     claudeConnecting || codexConnecting || opencodeConnecting;
+
+  // One parallel status pass for the whole dialog (rows no longer each refresh).
+  useEffect(() => {
+    void Promise.all([
+      useClaudeStore.getState().refresh(),
+      useCodexStore.getState().refresh(),
+      useCursorStore.getState().refresh(),
+      useOpenCodeStore.getState().refresh(),
+    ]);
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
