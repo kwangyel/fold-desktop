@@ -7,48 +7,12 @@ import {
 } from "@tabler/icons-react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { HARNESS_CATALOG } from "../lib/harnesses";
 import { useClaudeStore } from "../store/claudeStore";
+import { useHarnessStore } from "../store/harnessStore";
+import HarnessIcon from "./icons/HarnessIcon";
 import "@xterm/xterm/css/xterm.css";
 import "./ConnectHarnessDialog.css";
-
-type Harness = {
-  id: string;
-  name: string;
-  description: string;
-  iconClass: string;
-  iconLabel: string;
-};
-
-const HARNESSES: Harness[] = [
-  {
-    id: "claudecode",
-    name: "Claude Code",
-    description: "Connect the Claude Code CLI harness",
-    iconClass: "claudecode",
-    iconLabel: "CC",
-  },
-  {
-    id: "codex",
-    name: "Codex",
-    description: "Connect the Codex harness",
-    iconClass: "codex",
-    iconLabel: "CX",
-  },
-  {
-    id: "cursor",
-    name: "Cursor",
-    description: "Connect the Cursor harness",
-    iconClass: "cursor",
-    iconLabel: "CR",
-  },
-  {
-    id: "opencode",
-    name: "OpenCode",
-    description: "Connect the OpenCode harness",
-    iconClass: "opencode",
-    iconLabel: "OC",
-  },
-];
 
 function methodLabel(method: string | null): string {
   if (method === "apiKey") return "API key";
@@ -118,19 +82,24 @@ function ClaudeCodeRow() {
   const refresh = useClaudeStore((s) => s.refresh);
   const startLogin = useClaudeStore((s) => s.startLogin);
   const openInstallDocs = useClaudeStore((s) => s.openInstallDocs);
+  const refreshHarnessModels = useHarnessStore((s) => s.refresh);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
-  const harness = HARNESSES[0];
+  // After connect status changes to authenticated, refresh model catalog.
+  useEffect(() => {
+    if (authenticated) {
+      void refreshHarnessModels();
+    }
+  }, [authenticated, refreshHarnessModels]);
 
+  const harness = HARNESS_CATALOG[0];
   return (
     <>
       <div className="harness-row">
-        <div className={`harness-icon ${harness.iconClass}`}>
-          {harness.iconLabel}
-        </div>
+        <HarnessIcon harness={harness} size={34} />
         <div className="harness-meta">
           <div className="harness-name">{harness.name}</div>
           <div className="harness-sub">
@@ -239,11 +208,9 @@ export default function ConnectHarnessDialog({
           <div className="harness-list">
             <ClaudeCodeRow />
 
-            {HARNESSES.slice(1).map((harness) => (
+            {HARNESS_CATALOG.slice(1).map((harness) => (
               <div key={harness.id} className="harness-row">
-                <div className={`harness-icon ${harness.iconClass}`}>
-                  {harness.iconLabel}
-                </div>
+                <HarnessIcon harness={harness} size={34} />
                 <div className="harness-meta">
                   <div className="harness-name">{harness.name}</div>
                   <div className="harness-sub">{harness.description}</div>

@@ -38,7 +38,9 @@
 }
 
 .harness-icon.claudecode {
-  background: #d97757;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
 }
 
 .harness-icon.codex {

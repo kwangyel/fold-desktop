@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::State;
 
@@ -19,6 +19,27 @@ pub struct ClaudeStatus {
     installed: bool,
     authenticated: bool,
     method: Option<String>,
+}
+
+/// Model catalog entry from the Claude Agent SDK (`supportedModels()`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeModelInfo {
+    value: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolved_model: Option<String>,
+    display_name: String,
+    description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    supports_effort: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    supported_effort_levels: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    supports_adaptive_thinking: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    supports_fast_mode: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    supports_auto_mode: Option<bool>,
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -264,6 +285,93 @@ fn stream_pipe<R: Read + Send + 'static>(mut reader: R, on_output: Channel) {
     });
 }
 
+/// Resolve the Fold project root (directory with `package.json` + `scripts/`).
+fn project_root() -> Option<PathBuf> {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    if let Some(parent) = manifest.parent() {
+        if parent.join("package.json").is_file() {
+            return Some(parent.to_path_buf());
+        }
+    }
+    // Walk up from the current working directory (packaged / alternate launch).
+    if let Ok(mut dir) = std::env::current_dir() {
+        loop {
+            if dir.join("package.json").is_file()
+                && dir.join("scripts").join("list-claude-models.mjs").is_file()
+            {
+                return Some(dir);
+            }
+            if !dir.pop() {
+                break;
+            }
+        }
+    }
+    None
+}
+
+fn resolve_node_bin() -> Option<PathBuf> {
+    if Command::new("node")
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+    {
+        return Some(PathBuf::from("node"));
+    }
+    for candidate in [
+        "/usr/local/bin/node",
+        "/opt/homebrew/bin/node",
+        "/usr/bin/node",
+    ] {
+        let path = PathBuf::from(candidate);
+        if is_executable(&path) {
+            return Some(path);
+        }
+    }
+    None
+}
+
+/// List Claude Code models via the Agent SDK (`supportedModels()`).
+#[tauri::command]
+pub fn claude_list_models() -> Result<Vec<ClaudeModelInfo>, String> {
+    let root = project_root().ok_or_else(|| {
+        "Fold project root not found (need package.json + scripts/list-claude-models.mjs)"
+            .to_string()
+    })?;
+    let script = root.join("scripts").join("list-claude-models.mjs");
+    if !script.is_file() {
+        return Err(format!("list-claude-models script missing: {}", script.display()));
+    }
+    let node = resolve_node_bin().ok_or_else(|| "Node.js not found (required to query Claude Agent SDK)".to_string())?;
+
+    let output = Command::new(&node)
+        .arg(&script)
+        .current_dir(&root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("failed to run list-claude-models: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "list-claude-models failed ({}): {}",
+            output.status,
+            stderr.trim()
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    serde_json::from_str(stdout.trim()).map_err(|e| {
+        format!(
+            "failed to parse model catalog: {e}; stdout={}",
+            stdout.chars().take(200).collect::<String>()
+        )
+    })
+}
+
 /// Run a Claude Code agent in a worktree via `claude -p … --output-format stream-json`.
 /// Streams NDJSON events to the channel; emits `__CLAUDE_EXIT__:<code>` on exit.
 #[tauri::command]
@@ -272,6 +380,8 @@ pub fn claude_agent_run(
     prompt: String,
     worktree: String,
     model: Option<String>,
+    effort: Option<String>,
+    fast_mode: Option<bool>,
     on_output: Channel,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
@@ -304,6 +414,15 @@ pub fn claude_agent_run(
     if let Some(m) = model.filter(|s| !s.is_empty()) {
         args.push("--model".into());
         args.push(m);
+    }
+    if let Some(e) = effort.filter(|s| !s.is_empty()) {
+        args.push("--effort".into());
+        args.push(e);
+    }
+    // Non-interactive (`-p`) fast mode requires settings JSON (CLI docs).
+    if fast_mode.unwrap_or(false) {
+        args.push("--settings".into());
+        args.push(r#"{"fastMode":true}"#.into());
     }
 
     let mut child = Command::new(&bin)

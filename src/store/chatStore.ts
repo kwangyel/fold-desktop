@@ -5,9 +5,11 @@ import {
   claudeAgentRun,
   claudeReleaseChannel,
 } from '../lib/claude';
+import type { EffortLevel, HarnessId } from '../lib/harnesses';
 import type { SDKMessage } from '../lib/claudeStreamTypes';
 import { useProjectStore } from './projectStore';
 import { useChangesStore } from './changesStore';
+import { findHarnessModel, useHarnessStore } from './harnessStore';
 
 export type Attachment = {
   id: string;
@@ -30,7 +32,9 @@ export type Message = {
 export type ChatTabState = {
   messages: Message[];
   selectedModel: string;
-  modelEffort: 'low' | 'medium' | 'high' | 'ultracode';
+  /** Selected harness id for the model (e.g. claudecode). */
+  selectedHarness: string;
+  modelEffort: EffortLevel;
   mode: 'normal' | 'fast';
   attachments: Attachment[];
   loading: boolean;
@@ -46,8 +50,8 @@ type ChatStore = {
     messageId: string,
     patch: Partial<Message>,
   ) => void;
-  setModel: (tabId: string, model: string) => void;
-  setEffort: (tabId: string, effort: 'low' | 'medium' | 'high' | 'ultracode') => void;
+  setModel: (tabId: string, model: string, harnessId?: string) => void;
+  setEffort: (tabId: string, effort: EffortLevel) => void;
   setMode: (tabId: string, mode: 'normal' | 'fast') => void;
   setLoading: (tabId: string, loading: boolean) => void;
   addAttachment: (tabId: string, attachment: Attachment) => void;
@@ -116,6 +120,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           [tabId]: {
             messages: [],
             selectedModel: 'sonnet',
+            selectedHarness: 'claudecode',
             modelEffort: 'medium',
             mode: 'normal',
             attachments: [],
@@ -157,7 +162,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       };
     }),
 
-  setModel: (tabId, model) =>
+  setModel: (tabId, model, harnessId) =>
     set((state) => {
       const tab = state.tabs[tabId];
       if (!tab) return state;
@@ -167,6 +172,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           [tabId]: {
             ...tab,
             selectedModel: model,
+            ...(harnessId != null ? { selectedHarness: harnessId } : {}),
           },
         },
       };
@@ -448,11 +454,26 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     };
 
     try {
+      const modelInfo = findHarnessModel(
+        useHarnessStore.getState().models,
+        tab.selectedModel,
+        tab.selectedHarness as HarnessId,
+      );
+      const effort =
+        modelInfo?.supportsEffort && tab.modelEffort
+          ? tab.modelEffort
+          : null;
+      const fastMode = Boolean(
+        modelInfo?.supportsFastMode && tab.mode === 'fast',
+      );
+
       await claudeAgentRun(
         tabId,
         prompt.trim(),
         worktree,
         tab.selectedModel || null,
+        effort,
+        fastMode,
         onEvent,
       );
     } catch (e) {
