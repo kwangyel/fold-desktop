@@ -1,0 +1,50 @@
+.resize-handle {
+  flex-shrink: 0;
+  position: relative;
+  z-index: 5;
+  background: var(--border);
+  transition: background 0.12s ease;
+}
+
+.resize-handle::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
+.resize-handle-vertical {
+  width: 1px;
+  cursor: col-resize;
+}
+
+.resize-handle-vertical::after {
+  left: -3px;
+  right: -3px;
+}
+
+.resize-handle-horizontal {
+  height: 1px;
+  cursor: row-resize;
+}
+
+.resize-handle-horizontal::after {
+  top: -3px;
+  bottom: -3px;
+}
+
+.resize-handle:hover,
+.resize-handle:active {
+  background: var(--accent);
+}
+
+body.resize-col,
+body.resize-col * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+body.resize-row,
+body.resize-row * {
+  cursor: row-resize !important;
+  user-select: none !important;
+}
