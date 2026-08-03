@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import {
   IconFolderPlus,
   IconFolderOpen,
@@ -17,6 +17,7 @@ import { pickWorktreeName } from "../lib/worktreeNames";
 import ProjectDialog from "./ProjectDialog";
 import ConnectAppDialog from "./ConnectAppDialog";
 import UserMenu from "./UserMenu";
+import ResizeHandle from "./ResizeHandle";
 
 const ConnectHarnessDialog = lazy(() => import("./ConnectHarnessDialog"));
 
@@ -41,8 +42,15 @@ async function confirmDelete(message: string, title: string): Promise<boolean> {
   return window.confirm(message);
 }
 
-export default function Sidebar() {
+type Props = {
+  width?: number;
+  topRatio?: number;
+  onSplitDrag?: (dy: number, bodyHeight: number) => void;
+};
+
+export default function Sidebar({ width, topRatio = 0.38, onSplitDrag }: Props) {
   const projects = useProjectStore((s) => s.projects);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const activeId = useProjectStore((s) => s.activeId);
   const error = useProjectStore((s) => s.error);
   const load = useProjectStore((s) => s.load);
@@ -94,34 +102,46 @@ export default function Sidebar() {
     }
   }
 
-  return (
-    <aside className="sidebar">
-      <UserMenu />
-      <div className="new-project">
-        <div className="section-header">
-          <span>Projects</span>
-        </div>
-        <div className="project-actions">
-          <button className="primary-btn" onClick={() => setDialog("create")}>
-            <IconFolderPlus size={15} stroke={2} />
-            Create Project
-          </button>
-          <button className="ghost-btn full" onClick={() => setDialog("open")}>
-            <IconFolderOpen size={15} stroke={2} />
-            Open Existing
-          </button>
-          <button className="ghost-btn full" onClick={() => setDialog("connect")}>
-            <IconPlug size={15} stroke={2} />
-            Connect App
-          </button>
-          <button className="ghost-btn full" onClick={() => setDialog("harness")}>
-            <IconRobot size={15} stroke={2} />
-            Connect Harness
-          </button>
-        </div>
-      </div>
+  const handleSplitDrag = useCallback(
+    (dy: number) => {
+      const height = bodyRef.current?.clientHeight ?? 0;
+      if (height <= 0 || !onSplitDrag) return;
+      onSplitDrag(dy, height);
+    },
+    [onSplitDrag],
+  );
 
-      <div className="projects">
+  return (
+    <aside className="sidebar" style={width != null ? { width } : undefined}>
+      <UserMenu />
+      <div className="sidebar-body" ref={bodyRef}>
+        <div className="new-project" style={{ flex: `${topRatio} 1 0` }}>
+          <div className="section-header">
+            <span>Projects</span>
+          </div>
+          <div className="project-actions">
+            <button className="primary-btn" onClick={() => setDialog("create")}>
+              <IconFolderPlus size={15} stroke={2} />
+              Create Project
+            </button>
+            <button className="ghost-btn full" onClick={() => setDialog("open")}>
+              <IconFolderOpen size={15} stroke={2} />
+              Open Existing
+            </button>
+            <button className="ghost-btn full" onClick={() => setDialog("connect")}>
+              <IconPlug size={15} stroke={2} />
+              Connect App
+            </button>
+            <button className="ghost-btn full" onClick={() => setDialog("harness")}>
+              <IconRobot size={15} stroke={2} />
+              Connect Harness
+            </button>
+          </div>
+        </div>
+
+        <ResizeHandle orientation="horizontal" onDrag={handleSplitDrag} />
+
+        <div className="projects" style={{ flex: `${1 - topRatio} 1 0` }}>
         {projects.length === 0 ? (
           <div className="projects-empty">
             No projects yet. Create or open one to get started.
@@ -225,6 +245,7 @@ export default function Sidebar() {
           })
         )}
         {error && <div className="projects-error">{error}</div>}
+      </div>
       </div>
 
       {menu && (

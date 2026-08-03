@@ -1,11 +1,13 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import Sidebar from "./components/Sidebar";
 import CenterPane from "./components/CenterPane";
 import RightPane from "./components/RightPane";
 import LoginScreen from "./components/LoginScreen";
+import ResizeHandle from "./components/ResizeHandle";
 import { setupAppMenu } from "./lib/appMenu";
 import { useAuthStore } from "./store/authStore";
+import { usePanelSizes } from "./hooks/usePanelSizes";
 import "./App.css";
 
 const appWindow = getCurrentWindow();
@@ -13,6 +15,14 @@ const appWindow = getCurrentWindow();
 export default function App() {
   const authStatus = useAuthStore((s) => s.status);
   const initAuth = useAuthStore((s) => s.init);
+  const {
+    sizes,
+    adjustSidebarWidth,
+    adjustRightWidth,
+    adjustRightTopRatio,
+    adjustSidebarTopRatio,
+  } = usePanelSizes();
+  const workspaceRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     void setupAppMenu();
@@ -32,6 +42,23 @@ export default function App() {
     [],
   );
 
+  const workspaceWidth = () => workspaceRef.current?.clientWidth ?? window.innerWidth;
+
+  const onSidebarDrag = useCallback(
+    (dx: number) => {
+      adjustSidebarWidth(dx, workspaceWidth());
+    },
+    [adjustSidebarWidth],
+  );
+
+  const onRightDrag = useCallback(
+    (dx: number) => {
+      // Handle sits on the left edge of the right pane; drag right shrinks it.
+      adjustRightWidth(-dx, workspaceWidth());
+    },
+    [adjustRightWidth],
+  );
+
   return (
     <div className="app">
       <div className="titlebar">
@@ -42,10 +69,20 @@ export default function App() {
         />
       </div>
       {authStatus === "signedIn" ? (
-        <div className="workspace">
-          <Sidebar />
+        <div className="workspace" ref={workspaceRef}>
+          <Sidebar
+            width={sizes.sidebarWidth}
+            topRatio={sizes.sidebarTopRatio}
+            onSplitDrag={adjustSidebarTopRatio}
+          />
+          <ResizeHandle orientation="vertical" onDrag={onSidebarDrag} />
           <CenterPane />
-          <RightPane />
+          <ResizeHandle orientation="vertical" onDrag={onRightDrag} />
+          <RightPane
+            width={sizes.rightWidth}
+            topRatio={sizes.rightTopRatio}
+            onSplitDrag={adjustRightTopRatio}
+          />
         </div>
       ) : authStatus === "loading" ? (
         <div className="workspace app-loading" />
