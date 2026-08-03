@@ -1,0 +1,11 @@
+[[permission]]
+identifier = "claude-commands"
+description = "Claude Code CLI commands for harness login and agent runs"
+commands.allow = [
+  "claude_status",
+  "claude_login",
+  "claude_login_write",
+  "claude_login_cancel",
+  "claude_agent_run",
+  "claude_agent_cancel",
+]

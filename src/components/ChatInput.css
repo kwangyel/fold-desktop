@@ -146,6 +146,11 @@
   font-weight: bold;
 }
 
+.send-btn.cancel:hover:not(:disabled) {
+  background: #b45353;
+  color: white;
+}
+
 .input-toolbar {
   display: flex;
   align-items: center;

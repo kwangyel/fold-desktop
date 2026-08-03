@@ -1,67 +1,34 @@
 import { useRef, useState } from 'react';
-import { useChatStore, Message } from '../store/chatStore';
+import { useChatStore } from '../store/chatStore';
 import './ChatInput.css';
 
 interface ChatInputProps {
   tabId: string;
 }
 
-const MODELS = [
-  'claude-3-5-sonnet',
-  'claude-opus-4',
-  'gpt-4-turbo',
-];
+/** Claude Code model aliases / ids passed as `--model`. */
+const MODELS = ['sonnet', 'opus', 'haiku'];
 
 export default function ChatInput({ tabId }: ChatInputProps) {
   const [message, setMessage] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const tab = useChatStore((state) => state.tabs[tabId]);
-  const addMessage = useChatStore((state) => state.addMessage);
   const addAttachment = useChatStore((state) => state.addAttachment);
   const removeAttachment = useChatStore((state) => state.removeAttachment);
-  const setLoading = useChatStore((state) => state.setLoading);
   const setModel = useChatStore((state) => state.setModel);
   const setMode = useChatStore((state) => state.setMode);
   const setEffort = useChatStore((state) => state.setEffort);
+  const sendPrompt = useChatStore((state) => state.sendPrompt);
+  const cancelAgent = useChatStore((state) => state.cancelAgent);
 
   if (!tab) return null;
 
   const handleSend = () => {
-    if (!message.trim()) return;
-
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      role: 'user',
-      content: message.trim(),
-      attachments: tab.attachments.length > 0 ? [...tab.attachments] : undefined,
-      timestamp: Date.now(),
-    };
-
-    addMessage(tabId, userMessage);
+    if (!message.trim() || tab.loading) return;
+    const prompt = message.trim();
     setMessage('');
-
-    // Simulate assistant response with timeout
-    setLoading(tabId, true);
-
-    setTimeout(() => {
-      const mockResponses = [
-        "That's an interesting question! Here's what I think about that...",
-        'I appreciate your input. Let me provide some insights on this topic.',
-        'Good point! Here are a few things to consider...',
-        "I understand. Based on what you've shared, here's my perspective...",
-      ];
-
-      const assistantMessage: Message = {
-        id: Date.now().toString(),
-        role: 'assistant',
-        content: mockResponses[Math.floor(Math.random() * mockResponses.length)],
-        timestamp: Date.now(),
-      };
-
-      addMessage(tabId, assistantMessage);
-      setLoading(tabId, false);
-    }, 1000);
+    void sendPrompt(tabId, prompt);
   };
 
   const handleAttachmentClick = () => {
@@ -81,7 +48,6 @@ export default function ChatInput({ tabId }: ChatInputProps) {
 
     addAttachment(tabId, attachment);
 
-    // Reset input
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -95,7 +61,12 @@ export default function ChatInput({ tabId }: ChatInputProps) {
   };
 
   const handleEffortCycle = () => {
-    const efforts: Array<'low' | 'medium' | 'high' | 'ultracode'> = ['low', 'medium', 'high', 'ultracode'];
+    const efforts: Array<'low' | 'medium' | 'high' | 'ultracode'> = [
+      'low',
+      'medium',
+      'high',
+      'ultracode',
+    ];
     const currentIndex = efforts.indexOf(tab.modelEffort);
     const nextIndex = (currentIndex + 1) % efforts.length;
     setEffort(tabId, efforts[nextIndex]);
@@ -200,15 +171,26 @@ export default function ChatInput({ tabId }: ChatInputProps) {
               📎
             </button>
 
-            <button
-              className="send-btn"
-              onClick={handleSend}
-              disabled={!message.trim() || tab.loading}
-              title="Send message"
-              aria-label="Send message"
-            >
-              {tab.loading ? '⏳' : '▶'}
-            </button>
+            {tab.loading ? (
+              <button
+                className="send-btn cancel"
+                onClick={() => void cancelAgent(tabId)}
+                title="Cancel agent"
+                aria-label="Cancel agent"
+              >
+                ■
+              </button>
+            ) : (
+              <button
+                className="send-btn"
+                onClick={handleSend}
+                disabled={!message.trim()}
+                title="Send message"
+                aria-label="Send message"
+              >
+                ▶
+              </button>
+            )}
           </div>
         </div>
       </div>

@@ -79,4 +79,85 @@
   font-size: 12px;
   line-height: 1.2;
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.harness-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.harness-refresh-btn {
+  width: auto;
+  margin-top: 0;
+  padding: 5px;
+  line-height: 0;
+  flex-shrink: 0;
+  color: var(--muted);
+}
+
+.harness-refresh-btn:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.harness-refresh-btn:disabled {
+  opacity: 0.5;
+}
+
+.harness-connected {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--success);
+  flex-shrink: 0;
+}
+
+.dialog.dialog-wide {
+  width: min(560px, calc(100vw - 48px));
+}
+
+.harness-login-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.harness-login-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.harness-login-terminal {
+  height: 220px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #101014;
+}
+
+.harness-login-terminal .xterm {
+  height: 100%;
+  padding: 6px;
+}
+
+.spin {
+  animation: harness-spin 0.9s linear infinite;
+}
+
+@keyframes harness-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
