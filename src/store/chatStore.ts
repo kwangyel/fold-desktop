@@ -25,6 +25,12 @@ import {
 } from '../lib/opencode';
 import type { EffortLevel, HarnessId } from '../lib/harnesses';
 import type { SDKMessage } from '../lib/claudeStreamTypes';
+import {
+  cursorToolPayload,
+  filePathsFromInput,
+  stringifyPayload,
+  toolExcerpt,
+} from '../lib/chatActivity';
 import { useProjectStore } from './projectStore';
 import { useChangesStore } from './changesStore';
 import { findHarnessModel, useHarnessStore } from './harnessStore';
@@ -41,11 +47,17 @@ export type Attachment = {
 
 export type Message = {
   id: string;
-  role: 'user' | 'assistant' | 'tool';
+  role: 'user' | 'assistant' | 'tool' | 'thinking';
   content: string;
   /** Present when role === 'tool'. */
   toolName?: string;
   toolStatus?: 'running' | 'done';
+  /** Full tool input / thinking body for accordion detail. */
+  detail?: string;
+  /** Tool result / output when available. */
+  toolOutput?: string;
+  /** File paths touched by this tool (write/edit/read). */
+  filePaths?: string[];
   attachments?: Attachment[];
   timestamp: number;
 };
@@ -104,6 +116,7 @@ const EXIT_SENTINEL_PREFIXES = [
 type ContentBlock = {
   type: string;
   text?: string;
+  thinking?: string;
   id?: string;
   name?: string;
   tool_use_id?: string;
@@ -243,13 +256,24 @@ function textFromBlocks(blocks: ContentBlock[]): string {
 
 function toolUsesFromBlocks(
   blocks: ContentBlock[],
-): Array<{ id: string; name: string }> {
+): Array<{ id: string; name: string; input?: unknown }> {
   return blocks
     .filter((b) => b.type === 'tool_use')
     .map((b, i) => ({
       id: b.id ?? `tool-${i}`,
       name: b.name ?? 'tool',
+      input: b.input,
     }));
+}
+
+function thinkingFromBlocks(blocks: ContentBlock[]): string[] {
+  return blocks
+    .filter((b) => b.type === 'thinking' || b.type === 'redacted_thinking')
+    .map((b) => {
+      if (typeof b.thinking === 'string' && b.thinking) return b.thinking;
+      return stringifyPayload(b.content ?? b.text ?? '');
+    })
+    .filter(Boolean);
 }
 
 /** Map Cursor CLI `tool_call` payload keys to a display name. */
@@ -542,20 +566,36 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       id: string,
       name: string,
       status: 'running' | 'done',
+      extras?: {
+        content?: string;
+        detail?: string;
+        toolOutput?: string;
+        filePaths?: string[];
+      },
     ) => {
       const existing = get().tabs[tabId]?.messages.find((m) => m.id === id);
+      const content = extras?.content ?? name;
       if (existing) {
         if (status === 'done') {
-          get().updateMessage(tabId, id, { toolStatus: 'done' });
+          get().updateMessage(tabId, id, {
+            toolStatus: 'done',
+            content: extras?.content || existing.content,
+            detail: extras?.detail || existing.detail,
+            toolOutput: extras?.toolOutput || existing.toolOutput,
+            filePaths: extras?.filePaths ?? existing.filePaths,
+          });
         }
         return;
       }
       get().addMessage(tabId, {
         id,
         role: 'tool',
-        content: name,
+        content,
         toolName: name,
         toolStatus: status,
+        detail: extras?.detail,
+        toolOutput: extras?.toolOutput,
+        filePaths: extras?.filePaths,
         timestamp: Date.now(),
       });
     };
@@ -653,16 +693,33 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           appendAssistant(text);
         }
 
+        for (const thinking of thinkingFromBlocks(blocks)) {
+          const id = `thinking-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+          get().addMessage(tabId, {
+            id,
+            role: 'thinking',
+            content: toolExcerpt('thinking', thinking),
+            detail: thinking,
+            toolStatus: 'done',
+            timestamp: Date.now(),
+          });
+        }
+
         for (const tool of toolUsesFromBlocks(blocks)) {
           const id = `tool-${tool.id}`;
           const existing = get().tabs[tabId]?.messages.find((m) => m.id === id);
           if (existing) continue;
+          const excerpt = toolExcerpt(tool.name, tool.input);
+          const detail = stringifyPayload(tool.input);
+          const filePaths = filePathsFromInput(tool.input);
           get().addMessage(tabId, {
             id,
             role: 'tool',
-            content: tool.name,
+            content: excerpt,
             toolName: tool.name,
             toolStatus: 'running',
+            detail: detail || undefined,
+            filePaths: filePaths.length > 0 ? filePaths : undefined,
             timestamp: Date.now(),
           });
         }
@@ -674,11 +731,26 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         const callId = cursorEvent.call_id ?? `tool-${Date.now()}`;
         const id = `tool-${callId}`;
         const name = cursorToolName(cursorEvent.tool_call);
+        const { args, result } = cursorToolPayload(cursorEvent.tool_call);
+        const excerpt = toolExcerpt(name, args);
+        const detail = stringifyPayload(args);
+        const filePaths = filePathsFromInput(args);
+        const output = stringifyPayload(result);
+
         if (cursorEvent.subtype === 'started') {
-          upsertTool(id, name, 'running');
+          upsertTool(id, name, 'running', {
+            content: excerpt,
+            detail: detail || undefined,
+            filePaths: filePaths.length > 0 ? filePaths : undefined,
+          });
           lastAssistantSegment = '';
         } else if (cursorEvent.subtype === 'completed') {
-          upsertTool(id, name, 'done');
+          upsertTool(id, name, 'done', {
+            content: excerpt,
+            detail: detail || undefined,
+            toolOutput: output || undefined,
+            filePaths: filePaths.length > 0 ? filePaths : undefined,
+          });
           lastAssistantSegment = '';
         }
         return;
@@ -693,7 +765,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             const id = `tool-${block.tool_use_id}`;
             const existing = get().tabs[tabId]?.messages.find((m) => m.id === id);
             if (existing) {
-              get().updateMessage(tabId, id, { toolStatus: 'done' });
+              const output = stringifyPayload(block.content);
+              get().updateMessage(tabId, id, {
+                toolStatus: 'done',
+                toolOutput: output || existing.toolOutput,
+              });
             }
           }
         }

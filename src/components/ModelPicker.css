@@ -117,18 +117,12 @@
   color: #fff;
 }
 
-.model-picker .harness-icon.claudecode {
+.model-picker .harness-icon.claudecode,
+.model-picker .harness-icon.codex,
+.model-picker .harness-icon.cursor {
   background: var(--panel-2);
   color: var(--text);
   border: 1px solid var(--border);
-}
-
-.model-picker .harness-icon.codex {
-  background: #10a37f;
-}
-
-.model-picker .harness-icon.cursor {
-  background: #7c5cff;
 }
 
 .model-picker .harness-icon.opencode {
