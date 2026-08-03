@@ -1,4 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import type { ModelInfo } from "@anthropic-ai/claude-agent-sdk";
 import { isTauri } from "./git";
 
 export interface ClaudeStatus {
@@ -38,6 +39,17 @@ export async function claudeStatus(): Promise<ClaudeStatus> {
     return { installed: false, authenticated: false, method: null };
   }
   return invoke<ClaudeStatus>("claude_status");
+}
+
+/**
+ * Model catalog from the Claude Agent SDK (`supportedModels()`).
+ * Throws when the SDK query fails (caller may fall back to docs).
+ */
+export async function claudeListModels(): Promise<ModelInfo[]> {
+  if (!isTauri()) {
+    throw new Error("Claude model catalog requires the Tauri desktop app.");
+  }
+  return invoke<ModelInfo[]>("claude_list_models");
 }
 
 /**
@@ -83,6 +95,8 @@ export async function claudeAgentRun(
   prompt: string,
   worktree: string,
   model: string | null,
+  effort: string | null,
+  fastMode: boolean,
   onEvent: (chunk: ClaudeOutput) => void,
 ): Promise<void> {
   if (!isTauri()) {
@@ -97,6 +111,8 @@ export async function claudeAgentRun(
       prompt,
       worktree,
       model,
+      effort,
+      fastMode,
       onOutput: output,
     });
   } catch (e) {
