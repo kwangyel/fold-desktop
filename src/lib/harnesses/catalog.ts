@@ -12,7 +12,7 @@ export const HARNESS_CATALOG: HarnessMeta[] = [
   {
     id: "codex",
     name: "Codex",
-    description: "Connect the Codex harness",
+    description: "Connect the Codex CLI harness",
     iconClass: "codex",
     iconLabel: "CX",
   },
@@ -26,7 +26,7 @@ export const HARNESS_CATALOG: HarnessMeta[] = [
   {
     id: "opencode",
     name: "OpenCode",
-    description: "Connect the OpenCode harness",
+    description: "Connect the OpenCode CLI harness",
     iconClass: "opencode",
     iconLabel: "OC",
   },

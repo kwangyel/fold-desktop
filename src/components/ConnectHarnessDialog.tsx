@@ -9,8 +9,10 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { HARNESS_CATALOG, harnessMeta } from "../lib/harnesses";
 import { useClaudeStore } from "../store/claudeStore";
+import { useCodexStore } from "../store/codexStore";
 import { useCursorStore } from "../store/cursorStore";
 import { useHarnessStore } from "../store/harnessStore";
+import { useOpenCodeStore } from "../store/opencodeStore";
 import HarnessIcon from "./icons/HarnessIcon";
 import "@xterm/xterm/css/xterm.css";
 import "./ConnectHarnessDialog.css";
@@ -21,11 +23,19 @@ function methodLabel(method: string | null): string {
   return method ?? "connected";
 }
 
-function ClaudeLoginTerminal() {
+type LoginTerminalProps = {
+  subscribeLoginOutput: (listener: (data: Uint8Array) => void) => () => void;
+  writeLogin: (data: string) => Promise<void>;
+  cursorColor?: string;
+};
+
+function LoginTerminal({
+  subscribeLoginOutput,
+  writeLogin,
+  cursorColor = "#d97757",
+}: LoginTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
-  const subscribeLoginOutput = useClaudeStore((s) => s.subscribeLoginOutput);
-  const writeLogin = useClaudeStore((s) => s.writeLogin);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -40,7 +50,7 @@ function ClaudeLoginTerminal() {
       theme: {
         background: "#101014",
         foreground: "#e6e6e6",
-        cursor: "#d97757",
+        cursor: cursorColor,
         selectionBackground: "rgba(217, 119, 87, 0.3)",
       },
     });
@@ -68,7 +78,7 @@ function ClaudeLoginTerminal() {
       term.dispose();
       termRef.current = null;
     };
-  }, [subscribeLoginOutput, writeLogin]);
+  }, [subscribeLoginOutput, writeLogin, cursorColor]);
 
   return <div ref={containerRef} className="harness-login-terminal" />;
 }
@@ -83,6 +93,8 @@ function ClaudeCodeRow() {
   const refresh = useClaudeStore((s) => s.refresh);
   const startLogin = useClaudeStore((s) => s.startLogin);
   const openInstallDocs = useClaudeStore((s) => s.openInstallDocs);
+  const subscribeLoginOutput = useClaudeStore((s) => s.subscribeLoginOutput);
+  const writeLogin = useClaudeStore((s) => s.writeLogin);
   const refreshHarnessModels = useHarnessStore((s) => s.refresh);
 
   useEffect(() => {
@@ -160,7 +172,219 @@ function ClaudeCodeRow() {
             <IconLoader2 size={14} className="spin" />
             Waiting for authorization… complete login in the terminal below.
           </div>
-          <ClaudeLoginTerminal />
+          <LoginTerminal
+            subscribeLoginOutput={subscribeLoginOutput}
+            writeLogin={writeLogin}
+          />
+        </div>
+      )}
+
+      {error && <div className="dialog-error">{error}</div>}
+    </>
+  );
+}
+
+function CodexRow() {
+  const installed = useCodexStore((s) => s.installed);
+  const authenticated = useCodexStore((s) => s.authenticated);
+  const method = useCodexStore((s) => s.method);
+  const checking = useCodexStore((s) => s.checking);
+  const connecting = useCodexStore((s) => s.connecting);
+  const error = useCodexStore((s) => s.error);
+  const refresh = useCodexStore((s) => s.refresh);
+  const startLogin = useCodexStore((s) => s.startLogin);
+  const openInstallDocs = useCodexStore((s) => s.openInstallDocs);
+  const subscribeLoginOutput = useCodexStore((s) => s.subscribeLoginOutput);
+  const writeLogin = useCodexStore((s) => s.writeLogin);
+  const refreshHarnessModels = useHarnessStore((s) => s.refresh);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    if (authenticated) {
+      void refreshHarnessModels();
+    }
+  }, [authenticated, refreshHarnessModels]);
+
+  const harness = harnessMeta("codex");
+  return (
+    <>
+      <div className="harness-row">
+        <HarnessIcon harness={harness} size={34} />
+        <div className="harness-meta">
+          <div className="harness-name">{harness.name}</div>
+          <div className="harness-sub">
+            {!installed
+              ? "Codex CLI not found"
+              : authenticated
+                ? `Connected (${methodLabel(method)})`
+                : harness.description}
+          </div>
+        </div>
+
+        <div className="harness-actions">
+          <button
+            className="ghost-btn harness-refresh-btn"
+            type="button"
+            disabled={checking || connecting}
+            onClick={() => void refresh()}
+            title="Recheck Codex connection"
+            aria-label="Refresh Codex status"
+          >
+            <IconRefresh
+              size={14}
+              stroke={1.75}
+              className={checking ? "spin" : undefined}
+            />
+          </button>
+
+          {!installed ? (
+            <button
+              className="ghost-btn harness-connect-btn"
+              type="button"
+              onClick={() => void openInstallDocs()}
+            >
+              Install
+              <IconExternalLink size={13} stroke={1.75} />
+            </button>
+          ) : authenticated ? (
+            <span className="harness-connected">
+              <IconCheck size={15} stroke={2.25} />
+              Connected
+            </span>
+          ) : (
+            <button
+              className="primary-btn harness-connect-btn"
+              type="button"
+              disabled={checking || connecting}
+              onClick={() => void startLogin()}
+            >
+              {connecting ? "Logging in…" : "Log in"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {connecting && (
+        <div className="harness-login-panel">
+          <div className="harness-login-hint">
+            <IconLoader2 size={14} className="spin" />
+            Waiting for authorization… complete ChatGPT / API key login below.
+          </div>
+          <LoginTerminal
+            subscribeLoginOutput={subscribeLoginOutput}
+            writeLogin={writeLogin}
+            cursorColor="#10a37f"
+          />
+        </div>
+      )}
+
+      {error && <div className="dialog-error">{error}</div>}
+    </>
+  );
+}
+
+function OpenCodeRow() {
+  const installed = useOpenCodeStore((s) => s.installed);
+  const authenticated = useOpenCodeStore((s) => s.authenticated);
+  const method = useOpenCodeStore((s) => s.method);
+  const providerCount = useOpenCodeStore((s) => s.providerCount);
+  const checking = useOpenCodeStore((s) => s.checking);
+  const connecting = useOpenCodeStore((s) => s.connecting);
+  const error = useOpenCodeStore((s) => s.error);
+  const refresh = useOpenCodeStore((s) => s.refresh);
+  const startLogin = useOpenCodeStore((s) => s.startLogin);
+  const openInstallDocs = useOpenCodeStore((s) => s.openInstallDocs);
+  const subscribeLoginOutput = useOpenCodeStore((s) => s.subscribeLoginOutput);
+  const writeLogin = useOpenCodeStore((s) => s.writeLogin);
+  const refreshHarnessModels = useHarnessStore((s) => s.refresh);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    if (authenticated) {
+      void refreshHarnessModels();
+    }
+  }, [authenticated, refreshHarnessModels]);
+
+  const harness = harnessMeta("opencode");
+  let subtitle = harness.description;
+  if (!installed) {
+    subtitle = "OpenCode CLI not found";
+  } else if (authenticated) {
+    subtitle =
+      providerCount > 0
+        ? `Connected · ${providerCount} provider${providerCount === 1 ? "" : "s"} (${methodLabel(method)})`
+        : `Connected (${methodLabel(method)})`;
+  }
+
+  return (
+    <>
+      <div className="harness-row">
+        <HarnessIcon harness={harness} size={34} />
+        <div className="harness-meta">
+          <div className="harness-name">{harness.name}</div>
+          <div className="harness-sub">{subtitle}</div>
+        </div>
+
+        <div className="harness-actions">
+          <button
+            className="ghost-btn harness-refresh-btn"
+            type="button"
+            disabled={checking || connecting}
+            onClick={() => void refresh()}
+            title="Recheck OpenCode connection"
+            aria-label="Refresh OpenCode status"
+          >
+            <IconRefresh
+              size={14}
+              stroke={1.75}
+              className={checking ? "spin" : undefined}
+            />
+          </button>
+
+          {!installed ? (
+            <button
+              className="ghost-btn harness-connect-btn"
+              type="button"
+              onClick={() => void openInstallDocs()}
+            >
+              Install
+              <IconExternalLink size={13} stroke={1.75} />
+            </button>
+          ) : authenticated ? (
+            <span className="harness-connected">
+              <IconCheck size={15} stroke={2.25} />
+              Connected
+            </span>
+          ) : (
+            <button
+              className="primary-btn harness-connect-btn"
+              type="button"
+              disabled={checking || connecting}
+              onClick={() => void startLogin()}
+            >
+              {connecting ? "Logging in…" : "Log in"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {connecting && (
+        <div className="harness-login-panel">
+          <div className="harness-login-hint">
+            <IconLoader2 size={14} className="spin" />
+            Select a provider and paste an API key in the terminal below.
+          </div>
+          <LoginTerminal
+            subscribeLoginOutput={subscribeLoginOutput}
+            writeLogin={writeLogin}
+            cursorColor="#2563eb"
+          />
         </div>
       )}
 
@@ -340,7 +564,14 @@ export default function ConnectHarnessDialog({
   onClose: () => void;
 }) {
   const claudeConnecting = useClaudeStore((s) => s.connecting);
-  const cancelLogin = useClaudeStore((s) => s.cancelLogin);
+  const cancelClaudeLogin = useClaudeStore((s) => s.cancelLogin);
+  const codexConnecting = useCodexStore((s) => s.connecting);
+  const cancelCodexLogin = useCodexStore((s) => s.cancelLogin);
+  const opencodeConnecting = useOpenCodeStore((s) => s.connecting);
+  const cancelOpenCodeLogin = useOpenCodeStore((s) => s.cancelLogin);
+
+  const anyConnecting =
+    claudeConnecting || codexConnecting || opencodeConnecting;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -352,13 +583,11 @@ export default function ConnectHarnessDialog({
   }, []);
 
   function handleClose() {
-    if (claudeConnecting) void cancelLogin();
+    if (claudeConnecting) void cancelClaudeLogin();
+    if (codexConnecting) void cancelCodexLogin();
+    if (opencodeConnecting) void cancelOpenCodeLogin();
     onClose();
   }
-
-  const comingSoon = HARNESS_CATALOG.filter(
-    (h) => h.id !== "claudecode" && h.id !== "cursor",
-  );
 
   return (
     <div className="dialog-overlay" onMouseDown={handleClose}>
@@ -376,31 +605,15 @@ export default function ConnectHarnessDialog({
 
           <div className="harness-list">
             <ClaudeCodeRow />
+            <CodexRow />
             <CursorRow />
-
-            {comingSoon.map((harness) => (
-              <div key={harness.id} className="harness-row">
-                <HarnessIcon harness={harness} size={34} />
-                <div className="harness-meta">
-                  <div className="harness-name">{harness.name}</div>
-                  <div className="harness-sub">{harness.description}</div>
-                </div>
-                <button
-                  className="ghost-btn harness-connect-btn"
-                  type="button"
-                  disabled
-                  title="Coming soon"
-                >
-                  Connect
-                </button>
-              </div>
-            ))}
+            <OpenCodeRow />
           </div>
         </div>
 
         <div className="dialog-footer">
           <button className="ghost-btn" type="button" onClick={handleClose}>
-            {claudeConnecting ? "Cancel" : "Close"}
+            {anyConnecting ? "Cancel" : "Close"}
           </button>
         </div>
       </div>

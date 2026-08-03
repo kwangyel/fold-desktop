@@ -1,0 +1,460 @@
+//! OpenCode harness via local `opencode` CLI.
+//!
+//! Auth reuses machine credentials (`opencode auth login` →
+//! `~/.local/share/opencode/auth.json`). Chat runs use
+//! `opencode run --format json` in the worktree.
+//!
+//! @see https://opencode.ai/docs/cli/
+//! @see https://opencode.ai/docs/providers/
+
+use std::io::Read;
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+use tauri::ipc::{Channel, InvokeResponseBody};
+use tauri::State;
+
+use crate::pty::PtySession;
+use crate::AppState;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeStatus {
+    installed: bool,
+    authenticated: bool,
+    /// `"apiKey"` when providers are configured in auth.json / env.
+    method: Option<String>,
+    /// Number of authenticated providers (best-effort).
+    provider_count: u32,
+}
+
+/// Model catalog entry shaped like Claude / Cursor `ModelInfo`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeModelInfo {
+    value: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolved_model: Option<String>,
+    display_name: String,
+    description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    supports_effort: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    supported_effort_levels: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    supports_adaptive_thinking: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    supports_fast_mode: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    supports_auto_mode: Option<bool>,
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
+fn is_executable(path: &std::path::Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        path.metadata()
+            .map(|m| m.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+/// Resolve the `opencode` binary (PATH + common install dirs).
+fn resolve_opencode_bin() -> Option<PathBuf> {
+    if Command::new("opencode")
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+    {
+        if let Ok(which) = Command::new("which").arg("opencode").output() {
+            if which.status.success() {
+                let path = String::from_utf8_lossy(&which.stdout).trim().to_string();
+                if !path.is_empty() {
+                    return Some(PathBuf::from(path));
+                }
+            }
+        }
+        return Some(PathBuf::from("opencode"));
+    }
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(home) = home_dir() {
+        candidates.push(home.join(".local/bin/opencode"));
+        candidates.push(home.join("bin/opencode"));
+        candidates.push(home.join(".npm-global/bin/opencode"));
+        candidates.push(home.join(".bun/bin/opencode"));
+        candidates.push(home.join(".opencode/bin/opencode"));
+        candidates.push(
+            home.join("Library/Application Support/com.conductor.app/bin/opencode"),
+        );
+    }
+    candidates.push(PathBuf::from("/opt/homebrew/bin/opencode"));
+    candidates.push(PathBuf::from("/usr/local/bin/opencode"));
+
+    if let Some(path) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path) {
+            candidates.push(dir.join("opencode"));
+        }
+    }
+
+    for candidate in candidates {
+        if !is_executable(&candidate) {
+            continue;
+        }
+        let resolved = std::fs::canonicalize(&candidate).unwrap_or(candidate);
+        let ok = Command::new(&resolved)
+            .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if ok {
+            return Some(resolved);
+        }
+    }
+
+    None
+}
+
+fn is_installed() -> bool {
+    resolve_opencode_bin().is_some()
+}
+
+/// Credentials live in XDG data dir / macOS Application Support.
+fn auth_json_path() -> Option<PathBuf> {
+    if let Some(xdg) = std::env::var_os("XDG_DATA_HOME") {
+        return Some(PathBuf::from(xdg).join("opencode/auth.json"));
+    }
+    let home = home_dir()?;
+    #[cfg(target_os = "macos")]
+    {
+        let app_support = home.join("Library/Application Support/opencode/auth.json");
+        if app_support.is_file() {
+            return Some(app_support);
+        }
+    }
+    Some(home.join(".local/share/opencode/auth.json"))
+}
+
+fn count_auth_providers() -> u32 {
+    let Some(path) = auth_json_path() else {
+        return 0;
+    };
+    let Ok(contents) = std::fs::read_to_string(&path) else {
+        return 0;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&contents) else {
+        return 0;
+    };
+    match value {
+        serde_json::Value::Object(map) => map.len() as u32,
+        serde_json::Value::Array(arr) => arr.len() as u32,
+        _ => {
+            if path.is_file() && !contents.trim().is_empty() {
+                1
+            } else {
+                0
+            }
+        }
+    }
+}
+
+/// Fall back to `opencode auth list` when the auth file shape is unknown.
+fn auth_list_has_providers(bin: &std::path::Path) -> bool {
+    let output = Command::new(bin)
+        .args(["auth", "list"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output();
+    match output {
+        Ok(out) if out.status.success() => {
+            let text = String::from_utf8_lossy(&out.stdout);
+            let trimmed = text.trim();
+            !trimmed.is_empty()
+                && !trimmed.to_lowercase().contains("no providers")
+                && !trimmed.to_lowercase().contains("not authenticated")
+        }
+        _ => false,
+    }
+}
+
+#[tauri::command]
+pub fn opencode_status() -> Result<OpenCodeStatus, String> {
+    let installed = is_installed();
+    if !installed {
+        return Ok(OpenCodeStatus {
+            installed: false,
+            authenticated: false,
+            method: None,
+            provider_count: 0,
+        });
+    }
+
+    let mut provider_count = count_auth_providers();
+    if provider_count == 0 {
+        if let Some(bin) = resolve_opencode_bin() {
+            if auth_list_has_providers(&bin) {
+                provider_count = 1;
+            }
+        }
+    }
+
+    if provider_count > 0 {
+        return Ok(OpenCodeStatus {
+            installed: true,
+            authenticated: true,
+            method: Some("apiKey".to_string()),
+            provider_count,
+        });
+    }
+
+    Ok(OpenCodeStatus {
+        installed: true,
+        authenticated: false,
+        method: None,
+        provider_count: 0,
+    })
+}
+
+/// Start interactive `opencode auth login` in a PTY.
+#[tauri::command]
+pub fn opencode_login(on_output: Channel, state: State<'_, AppState>) -> Result<(), String> {
+    {
+        let mut slot = state.opencode_login.lock().map_err(|e| e.to_string())?;
+        let _ = slot.take();
+    }
+
+    let bin = resolve_opencode_bin().ok_or_else(|| {
+        "OpenCode CLI not found. Install from https://opencode.ai \
+         (`npm i -g opencode-ai` or curl installer)."
+            .to_string()
+    })?;
+
+    let session = PtySession::spawn_command(
+        bin.to_str().ok_or("invalid opencode path")?,
+        &["auth", "login"],
+        100,
+        28,
+        None,
+        on_output,
+    )?;
+    *state.opencode_login.lock().map_err(|e| e.to_string())? = Some(session);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn opencode_login_write(data: String, state: State<'_, AppState>) -> Result<(), String> {
+    let mut slot = state.opencode_login.lock().map_err(|e| e.to_string())?;
+    if let Some(session) = slot.as_mut() {
+        session.write(data.as_bytes())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn opencode_login_cancel(state: State<'_, AppState>) -> Result<(), String> {
+    let mut slot = state.opencode_login.lock().map_err(|e| e.to_string())?;
+    let _ = slot.take();
+    Ok(())
+}
+
+/// List models via `opencode models` (`provider/model` lines).
+#[tauri::command]
+pub fn opencode_list_models() -> Result<Vec<OpenCodeModelInfo>, String> {
+    let bin = resolve_opencode_bin().ok_or_else(|| "OpenCode CLI not found".to_string())?;
+    let output = Command::new(&bin)
+        .arg("models")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("failed to run opencode models: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "opencode models failed ({}): {}",
+            output.status,
+            stderr.trim()
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut models = Vec::new();
+    for line in stdout.lines() {
+        let id = line.trim();
+        if id.is_empty() || id.starts_with('#') {
+            continue;
+        }
+        // Skip table headers / noise.
+        if !id.contains('/') {
+            continue;
+        }
+        let (provider, model) = id.split_once('/').unwrap_or(("unknown", id));
+        models.push(OpenCodeModelInfo {
+            value: id.to_string(),
+            resolved_model: Some(id.to_string()),
+            display_name: model.to_string(),
+            description: format!("{provider} · {model}"),
+            supports_effort: None,
+            supported_effort_levels: None,
+            supports_adaptive_thinking: None,
+            supports_fast_mode: None,
+            supports_auto_mode: None,
+        });
+    }
+
+    if models.is_empty() {
+        return Err("No OpenCode models found. Connect a provider with `opencode auth login`.".into());
+    }
+
+    Ok(models)
+}
+
+fn stream_pipe<R: Read + Send + 'static>(mut reader: R, on_output: Channel) {
+    thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if on_output
+                        .send(InvokeResponseBody::Raw(buf[..n].to_vec()))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+}
+
+/// Run `opencode run --format json` in a worktree. Emits `__OPENCODE_EXIT__:<code>`.
+#[tauri::command]
+pub fn opencode_agent_run(
+    session_id: String,
+    prompt: String,
+    worktree: String,
+    model: Option<String>,
+    on_output: Channel,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if let Some(prev) = state
+        .opencode_agents
+        .lock()
+        .map_err(|e| e.to_string())?
+        .remove(&session_id)
+    {
+        prev.store(true, Ordering::SeqCst);
+    }
+
+    let status = opencode_status()?;
+    if !status.authenticated {
+        return Err(
+            "OpenCode is not authenticated. Open Connect Harness and log in.".to_string(),
+        );
+    }
+
+    let bin = resolve_opencode_bin().ok_or_else(|| "OpenCode CLI not found".to_string())?;
+    let worktree_path = PathBuf::from(&worktree);
+    if !worktree_path.is_dir() {
+        return Err(format!("worktree path does not exist: {worktree}"));
+    }
+
+    let mut args: Vec<String> = vec![
+        "run".into(),
+        "--format".into(),
+        "json".into(),
+        "--dir".into(),
+        worktree.clone(),
+        "--auto".into(),
+    ];
+    if let Some(m) = model.filter(|s| !s.is_empty()) {
+        args.push("-m".into());
+        args.push(m);
+    }
+    args.push(prompt);
+
+    let mut child = Command::new(&bin)
+        .args(&args)
+        .current_dir(&worktree_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to start OpenCode agent: {e}"))?;
+
+    if let Some(out) = child.stdout.take() {
+        stream_pipe(out, on_output.clone());
+    }
+    if let Some(err) = child.stderr.take() {
+        stream_pipe(err, on_output.clone());
+    }
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    let cancel_monitor = cancel.clone();
+    let exit_channel = on_output;
+    thread::spawn(move || {
+        let exit_code = loop {
+            if cancel_monitor.load(Ordering::SeqCst) {
+                let _ = child.kill();
+                let _ = child.wait();
+                break -1;
+            }
+            match child.try_wait() {
+                Ok(Some(status)) => break status.code().unwrap_or(-1),
+                Ok(None) => thread::sleep(Duration::from_millis(150)),
+                Err(_) => break -1,
+            }
+        };
+
+        let marker = format!("\n__OPENCODE_EXIT__:{exit_code}\n");
+        let _ = exit_channel.send(InvokeResponseBody::Raw(marker.into_bytes()));
+    });
+
+    state
+        .opencode_agents
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(session_id, cancel);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn opencode_agent_cancel(
+    session_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if let Some(cancel) = state
+        .opencode_agents
+        .lock()
+        .map_err(|e| e.to_string())?
+        .remove(&session_id)
+    {
+        cancel.store(true, Ordering::SeqCst);
+    }
+    Ok(())
+}

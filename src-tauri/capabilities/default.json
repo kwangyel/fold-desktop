@@ -14,6 +14,8 @@
     "github-commands",
     "claude-commands",
     "cursor-commands",
+    "codex-commands",
+    "opencode-commands",
     "auth-commands",
     "dialog:default",
     "deep-link:default",

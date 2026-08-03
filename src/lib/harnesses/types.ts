@@ -1,6 +1,6 @@
 import type { ModelInfo } from "@anthropic-ai/claude-agent-sdk";
 
-/** Known harness identifiers. Only wired harnesses appear in the model picker. */
+/** Known harness identifiers. */
 export type HarnessId = "claudecode" | "codex" | "cursor" | "opencode";
 
 /** Effort levels accepted by Claude Code (`--effort`) / Agent SDK. */

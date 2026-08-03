@@ -7,7 +7,9 @@ import {
   type HarnessModel,
 } from "../lib/harnesses";
 import { useClaudeStore } from "./claudeStore";
+import { useCodexStore } from "./codexStore";
 import { useCursorStore } from "./cursorStore";
+import { useOpenCodeStore } from "./opencodeStore";
 
 type HarnessStore = {
   /** Models from currently connected harnesses only. */
@@ -40,7 +42,9 @@ export const useHarnessStore = create<HarnessStore>((set, get) => ({
       // Ensure connection state is current before filtering adapters.
       await Promise.all([
         useClaudeStore.getState().refresh(),
+        useCodexStore.getState().refresh(),
         useCursorStore.getState().refresh(),
+        useOpenCodeStore.getState().refresh(),
       ]);
 
       const connected = getConnectedAdapters().map((a) => a.meta);

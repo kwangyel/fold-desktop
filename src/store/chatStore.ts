@@ -6,17 +6,31 @@ import {
   claudeReleaseChannel,
 } from '../lib/claude';
 import {
+  CodexOutput,
+  codexAgentCancel,
+  codexAgentRun,
+  codexReleaseChannel,
+} from '../lib/codex';
+import {
   CursorOutput,
   cursorAgentCancel,
   cursorAgentRun,
   cursorReleaseChannel,
 } from '../lib/cursor';
+import {
+  OpenCodeOutput,
+  opencodeAgentCancel,
+  opencodeAgentRun,
+  opencodeReleaseChannel,
+} from '../lib/opencode';
 import type { EffortLevel, HarnessId } from '../lib/harnesses';
 import type { SDKMessage } from '../lib/claudeStreamTypes';
 import { useProjectStore } from './projectStore';
 import { useChangesStore } from './changesStore';
 import { findHarnessModel, useHarnessStore } from './harnessStore';
+import { useCodexStore } from './codexStore';
 import { useCursorStore } from './cursorStore';
+import { useOpenCodeStore } from './opencodeStore';
 
 export type Attachment = {
   id: string;
@@ -75,6 +89,17 @@ type ChatStore = {
 const CLAUDE_EXIT_RE = /__CLAUDE_EXIT__:(-?\d+)/;
 /** Sentinel emitted by the Rust monitor when the Cursor child exits. */
 const CURSOR_EXIT_RE = /__CURSOR_EXIT__:(-?\d+)/;
+/** Sentinel emitted by the Rust monitor when the Codex child exits. */
+const CODEX_EXIT_RE = /__CODEX_EXIT__:(-?\d+)/;
+/** Sentinel emitted by the Rust monitor when the OpenCode child exits. */
+const OPENCODE_EXIT_RE = /__OPENCODE_EXIT__:(-?\d+)/;
+
+const EXIT_SENTINEL_PREFIXES = [
+  '__CLAUDE_EXIT__',
+  '__CURSOR_EXIT__',
+  '__CODEX_EXIT__',
+  '__OPENCODE_EXIT__',
+] as const;
 
 type ContentBlock = {
   type: string;
@@ -86,9 +111,9 @@ type ContentBlock = {
   input?: unknown;
 };
 
-type StreamEvent = SDKMessage | CursorStreamEvent;
+type StreamEvent = SDKMessage | GenericStreamEvent;
 
-type CursorStreamEvent = {
+type GenericStreamEvent = {
   type: string;
   subtype?: string;
   message?: { content?: unknown };
@@ -98,11 +123,107 @@ type CursorStreamEvent = {
   tool_call?: Record<string, unknown>;
   timestamp_ms?: number;
   model_call_id?: string;
+  /** Codex `item.*` payload. */
+  item?: {
+    id?: string;
+    type?: string;
+    text?: string;
+    command?: string;
+    status?: string;
+  };
+  /** OpenCode `text` / `tool_use` part payload. */
+  part?: {
+    type?: string;
+    text?: string;
+    id?: string;
+    tool?: string;
+    state?: { status?: string; error?: string };
+  };
+  error?: unknown;
 };
 
-function decode(chunk: ClaudeOutput | CursorOutput): string {
+type AgentChunk = ClaudeOutput | CursorOutput | CodexOutput | OpenCodeOutput;
+
+function decode(chunk: AgentChunk): string {
   const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
   return new TextDecoder().decode(bytes);
+}
+
+function exitRegexFor(harnessId: HarnessId): RegExp {
+  switch (harnessId) {
+    case 'cursor':
+      return CURSOR_EXIT_RE;
+    case 'codex':
+      return CODEX_EXIT_RE;
+    case 'opencode':
+      return OPENCODE_EXIT_RE;
+    case 'claudecode':
+    default:
+      return CLAUDE_EXIT_RE;
+  }
+}
+
+function exitLabelFor(harnessId: HarnessId): string {
+  switch (harnessId) {
+    case 'cursor':
+      return 'Cursor agent';
+    case 'codex':
+      return 'Codex';
+    case 'opencode':
+      return 'OpenCode';
+    case 'claudecode':
+    default:
+      return 'Claude Code';
+  }
+}
+
+function releaseChannelFor(harnessId: HarnessId, sessionId: string): void {
+  switch (harnessId) {
+    case 'cursor':
+      cursorReleaseChannel(sessionId);
+      break;
+    case 'codex':
+      codexReleaseChannel(sessionId);
+      break;
+    case 'opencode':
+      opencodeReleaseChannel(sessionId);
+      break;
+    case 'claudecode':
+    default:
+      claudeReleaseChannel(sessionId);
+      break;
+  }
+}
+
+function isHarnessConnected(harnessId: HarnessId): boolean {
+  switch (harnessId) {
+    case 'cursor':
+      return useCursorStore.getState().authenticated;
+    case 'codex': {
+      const s = useCodexStore.getState();
+      return s.installed && s.authenticated;
+    }
+    case 'opencode': {
+      const s = useOpenCodeStore.getState();
+      return s.installed && s.authenticated;
+    }
+    case 'claudecode':
+    default:
+      return true;
+  }
+}
+
+function connectHintFor(harnessId: HarnessId): string {
+  switch (harnessId) {
+    case 'cursor':
+      return 'Cursor is not connected. Open Connect Harness and paste a Cursor API key.';
+    case 'codex':
+      return 'Codex is not connected. Open Connect Harness and log in.';
+    case 'opencode':
+      return 'OpenCode is not connected. Open Connect Harness and log in.';
+    default:
+      return 'Harness is not connected. Open Connect Harness to connect.';
+  }
 }
 
 function contentBlocks(message: { content?: unknown } | undefined): ContentBlock[] {
@@ -328,12 +449,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }
 
     const harnessId = (tab.selectedHarness || 'claudecode') as HarnessId;
-    if (harnessId === 'cursor' && !useCursorStore.getState().authenticated) {
+    if (harnessId !== 'claudecode' && !isHarnessConnected(harnessId)) {
       get().addMessage(tabId, {
         id: `err-${Date.now()}`,
         role: 'assistant',
-        content:
-          'Cursor is not connected. Open Connect Harness and paste a Cursor API key.',
+        content: connectHintFor(harnessId),
         timestamp: Date.now(),
       });
       return;
@@ -414,17 +534,108 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         }
       }
       get().setLoading(tabId, false);
-      if (harnessId === 'cursor') {
-        cursorReleaseChannel(tabId);
-      } else {
-        claudeReleaseChannel(tabId);
-      }
+      releaseChannelFor(harnessId, tabId);
       void useChangesStore.getState().refresh();
     };
 
+    const upsertTool = (
+      id: string,
+      name: string,
+      status: 'running' | 'done',
+    ) => {
+      const existing = get().tabs[tabId]?.messages.find((m) => m.id === id);
+      if (existing) {
+        if (status === 'done') {
+          get().updateMessage(tabId, id, { toolStatus: 'done' });
+        }
+        return;
+      }
+      get().addMessage(tabId, {
+        id,
+        role: 'tool',
+        content: name,
+        toolName: name,
+        toolStatus: status,
+        timestamp: Date.now(),
+      });
+    };
+
     const handleEvent = (event: StreamEvent) => {
+      // OpenCode JSON format: { type: "text"|"tool_use"|..., part: {...} }
+      if (harnessId === 'opencode') {
+        const oc = event as GenericStreamEvent;
+        if (oc.type === 'text' && oc.part?.text) {
+          appendAssistant(oc.part.text);
+          return;
+        }
+        if (oc.type === 'tool_use' && oc.part) {
+          const id = `tool-${oc.part.id ?? Date.now()}`;
+          const name = oc.part.tool ?? 'tool';
+          const status =
+            oc.part.state?.status === 'completed' ||
+            oc.part.state?.status === 'error'
+              ? 'done'
+              : 'running';
+          upsertTool(id, name, status);
+          return;
+        }
+        if (oc.type === 'error') {
+          const msg =
+            typeof oc.error === 'string'
+              ? oc.error
+              : oc.error != null
+                ? JSON.stringify(oc.error)
+                : 'OpenCode error';
+          appendAssistant(msg);
+        }
+        return;
+      }
+
+      // Codex JSONL: item.started / item.completed with item.type
+      if (harnessId === 'codex') {
+        const cx = event as GenericStreamEvent;
+        if (cx.type === 'item.started' || cx.type === 'item.completed') {
+          const item = cx.item;
+          if (!item) return;
+          if (item.type === 'agent_message' && item.text) {
+            if (cx.type === 'item.completed') {
+              appendAssistant(item.text);
+            }
+            return;
+          }
+          if (
+            item.type === 'command_execution' ||
+            item.type === 'file_change' ||
+            item.type === 'mcp_tool_call' ||
+            item.type === 'web_search'
+          ) {
+            const id = `tool-${item.id ?? Date.now()}`;
+            const name =
+              item.type === 'command_execution'
+                ? item.command?.split(/\s+/)[0] || 'command'
+                : item.type.replace(/_/g, ' ');
+            upsertTool(
+              id,
+              name,
+              cx.type === 'item.completed' ? 'done' : 'running',
+            );
+          }
+          return;
+        }
+        if (cx.type === 'turn.failed' || cx.type === 'error') {
+          const msg =
+            typeof cx.error === 'string'
+              ? cx.error
+              : cx.error != null
+                ? JSON.stringify(cx.error)
+                : 'Codex turn failed';
+          appendAssistant(msg);
+        }
+        return;
+      }
+
       if (event.type === 'assistant') {
-        const cursorEvent = event as CursorStreamEvent;
+        const cursorEvent = event as GenericStreamEvent;
         if (cursorEvent.model_call_id) return;
 
         const blocks = contentBlocks(
@@ -459,37 +670,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       }
 
       if (event.type === 'tool_call') {
-        const cursorEvent = event as CursorStreamEvent;
+        const cursorEvent = event as GenericStreamEvent;
         const callId = cursorEvent.call_id ?? `tool-${Date.now()}`;
         const id = `tool-${callId}`;
         const name = cursorToolName(cursorEvent.tool_call);
         if (cursorEvent.subtype === 'started') {
-          const existing = get().tabs[tabId]?.messages.find((m) => m.id === id);
-          if (!existing) {
-            get().addMessage(tabId, {
-              id,
-              role: 'tool',
-              content: name,
-              toolName: name,
-              toolStatus: 'running',
-              timestamp: Date.now(),
-            });
-          }
+          upsertTool(id, name, 'running');
           lastAssistantSegment = '';
         } else if (cursorEvent.subtype === 'completed') {
-          const existing = get().tabs[tabId]?.messages.find((m) => m.id === id);
-          if (existing) {
-            get().updateMessage(tabId, id, { toolStatus: 'done' });
-          } else {
-            get().addMessage(tabId, {
-              id,
-              role: 'tool',
-              content: name,
-              toolName: name,
-              toolStatus: 'done',
-              timestamp: Date.now(),
-            });
-          }
+          upsertTool(id, name, 'done');
           lastAssistantSegment = '';
         }
         return;
@@ -522,11 +711,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       }
     };
 
-    const onEvent = (chunk: ClaudeOutput | CursorOutput) => {
+    const onEvent = (chunk: AgentChunk) => {
       if (finished) return;
       lineBuffer += decode(chunk);
 
-      const exitRe = harnessId === 'cursor' ? CURSOR_EXIT_RE : CLAUDE_EXIT_RE;
+      const exitRe = exitRegexFor(harnessId);
       const exitMatch = lineBuffer.match(exitRe);
       if (exitMatch) {
         const code = Number(exitMatch[1]);
@@ -535,8 +724,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           const trimmed = line.trim();
           if (
             !trimmed ||
-            trimmed.startsWith('__CLAUDE_EXIT__') ||
-            trimmed.startsWith('__CURSOR_EXIT__')
+            EXIT_SENTINEL_PREFIXES.some((p) => trimmed.startsWith(p))
           ) {
             continue;
           }
@@ -549,11 +737,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         if (code === -1) {
           finish('Agent cancelled.');
         } else if (code !== 0) {
-          finish(
-            harnessId === 'cursor'
-              ? `Cursor agent exited with code ${code}.`
-              : `Claude Code exited with code ${code}.`,
-          );
+          finish(`${exitLabelFor(harnessId)} exited with code ${code}.`);
         } else {
           finish();
         }
@@ -588,6 +772,22 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           tab.selectedModel || null,
           onEvent,
         );
+      } else if (harnessId === 'codex') {
+        await codexAgentRun(
+          tabId,
+          prompt.trim(),
+          worktree,
+          tab.selectedModel || null,
+          onEvent,
+        );
+      } else if (harnessId === 'opencode') {
+        await opencodeAgentRun(
+          tabId,
+          prompt.trim(),
+          worktree,
+          tab.selectedModel || null,
+          onEvent,
+        );
       } else {
         const effort =
           modelInfo?.supportsEffort && tab.modelEffort
@@ -613,14 +813,24 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   cancelAgent: async (tabId) => {
-    const harnessId = get().tabs[tabId]?.selectedHarness;
-    if (harnessId === 'cursor') {
-      await cursorAgentCancel(tabId);
-      cursorReleaseChannel(tabId);
-    } else {
-      await claudeAgentCancel(tabId);
-      claudeReleaseChannel(tabId);
+    const harnessId = (get().tabs[tabId]?.selectedHarness ||
+      'claudecode') as HarnessId;
+    switch (harnessId) {
+      case 'cursor':
+        await cursorAgentCancel(tabId);
+        break;
+      case 'codex':
+        await codexAgentCancel(tabId);
+        break;
+      case 'opencode':
+        await opencodeAgentCancel(tabId);
+        break;
+      case 'claudecode':
+      default:
+        await claudeAgentCancel(tabId);
+        break;
     }
+    releaseChannelFor(harnessId, tabId);
     get().setLoading(tabId, false);
   },
 }));
