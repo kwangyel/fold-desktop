@@ -1,8 +1,10 @@
 mod auth;
 mod claude;
+mod codex;
 mod cursor;
 mod git;
 mod github;
+mod opencode;
 mod projects;
 mod pty;
 
@@ -28,6 +30,14 @@ pub struct AppState {
     pub claude_agents: Mutex<HashMap<String, Arc<AtomicBool>>>,
     /// Per-session cancel flags for concurrent Cursor agent runs.
     pub cursor_agents: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    /// Interactive Codex login PTY (dropped to cancel / kill).
+    pub codex_login: Mutex<Option<pty::PtySession>>,
+    /// Per-session cancel flags for concurrent Codex agent runs.
+    pub codex_agents: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    /// Interactive OpenCode login PTY (dropped to cancel / kill).
+    pub opencode_login: Mutex<Option<pty::PtySession>>,
+    /// Per-session cancel flags for concurrent OpenCode agent runs.
+    pub opencode_agents: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
 impl Default for AppState {
@@ -39,6 +49,10 @@ impl Default for AppState {
             claude_login: Mutex::new(None),
             claude_agents: Mutex::new(HashMap::new()),
             cursor_agents: Mutex::new(HashMap::new()),
+            codex_login: Mutex::new(None),
+            codex_agents: Mutex::new(HashMap::new()),
+            opencode_login: Mutex::new(None),
+            opencode_agents: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -204,6 +218,20 @@ pub fn run() {
             cursor::cursor_list_models,
             cursor::cursor_agent_run,
             cursor::cursor_agent_cancel,
+            codex::codex_status,
+            codex::codex_login,
+            codex::codex_login_write,
+            codex::codex_login_cancel,
+            codex::codex_list_models,
+            codex::codex_agent_run,
+            codex::codex_agent_cancel,
+            opencode::opencode_status,
+            opencode::opencode_login,
+            opencode::opencode_login_write,
+            opencode::opencode_login_cancel,
+            opencode::opencode_list_models,
+            opencode::opencode_agent_run,
+            opencode::opencode_agent_cancel,
             auth::auth_save_token,
             auth::auth_get_token,
             auth::auth_clear_token

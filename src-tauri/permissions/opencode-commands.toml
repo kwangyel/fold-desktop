@@ -1,0 +1,12 @@
+[[permission]]
+identifier = "opencode-commands"
+description = "OpenCode CLI commands for harness login and agent runs"
+commands.allow = [
+  "opencode_status",
+  "opencode_login",
+  "opencode_login_write",
+  "opencode_login_cancel",
+  "opencode_list_models",
+  "opencode_agent_run",
+  "opencode_agent_cancel",
+]

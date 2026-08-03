@@ -1,0 +1,12 @@
+[[permission]]
+identifier = "codex-commands"
+description = "Codex CLI commands for harness login and agent runs"
+commands.allow = [
+  "codex_status",
+  "codex_login",
+  "codex_login_write",
+  "codex_login_cancel",
+  "codex_list_models",
+  "codex_agent_run",
+  "codex_agent_cancel",
+]
