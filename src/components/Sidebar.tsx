@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import {
   IconFolderPlus,
   IconFolderOpen,
@@ -16,8 +16,9 @@ import { isTauri } from "../lib/git";
 import { pickWorktreeName } from "../lib/worktreeNames";
 import ProjectDialog from "./ProjectDialog";
 import ConnectAppDialog from "./ConnectAppDialog";
-import ConnectHarnessDialog from "./ConnectHarnessDialog";
 import UserMenu from "./UserMenu";
+
+const ConnectHarnessDialog = lazy(() => import("./ConnectHarnessDialog"));
 
 type DialogMode = "create" | "open" | "connect" | "harness" | null;
 type ContextMenu =
@@ -282,7 +283,9 @@ export default function Sidebar() {
       {dialog === "connect" ? (
         <ConnectAppDialog onClose={() => setDialog(null)} />
       ) : dialog === "harness" ? (
-        <ConnectHarnessDialog onClose={() => setDialog(null)} />
+        <Suspense fallback={null}>
+          <ConnectHarnessDialog onClose={() => setDialog(null)} />
+        </Suspense>
       ) : (
         dialog && (
           <ProjectDialog mode={dialog} onClose={() => setDialog(null)} />

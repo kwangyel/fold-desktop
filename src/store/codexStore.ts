@@ -23,12 +23,14 @@ type CodexStore = {
   connecting: boolean;
   error: string | null;
   subscribeLoginOutput: (listener: (data: Uint8Array) => void) => () => void;
-  refresh: () => Promise<void>;
+  refresh: (opts?: { force?: boolean }) => Promise<void>;
   startLogin: () => Promise<void>;
   writeLogin: (data: string) => Promise<void>;
   cancelLogin: () => Promise<void>;
   openInstallDocs: () => Promise<void>;
 };
+
+const STATUS_TTL_MS = 15_000;
 
 function decode(chunk: CodexOutput): Uint8Array {
   return chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
@@ -38,6 +40,8 @@ export const useCodexStore = create<CodexStore>((set, get) => {
   const outputListeners = new Set<(data: Uint8Array) => void>();
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let finishing = false;
+  let inflightRefresh: Promise<void> | null = null;
+  let checkedAt = 0;
 
   function stopPolling() {
     if (pollTimer) {
@@ -64,6 +68,7 @@ export const useCodexStore = create<CodexStore>((set, get) => {
     stopPolling();
     try {
       const status = await codexStatus();
+      checkedAt = Date.now();
       set({
         installed: status.installed,
         authenticated: status.authenticated,
@@ -97,19 +102,32 @@ export const useCodexStore = create<CodexStore>((set, get) => {
       };
     },
 
-    refresh: async () => {
-      set({ checking: true, error: null });
-      try {
-        const status = await codexStatus();
-        set({
-          installed: status.installed,
-          authenticated: status.authenticated,
-          method: status.method,
-          checking: false,
-        });
-      } catch (e) {
-        set({ error: String(e), checking: false });
+    refresh: async (opts) => {
+      const force = opts?.force ?? false;
+      if (!force && checkedAt && Date.now() - checkedAt < STATUS_TTL_MS) {
+        return;
       }
+      if (inflightRefresh) return inflightRefresh;
+
+      inflightRefresh = (async () => {
+        set({ checking: true, error: null });
+        try {
+          const status = await codexStatus();
+          checkedAt = Date.now();
+          set({
+            installed: status.installed,
+            authenticated: status.authenticated,
+            method: status.method,
+            checking: false,
+          });
+        } catch (e) {
+          set({ error: String(e), checking: false });
+        } finally {
+          inflightRefresh = null;
+        }
+      })();
+
+      return inflightRefresh;
     },
 
     startLogin: async () => {
