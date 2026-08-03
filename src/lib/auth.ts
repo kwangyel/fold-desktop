@@ -11,8 +11,20 @@ export interface AuthUser {
   id: string;
   email: string | null;
   githubUsername: string | null;
+  /** Profile photo URL saved at login (GitHub OAuth `profile.photos[0]`). */
+  avatarUrl: string | null;
   /** Expiry, seconds since epoch. */
   exp: number | null;
+}
+
+/** Best avatar URL for a signed-in user: saved photo, then GitHub username. */
+export function resolveUserAvatarUrl(user: AuthUser): string | null {
+  const saved = user.avatarUrl?.trim();
+  if (saved) return saved;
+  if (user.githubUsername) {
+    return `https://avatars.githubusercontent.com/${encodeURIComponent(user.githubUsername)}?s=64`;
+  }
+  return null;
 }
 
 /**
@@ -84,12 +96,16 @@ export function decodeJwt(token: string): AuthUser | null {
       sub?: string;
       email?: string;
       githubUsername?: string;
+      github_username?: string;
+      avatarUrl?: string;
+      avatar_url?: string;
       exp?: number;
     };
     return {
       id: payload.sub ?? "",
       email: payload.email ?? null,
-      githubUsername: payload.githubUsername ?? null,
+      githubUsername: payload.githubUsername ?? payload.github_username ?? null,
+      avatarUrl: payload.avatarUrl ?? payload.avatar_url ?? null,
       exp: payload.exp ?? null,
     };
   } catch {
