@@ -1,0 +1,11 @@
+[[permission]]
+identifier = "cursor-commands"
+description = "Cursor Cloud Agents API harness (API key connect + models)"
+commands.allow = [
+  "cursor_status",
+  "cursor_connect",
+  "cursor_disconnect",
+  "cursor_list_models",
+  "cursor_agent_run",
+  "cursor_agent_cancel",
+]

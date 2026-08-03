@@ -120,6 +120,34 @@
   flex-shrink: 0;
 }
 
+.harness-connected-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.harness-key-form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.harness-login-panel .field {
+  margin-bottom: 0;
+}
+
+.harness-login-panel .field input {
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 12px;
+}
+
+.harness-warn-hint {
+  flex-wrap: wrap;
+  color: var(--warn);
+}
+
 .dialog.dialog-wide {
   width: min(560px, calc(100vw - 48px));
 }

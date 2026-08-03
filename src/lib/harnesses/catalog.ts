@@ -19,7 +19,7 @@ export const HARNESS_CATALOG: HarnessMeta[] = [
   {
     id: "cursor",
     name: "Cursor",
-    description: "Connect the Cursor harness",
+    description: "Connect with a Cursor Cloud Agents API key",
     iconClass: "cursor",
     iconLabel: "CR",
   },

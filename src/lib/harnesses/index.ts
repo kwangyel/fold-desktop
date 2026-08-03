@@ -1,8 +1,10 @@
 import { claudeCodeAdapter } from "./claudeCode";
+import { cursorAdapter } from "./cursor";
 import type { HarnessAdapter, HarnessModel } from "./types";
 
 export { HARNESS_CATALOG, harnessMeta } from "./catalog";
 export { CLAUDE_CODE_MODELS_FALLBACK } from "./claudeCode";
+export { CURSOR_MODELS_FALLBACK } from "./cursor";
 export type {
   EffortLevel,
   HarnessAdapter,
@@ -11,8 +13,8 @@ export type {
   HarnessModel,
 } from "./types";
 
-/** Registered harness adapters. Only Claude Code is wired today. */
-const ADAPTERS: HarnessAdapter[] = [claudeCodeAdapter];
+/** Registered harness adapters. Claude Code + Cursor are wired today. */
+const ADAPTERS: HarnessAdapter[] = [claudeCodeAdapter, cursorAdapter];
 
 export function getHarnessAdapters(): HarnessAdapter[] {
   return ADAPTERS;
