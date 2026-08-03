@@ -7,6 +7,7 @@ import {
   type HarnessModel,
 } from "../lib/harnesses";
 import { useClaudeStore } from "./claudeStore";
+import { useCursorStore } from "./cursorStore";
 
 type HarnessStore = {
   /** Models from currently connected harnesses only. */
@@ -18,8 +19,8 @@ type HarnessStore = {
   /** Last successful fetch timestamp (ms). */
   fetchedAt: number | null;
   /**
-   * Refresh Claude connection status (if needed) then reload models for
-   * connected harnesses only.
+   * Refresh harness connection status then reload models for connected
+   * harnesses only.
    */
   refresh: () => Promise<void>;
 };
@@ -36,8 +37,11 @@ export const useHarnessStore = create<HarnessStore>((set, get) => ({
     set({ loading: true, error: null });
 
     try {
-      // Ensure Claude connection state is current before filtering adapters.
-      await useClaudeStore.getState().refresh();
+      // Ensure connection state is current before filtering adapters.
+      await Promise.all([
+        useClaudeStore.getState().refresh(),
+        useCursorStore.getState().refresh(),
+      ]);
 
       const connected = getConnectedAdapters().map((a) => a.meta);
       if (connected.length === 0) {

@@ -1,5 +1,6 @@
 mod auth;
 mod claude;
+mod cursor;
 mod git;
 mod github;
 mod projects;
@@ -25,6 +26,8 @@ pub struct AppState {
     pub claude_login: Mutex<Option<pty::PtySession>>,
     /// Per-session cancel flags for concurrent Claude Code agent runs.
     pub claude_agents: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    /// Per-session cancel flags for concurrent Cursor agent runs.
+    pub cursor_agents: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
 impl Default for AppState {
@@ -35,6 +38,7 @@ impl Default for AppState {
             gh_login: Mutex::new(None),
             claude_login: Mutex::new(None),
             claude_agents: Mutex::new(HashMap::new()),
+            cursor_agents: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -194,6 +198,12 @@ pub fn run() {
             claude::claude_list_models,
             claude::claude_agent_run,
             claude::claude_agent_cancel,
+            cursor::cursor_status,
+            cursor::cursor_connect,
+            cursor::cursor_disconnect,
+            cursor::cursor_list_models,
+            cursor::cursor_agent_run,
+            cursor::cursor_agent_cancel,
             auth::auth_save_token,
             auth::auth_get_token,
             auth::auth_clear_token

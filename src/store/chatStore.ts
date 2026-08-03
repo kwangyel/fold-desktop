@@ -5,11 +5,18 @@ import {
   claudeAgentRun,
   claudeReleaseChannel,
 } from '../lib/claude';
+import {
+  CursorOutput,
+  cursorAgentCancel,
+  cursorAgentRun,
+  cursorReleaseChannel,
+} from '../lib/cursor';
 import type { EffortLevel, HarnessId } from '../lib/harnesses';
 import type { SDKMessage } from '../lib/claudeStreamTypes';
 import { useProjectStore } from './projectStore';
 import { useChangesStore } from './changesStore';
 import { findHarnessModel, useHarnessStore } from './harnessStore';
+import { useCursorStore } from './cursorStore';
 
 export type Attachment = {
   id: string;
@@ -58,14 +65,16 @@ type ChatStore = {
   removeAttachment: (tabId: string, attachmentId: string) => void;
   clearChat: (tabId: string) => void;
   deleteTab: (tabId: string) => void;
-  /** Send a prompt to Claude Code in the active worktree. */
+  /** Send a prompt to the selected harness agent in the active worktree. */
   sendPrompt: (tabId: string, prompt: string) => Promise<void>;
-  /** Cancel an in-flight Claude Code agent for this tab. */
+  /** Cancel an in-flight agent for this tab. */
   cancelAgent: (tabId: string) => Promise<void>;
 };
 
 /** Sentinel emitted by the Rust monitor when the Claude child exits. */
-const EXIT_RE = /__CLAUDE_EXIT__:(-?\d+)/;
+const CLAUDE_EXIT_RE = /__CLAUDE_EXIT__:(-?\d+)/;
+/** Sentinel emitted by the Rust monitor when the Cursor child exits. */
+const CURSOR_EXIT_RE = /__CURSOR_EXIT__:(-?\d+)/;
 
 type ContentBlock = {
   type: string;
@@ -77,7 +86,21 @@ type ContentBlock = {
   input?: unknown;
 };
 
-function decode(chunk: ClaudeOutput): string {
+type StreamEvent = SDKMessage | CursorStreamEvent;
+
+type CursorStreamEvent = {
+  type: string;
+  subtype?: string;
+  message?: { content?: unknown };
+  result?: string;
+  is_error?: boolean;
+  call_id?: string;
+  tool_call?: Record<string, unknown>;
+  timestamp_ms?: number;
+  model_call_id?: string;
+};
+
+function decode(chunk: ClaudeOutput | CursorOutput): string {
   const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
   return new TextDecoder().decode(bytes);
 }
@@ -106,6 +129,20 @@ function toolUsesFromBlocks(
       id: b.id ?? `tool-${i}`,
       name: b.name ?? 'tool',
     }));
+}
+
+/** Map Cursor CLI `tool_call` payload keys to a display name. */
+function cursorToolName(toolCall: Record<string, unknown> | undefined): string {
+  if (!toolCall) return 'tool';
+  const key = Object.keys(toolCall)[0];
+  if (!key) return 'tool';
+  if (key === 'function') {
+    const fn = toolCall.function as { name?: string } | undefined;
+    return fn?.name ?? 'function';
+  }
+  // readToolCall → read, writeToolCall → write, …
+  const stripped = key.replace(/ToolCall$/, '');
+  return stripped.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
 }
 
 export const useChatStore = create<ChatStore>((set, get) => ({
@@ -290,6 +327,18 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       return;
     }
 
+    const harnessId = (tab.selectedHarness || 'claudecode') as HarnessId;
+    if (harnessId === 'cursor' && !useCursorStore.getState().authenticated) {
+      get().addMessage(tabId, {
+        id: `err-${Date.now()}`,
+        role: 'assistant',
+        content:
+          'Cursor is not connected. Open Connect Harness and paste a Cursor API key.',
+        timestamp: Date.now(),
+      });
+      return;
+    }
+
     const userMessage: Message = {
       id: `user-${Date.now()}`,
       role: 'user',
@@ -299,7 +348,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       timestamp: Date.now(),
     };
     get().addMessage(tabId, userMessage);
-    // Clear pending attachments after send.
     set((state) => {
       const t = state.tabs[tabId];
       if (!t) return state;
@@ -314,6 +362,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     let lineBuffer = '';
     let assistantId: string | null = null;
     let finished = false;
+    let lastAssistantSegment = '';
 
     const ensureAssistant = (): string => {
       if (assistantId) return assistantId;
@@ -336,6 +385,17 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       });
     };
 
+    const setAssistantSegment = (text: string) => {
+      if (!text) return;
+      if (text === lastAssistantSegment) return;
+      if (lastAssistantSegment && text.startsWith(lastAssistantSegment)) {
+        appendAssistant(text.slice(lastAssistantSegment.length));
+      } else {
+        appendAssistant(text);
+      }
+      lastAssistantSegment = text;
+    };
+
     const finish = (errorText?: string) => {
       if (finished) return;
       finished = true;
@@ -344,12 +404,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         const current = get().tabs[tabId]?.messages.find((m) => m.id === id);
         const existing = current?.content?.trim() ?? '';
         get().updateMessage(tabId, id, {
-          content: existing
-            ? `${existing}\n\n${errorText}`
-            : errorText,
+          content: existing ? `${existing}\n\n${errorText}` : errorText,
         });
       }
-      // Mark any still-running tools as done.
       const messages = get().tabs[tabId]?.messages ?? [];
       for (const m of messages) {
         if (m.role === 'tool' && m.toolStatus === 'running') {
@@ -357,16 +414,33 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         }
       }
       get().setLoading(tabId, false);
-      claudeReleaseChannel(tabId);
-      // Agent may have edited files — refresh Changes.
+      if (harnessId === 'cursor') {
+        cursorReleaseChannel(tabId);
+      } else {
+        claudeReleaseChannel(tabId);
+      }
       void useChangesStore.getState().refresh();
     };
 
-    const handleEvent = (event: SDKMessage) => {
+    const handleEvent = (event: StreamEvent) => {
       if (event.type === 'assistant') {
-        const blocks = contentBlocks(event.message);
+        const cursorEvent = event as CursorStreamEvent;
+        if (cursorEvent.model_call_id) return;
+
+        const blocks = contentBlocks(
+          'message' in event ? event.message : undefined,
+        );
         const text = textFromBlocks(blocks);
-        if (text) appendAssistant(text);
+        if (harnessId === 'cursor') {
+          if (cursorEvent.timestamp_ms != null) {
+            appendAssistant(text);
+            lastAssistantSegment += text;
+          } else if (text) {
+            setAssistantSegment(text);
+          }
+        } else if (text) {
+          appendAssistant(text);
+        }
 
         for (const tool of toolUsesFromBlocks(blocks)) {
           const id = `tool-${tool.id}`;
@@ -380,6 +454,43 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             toolStatus: 'running',
             timestamp: Date.now(),
           });
+        }
+        return;
+      }
+
+      if (event.type === 'tool_call') {
+        const cursorEvent = event as CursorStreamEvent;
+        const callId = cursorEvent.call_id ?? `tool-${Date.now()}`;
+        const id = `tool-${callId}`;
+        const name = cursorToolName(cursorEvent.tool_call);
+        if (cursorEvent.subtype === 'started') {
+          const existing = get().tabs[tabId]?.messages.find((m) => m.id === id);
+          if (!existing) {
+            get().addMessage(tabId, {
+              id,
+              role: 'tool',
+              content: name,
+              toolName: name,
+              toolStatus: 'running',
+              timestamp: Date.now(),
+            });
+          }
+          lastAssistantSegment = '';
+        } else if (cursorEvent.subtype === 'completed') {
+          const existing = get().tabs[tabId]?.messages.find((m) => m.id === id);
+          if (existing) {
+            get().updateMessage(tabId, id, { toolStatus: 'done' });
+          } else {
+            get().addMessage(tabId, {
+              id,
+              role: 'tool',
+              content: name,
+              toolName: name,
+              toolStatus: 'done',
+              timestamp: Date.now(),
+            });
+          }
+          lastAssistantSegment = '';
         }
         return;
       }
@@ -404,28 +515,33 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         const resultText = 'result' in event ? event.result : undefined;
         const isError = 'is_error' in event ? Boolean(event.is_error) : false;
         if (isError && resultText) {
-          appendAssistant(resultText);
+          appendAssistant(String(resultText));
         } else if (resultText && !assistantId) {
-          // Final text only when we never saw assistant deltas.
-          appendAssistant(resultText);
+          appendAssistant(String(resultText));
         }
       }
     };
 
-    const onEvent = (chunk: ClaudeOutput) => {
+    const onEvent = (chunk: ClaudeOutput | CursorOutput) => {
       if (finished) return;
       lineBuffer += decode(chunk);
 
-      const exitMatch = lineBuffer.match(EXIT_RE);
+      const exitRe = harnessId === 'cursor' ? CURSOR_EXIT_RE : CLAUDE_EXIT_RE;
+      const exitMatch = lineBuffer.match(exitRe);
       if (exitMatch) {
         const code = Number(exitMatch[1]);
-        // Drain any complete JSON lines before the sentinel.
         const before = lineBuffer.slice(0, exitMatch.index);
         for (const line of before.split('\n')) {
           const trimmed = line.trim();
-          if (!trimmed || trimmed.startsWith('__CLAUDE_EXIT__')) continue;
+          if (
+            !trimmed ||
+            trimmed.startsWith('__CLAUDE_EXIT__') ||
+            trimmed.startsWith('__CURSOR_EXIT__')
+          ) {
+            continue;
+          }
           try {
-            handleEvent(JSON.parse(trimmed) as SDKMessage);
+            handleEvent(JSON.parse(trimmed) as StreamEvent);
           } catch {
             // Non-JSON stderr noise — ignore.
           }
@@ -433,7 +549,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         if (code === -1) {
           finish('Agent cancelled.');
         } else if (code !== 0) {
-          finish(`Claude Code exited with code ${code}.`);
+          finish(
+            harnessId === 'cursor'
+              ? `Cursor agent exited with code ${code}.`
+              : `Claude Code exited with code ${code}.`,
+          );
         } else {
           finish();
         }
@@ -446,7 +566,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         const trimmed = line.trim();
         if (!trimmed) continue;
         try {
-          handleEvent(JSON.parse(trimmed) as SDKMessage);
+          handleEvent(JSON.parse(trimmed) as StreamEvent);
         } catch {
           // Non-JSON (stderr) — ignore for the chat transcript.
         }
@@ -457,33 +577,50 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const modelInfo = findHarnessModel(
         useHarnessStore.getState().models,
         tab.selectedModel,
-        tab.selectedHarness as HarnessId,
-      );
-      const effort =
-        modelInfo?.supportsEffort && tab.modelEffort
-          ? tab.modelEffort
-          : null;
-      const fastMode = Boolean(
-        modelInfo?.supportsFastMode && tab.mode === 'fast',
+        harnessId,
       );
 
-      await claudeAgentRun(
-        tabId,
-        prompt.trim(),
-        worktree,
-        tab.selectedModel || null,
-        effort,
-        fastMode,
-        onEvent,
-      );
+      if (harnessId === 'cursor') {
+        await cursorAgentRun(
+          tabId,
+          prompt.trim(),
+          worktree,
+          tab.selectedModel || null,
+          onEvent,
+        );
+      } else {
+        const effort =
+          modelInfo?.supportsEffort && tab.modelEffort
+            ? tab.modelEffort
+            : null;
+        const fastMode = Boolean(
+          modelInfo?.supportsFastMode && tab.mode === 'fast',
+        );
+
+        await claudeAgentRun(
+          tabId,
+          prompt.trim(),
+          worktree,
+          tab.selectedModel || null,
+          effort,
+          fastMode,
+          onEvent,
+        );
+      }
     } catch (e) {
       finish(String(e));
     }
   },
 
   cancelAgent: async (tabId) => {
-    await claudeAgentCancel(tabId);
+    const harnessId = get().tabs[tabId]?.selectedHarness;
+    if (harnessId === 'cursor') {
+      await cursorAgentCancel(tabId);
+      cursorReleaseChannel(tabId);
+    } else {
+      await claudeAgentCancel(tabId);
+      claudeReleaseChannel(tabId);
+    }
     get().setLoading(tabId, false);
-    claudeReleaseChannel(tabId);
   },
 }));

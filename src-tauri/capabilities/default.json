@@ -13,6 +13,7 @@
     "project-commands",
     "github-commands",
     "claude-commands",
+    "cursor-commands",
     "auth-commands",
     "dialog:default",
     "deep-link:default",
