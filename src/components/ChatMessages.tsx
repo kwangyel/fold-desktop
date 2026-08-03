@@ -17,6 +17,7 @@ import {
   type ActivityKind,
 } from "../lib/chatActivity";
 import { useChatStore, type Message } from "../store/chatStore";
+import AssistantMarkdown from "./AssistantMarkdown";
 import "./ChatMessages.css";
 
 interface ChatMessagesProps {
@@ -364,7 +365,7 @@ export default function ChatMessages({ tabId }: ChatMessagesProps) {
                 msg.content ? (
                   <div key={msg.id} className="message assistant">
                     <div className="message-content">
-                      <p className="message-text">{msg.content}</p>
+                      <AssistantMarkdown content={msg.content} />
                     </div>
                   </div>
                 ) : null,
