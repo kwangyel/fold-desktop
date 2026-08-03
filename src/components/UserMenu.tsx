@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import { IconChevronDown, IconLogout } from "@tabler/icons-react";
+import { fetch } from "@tauri-apps/plugin-http";
+import { resolveUserAvatarUrl } from "../lib/auth";
+import { isTauri } from "../lib/git";
 import { useAuthStore } from "../store/authStore";
 import "./UserMenu.css";
 
@@ -8,6 +11,41 @@ export default function UserMenu() {
   const logout = useAuthStore((s) => s.logout);
   const [open, setOpen] = useState(false);
   const [imgError, setImgError] = useState(false);
+  const [avatarSrc, setAvatarSrc] = useState<string | null>(null);
+
+  const remoteAvatar = user ? resolveUserAvatarUrl(user) : null;
+
+  // Load the saved avatar via Tauri's HTTP client (img tags can fail on external URLs).
+  useEffect(() => {
+    setImgError(false);
+    if (!remoteAvatar) {
+      setAvatarSrc(null);
+      return;
+    }
+    if (!isTauri()) {
+      setAvatarSrc(remoteAvatar);
+      return;
+    }
+
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    void (async () => {
+      try {
+        const res = await fetch(remoteAvatar, { method: "GET" });
+        if (!res.ok) throw new Error(String(res.status));
+        const blob = await res.blob();
+        objectUrl = URL.createObjectURL(blob);
+        if (!cancelled) setAvatarSrc(objectUrl);
+      } catch {
+        if (!cancelled) setAvatarSrc(remoteAvatar);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [remoteAvatar]);
 
   // Close the dropdown on any outside interaction / Escape.
   useEffect(() => {
@@ -27,10 +65,6 @@ export default function UserMenu() {
   if (!user) return null;
 
   const name = user.githubUsername || user.email || "Account";
-  // GitHub serves a public avatar for any username at this URL.
-  const avatar = user.githubUsername
-    ? `https://github.com/${user.githubUsername}.png?size=64`
-    : null;
   const initial = name.charAt(0).toUpperCase();
 
   return (
@@ -45,8 +79,8 @@ export default function UserMenu() {
         title={user.email ?? name}
       >
         <span className="user-avatar">
-          {avatar && !imgError ? (
-            <img src={avatar} alt="" onError={() => setImgError(true)} />
+          {avatarSrc && !imgError ? (
+            <img src={avatarSrc} alt="" onError={() => setImgError(true)} />
           ) : (
             initial
           )}

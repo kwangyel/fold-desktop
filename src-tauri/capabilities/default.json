@@ -17,7 +17,11 @@
     "deep-link:default",
     {
       "identifier": "http:default",
-      "allow": [{ "url": "https://fold.optulus.com/*" }]
+      "allow": [
+        { "url": "https://fold.optulus.com/*" },
+        { "url": "https://avatars.githubusercontent.com/*" },
+        { "url": "https://github.com/*" }
+      ]
     }
   ]
 }
