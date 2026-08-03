@@ -52,6 +52,10 @@
   justify-content: flex-start;
 }
 
+.message.tool {
+  justify-content: flex-start;
+}
+
 .message-content {
   max-width: 70%;
   padding: 10px 14px;
@@ -70,8 +74,42 @@
   color: var(--text);
 }
 
-.message-content p {
+.message-content p,
+.message-content .message-text {
   margin: 0;
+  white-space: pre-wrap;
+}
+
+.tool-activity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 70%;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.tool-name {
+  font-family: "SF Mono", Menlo, monospace;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.tool-status {
+  font-size: 11px;
+  text-transform: lowercase;
+}
+
+.tool-status.running {
+  color: var(--accent);
+}
+
+.tool-status.done {
+  color: var(--success, #3d9a6a);
 }
 
 .attachments {

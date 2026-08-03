@@ -1,4 +1,5 @@
 mod auth;
+mod claude;
 mod git;
 mod github;
 mod projects;
@@ -6,7 +7,8 @@ mod pty;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
 
 
 use tauri::ipc::Channel;
@@ -18,7 +20,11 @@ pub struct AppState {
     pub active_project: Mutex<Option<PathBuf>>,
     /// Cancel flag for an in-progress `gh auth login`; setting it stops the
     /// monitored child. `None` when no login flow is running.
-    pub gh_login: Mutex<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>>,
+    pub gh_login: Mutex<Option<Arc<AtomicBool>>>,
+    /// Interactive Claude Code login PTY (dropped to cancel / kill).
+    pub claude_login: Mutex<Option<pty::PtySession>>,
+    /// Per-session cancel flags for concurrent Claude Code agent runs.
+    pub claude_agents: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
 impl Default for AppState {
@@ -27,6 +33,8 @@ impl Default for AppState {
             sessions: Mutex::new(HashMap::new()),
             active_project: Mutex::new(None),
             gh_login: Mutex::new(None),
+            claude_login: Mutex::new(None),
+            claude_agents: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -179,6 +187,12 @@ pub fn run() {
             github::gh_auth_cancel,
             github::gh_auth_logout,
             github::open_external,
+            claude::claude_status,
+            claude::claude_login,
+            claude::claude_login_write,
+            claude::claude_login_cancel,
+            claude::claude_agent_run,
+            claude::claude_agent_cancel,
             auth::auth_save_token,
             auth::auth_get_token,
             auth::auth_clear_token
