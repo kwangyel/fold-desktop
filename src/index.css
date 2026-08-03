@@ -31,6 +31,22 @@ body,
   height: 100%;
   overflow: hidden;
   background: transparent !important;
+  /* App-like chrome: no drag-to-highlight across the UI. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Keep selection where typing / editing is expected. */
+input,
+textarea,
+[contenteditable="true"],
+.cm-editor,
+.cm-content,
+.cm-line,
+.xterm,
+.xterm-rows {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 button {

@@ -137,6 +137,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_http::init())
+        // Block browser-like shortcuts (DevTools, reload, find, print, …)
+        // and the default right-click menu so the app feels native. Custom
+        // React context menus (e.g. Sidebar) still work — they render their
+        // own UI; this only suppresses the webview's Inspect Element menu.
+        .plugin(tauri_plugin_prevent_default::init())
         .manage(AppState::default())
         .setup(|app| {
             // Restore the last active project into runtime state on launch.
