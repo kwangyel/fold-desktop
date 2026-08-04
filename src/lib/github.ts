@@ -73,3 +73,9 @@ export async function ghAuthLogout(): Promise<void> {
   if (!isTauri()) return;
   await invoke("gh_auth_logout");
 }
+
+/** Open the GitHub PR creation page in the browser via `gh pr create --web`. */
+export async function ghPrCreateWeb(worktreePath: string): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("gh_pr_create_web", { worktreePath });
+}

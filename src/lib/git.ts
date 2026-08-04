@@ -72,3 +72,15 @@ export async function writeFile(path: string, content: string): Promise<void> {
   if (!isTauri()) return;
   await invoke("write_file", { path, content });
 }
+
+/** Returns true if the repo at `path` has a GitHub remote as `origin`. */
+export async function gitGithubRemote(path: string): Promise<boolean> {
+  if (!isTauri()) return false;
+  return invoke<boolean>("git_github_remote", { path });
+}
+
+/** List local branch names for the repo at `path`. */
+export async function gitListBranches(path: string): Promise<string[]> {
+  if (!isTauri()) return ["main"];
+  return invoke<string[]>("git_list_branches", { path });
+}

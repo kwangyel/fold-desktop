@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import ChatInterface from "./ChatInterface";
 import CodeEditor from "./CodeEditor";
 import DiffPane from "./DiffPane";
+import CreatePrButton from "./CreatePrButton";
 import { closeActiveTab } from "../lib/closeActiveTab";
 import { useCenterViewStore } from "../store/centerViewStore";
 import { useChatStore } from "../store/chatStore";
@@ -131,6 +132,7 @@ export default function CenterPane() {
         <div className="tab-add" onClick={addChatTab}>
           +
         </div>
+        <CreatePrButton />
       </div>
       <div className="center-content">{renderTabContent()}</div>
     </section>

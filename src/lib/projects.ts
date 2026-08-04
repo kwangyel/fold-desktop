@@ -16,6 +16,7 @@ export interface Project {
   name: string;
   path: string;
   createdOnGithub: boolean;
+  hasGithubRemote: boolean;
   worktrees: Worktree[];
   activeWorktreeId: string | null;
 }

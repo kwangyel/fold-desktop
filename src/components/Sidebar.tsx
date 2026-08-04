@@ -181,11 +181,11 @@ export default function Sidebar({ width, topRatio = 0.38, onSplitDrag }: Props) 
                         : p.path}
                     </div>
                   </div>
-                  {p.createdOnGithub && (
+                  {p.hasGithubRemote && (
                     <IconBrandGithub
                       size={14}
                       className="gh-badge"
-                      title="Marked for GitHub"
+                      title="GitHub remote"
                     />
                   )}
                   <button
