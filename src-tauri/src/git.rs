@@ -14,6 +14,7 @@ pub struct ChangedFile {
     additions: u32,
     deletions: u32,
     is_untracked: bool,
+    staged: bool,
 }
 
 #[derive(Serialize)]
@@ -85,36 +86,64 @@ fn git_in_root(root: &Path, args: &[&str]) -> Result<std::process::Output, Strin
         .map_err(|e| format!("failed to run git: {e}"))
 }
 
-/// List all uncommitted changes (staged + unstaged + untracked) vs HEAD.
+fn parse_numstat(stdout: &str) -> std::collections::HashMap<String, (u32, u32)> {
+    let mut stats = std::collections::HashMap::new();
+    for line in stdout.lines() {
+        let mut parts = line.split('\t');
+        let adds = parts.next().unwrap_or("0");
+        let dels = parts.next().unwrap_or("0");
+        let path = parts.next().unwrap_or("").to_string();
+        if path.is_empty() {
+            continue;
+        }
+        // Binary files report "-"; treat as 0.
+        let adds = adds.parse::<u32>().unwrap_or(0);
+        let dels = dels.parse::<u32>().unwrap_or(0);
+        stats.insert(path, (adds, dels));
+    }
+    stats
+}
+
+fn status_from_code(code: char, is_untracked: bool) -> String {
+    if is_untracked || code == 'A' || code == '?' {
+        "added".to_string()
+    } else if code == 'D' {
+        "deleted".to_string()
+    } else {
+        "modified".to_string()
+    }
+}
+
+fn git_stderr(output: &std::process::Output) -> String {
+    String::from_utf8_lossy(&output.stderr).trim().to_string()
+}
+
+/// List uncommitted changes split into staged and unstaged/untracked rows.
+/// A partially staged file may appear twice (once per side).
 #[tauri::command]
 pub fn git_changes(state: State<'_, AppState>) -> Result<Vec<ChangedFile>, String> {
     let root = repo_root(&state)?;
 
-    // Line-count deltas vs HEAD for tracked files.
-    let numstat = git_in_root(&root, &["diff", "HEAD", "--numstat"])?;
-    let mut stats: std::collections::HashMap<String, (u32, u32)> = std::collections::HashMap::new();
-    if numstat.status.success() {
-        for line in String::from_utf8_lossy(&numstat.stdout).lines() {
-            let mut parts = line.split('\t');
-            let adds = parts.next().unwrap_or("0");
-            let dels = parts.next().unwrap_or("0");
-            let path = parts.next().unwrap_or("").to_string();
-            if path.is_empty() {
-                continue;
-            }
-            // Binary files report "-"; treat as 0.
-            let adds = adds.parse::<u32>().unwrap_or(0);
-            let dels = dels.parse::<u32>().unwrap_or(0);
-            stats.insert(path, (adds, dels));
-        }
-    }
+    let staged_numstat = git_in_root(&root, &["diff", "--cached", "--numstat"])?;
+    let staged_stats = if staged_numstat.status.success() {
+        parse_numstat(&String::from_utf8_lossy(&staged_numstat.stdout))
+    } else {
+        std::collections::HashMap::new()
+    };
+
+    let unstaged_numstat = git_in_root(&root, &["diff", "--numstat"])?;
+    let unstaged_stats = if unstaged_numstat.status.success() {
+        parse_numstat(&String::from_utf8_lossy(&unstaged_numstat.stdout))
+    } else {
+        std::collections::HashMap::new()
+    };
 
     let status = git_in_root(
         &root,
         &["status", "--porcelain=v1", "--untracked-files=all"],
     )?;
     if !status.status.success() {
-        return Err(String::from_utf8_lossy(&status.stderr).trim().to_string());
+        return Err(git_stderr(&status));
     }
 
     let mut files = Vec::new();
@@ -122,44 +151,134 @@ pub fn git_changes(state: State<'_, AppState>) -> Result<Vec<ChangedFile>, Strin
         if line.len() < 3 {
             continue;
         }
-        let code = &line[0..2];
+        let index_code = line.as_bytes()[0] as char;
+        let worktree_code = line.as_bytes()[1] as char;
         let mut rest = line[3..].to_string();
         // Renames/copies are printed as "old -> new"; keep the new path.
         if let Some(idx) = rest.find(" -> ") {
             rest = rest[idx + 4..].to_string();
         }
         let path = rest;
+        let is_untracked = index_code == '?' && worktree_code == '?';
 
-        let is_untracked = code == "??";
-        let status_label = if is_untracked || code.contains('A') {
-            "added"
-        } else if code.contains('D') {
-            "deleted"
-        } else {
-            "modified"
+        // Staged: index column has a real status (not space / untracked).
+        if !is_untracked && index_code != ' ' && index_code != '?' {
+            let (additions, deletions) = staged_stats.get(&path).copied().unwrap_or((0, 0));
+            files.push(ChangedFile {
+                path: path.clone(),
+                status: status_from_code(index_code, false),
+                additions,
+                deletions,
+                is_untracked: false,
+                staged: true,
+            });
         }
-        .to_string();
 
-        let (additions, deletions) = if is_untracked {
-            // numstat does not cover untracked files; count lines on disk.
-            let count = std::fs::read_to_string(root.join(&path))
-                .map(|c| c.lines().count() as u32)
-                .unwrap_or(0);
-            (count, 0)
-        } else {
-            stats.get(&path).copied().unwrap_or((0, 0))
-        };
-
-        files.push(ChangedFile {
-            path,
-            status: status_label,
-            additions,
-            deletions,
-            is_untracked,
-        });
+        // Unstaged / untracked: worktree column dirty, or untracked.
+        if is_untracked || (worktree_code != ' ' && worktree_code != '?') {
+            let (additions, deletions) = if is_untracked {
+                let count = std::fs::read_to_string(root.join(&path))
+                    .map(|c| c.lines().count() as u32)
+                    .unwrap_or(0);
+                (count, 0)
+            } else {
+                unstaged_stats.get(&path).copied().unwrap_or((0, 0))
+            };
+            files.push(ChangedFile {
+                path,
+                status: status_from_code(if is_untracked { '?' } else { worktree_code }, is_untracked),
+                additions,
+                deletions,
+                is_untracked,
+                staged: false,
+            });
+        }
     }
 
     Ok(files)
+}
+
+#[tauri::command]
+pub fn git_stage(path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let root = repo_root(&state)?;
+    let _ = safe_join(&root, &path)?;
+    let output = git_in_root(&root, &["add", "--", &path])?;
+    if !output.status.success() {
+        return Err(git_stderr(&output));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn git_unstage(path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let root = repo_root(&state)?;
+    let _ = safe_join(&root, &path)?;
+    let output = git_in_root(&root, &["restore", "--staged", "--", &path])?;
+    if !output.status.success() {
+        return Err(git_stderr(&output));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn git_stage_all(state: State<'_, AppState>) -> Result<(), String> {
+    let root = repo_root(&state)?;
+    let output = git_in_root(&root, &["add", "-A"])?;
+    if !output.status.success() {
+        return Err(git_stderr(&output));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn git_unstage_all(state: State<'_, AppState>) -> Result<(), String> {
+    let root = repo_root(&state)?;
+    let output = git_in_root(&root, &["reset", "HEAD"])?;
+    if !output.status.success() {
+        return Err(git_stderr(&output));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn git_commit(message: String, state: State<'_, AppState>) -> Result<(), String> {
+    let root = repo_root(&state)?;
+    let trimmed = message.trim();
+    if trimmed.is_empty() {
+        return Err("commit message is empty".to_string());
+    }
+    let output = git_in_root(&root, &["commit", "-m", trimmed])?;
+    if !output.status.success() {
+        return Err(git_stderr(&output));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn git_push(state: State<'_, AppState>) -> Result<(), String> {
+    let root = repo_root(&state)?;
+    let output = git_in_root(&root, &["push"])?;
+    if !output.status.success() {
+        return Err(git_stderr(&output));
+    }
+    Ok(())
+}
+
+/// Staged diff text for AI commit-message generation (truncated).
+#[tauri::command]
+pub fn git_staged_diff(state: State<'_, AppState>) -> Result<String, String> {
+    let root = repo_root(&state)?;
+    let output = git_in_root(&root, &["diff", "--cached"])?;
+    if !output.status.success() {
+        return Err(git_stderr(&output));
+    }
+    let mut diff = String::from_utf8_lossy(&output.stdout).to_string();
+    const MAX: usize = 48_000;
+    if diff.len() > MAX {
+        diff.truncate(MAX);
+        diff.push_str("\n\n… (diff truncated)");
+    }
+    Ok(diff)
 }
 
 /// Return the HEAD version (original) and working-tree version (modified) of a file.
@@ -183,7 +302,7 @@ pub fn git_file_diff(path: String, state: State<'_, AppState>) -> Result<FileDif
 }
 
 /// Discard working-tree changes for a file. Untracked files are deleted; tracked
-/// files are restored from HEAD (both staged and unstaged changes are reverted).
+/// files are restored from the index (staged changes are left alone).
 #[tauri::command]
 pub fn git_discard(
     path: String,
@@ -198,7 +317,7 @@ pub fn git_discard(
         return Ok(());
     }
 
-    let output = git_in_root(&root, &["restore", "--staged", "--worktree", "--", &path])?;
+    let output = git_in_root(&root, &["restore", "--worktree", "--", &path])?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }

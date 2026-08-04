@@ -7,6 +7,7 @@ export interface ChangedFile {
   additions: number;
   deletions: number;
   isUntracked: boolean;
+  staged: boolean;
 }
 
 export interface FileDiff {
@@ -26,19 +27,19 @@ export function isTauri(): boolean {
 
 // --- Browser fallback (mock data) --------------------------------------------
 
-const MOCK_CHANGES: ChangedFile[] = [
-  { path: "src/components/RightPane.tsx", status: "modified", additions: 42, deletions: 18, isUntracked: false },
-  { path: "src/components/XTerminal.tsx", status: "added", additions: 95, deletions: 0, isUntracked: true },
-  { path: "src/components/TerminalPanel.tsx", status: "added", additions: 68, deletions: 0, isUntracked: true },
-  { path: "src-tauri/src/pty.rs", status: "added", additions: 102, deletions: 0, isUntracked: true },
-  { path: "src-tauri/src/lib.rs", status: "modified", additions: 55, deletions: 3, isUntracked: false },
-  { path: "package.json", status: "modified", additions: 2, deletions: 0, isUntracked: false },
+let mockChanges: ChangedFile[] = [
+  { path: "src/components/RightPane.tsx", status: "modified", additions: 42, deletions: 18, isUntracked: false, staged: false },
+  { path: "src/components/XTerminal.tsx", status: "added", additions: 95, deletions: 0, isUntracked: true, staged: false },
+  { path: "src/components/TerminalPanel.tsx", status: "added", additions: 68, deletions: 0, isUntracked: true, staged: false },
+  { path: "src-tauri/src/pty.rs", status: "added", additions: 102, deletions: 0, isUntracked: true, staged: true },
+  { path: "src-tauri/src/lib.rs", status: "modified", additions: 55, deletions: 3, isUntracked: false, staged: true },
+  { path: "package.json", status: "modified", additions: 2, deletions: 0, isUntracked: false, staged: false },
 ];
 
 // --- Public API --------------------------------------------------------------
 
 export async function getChanges(): Promise<ChangedFile[]> {
-  if (!isTauri()) return MOCK_CHANGES;
+  if (!isTauri()) return mockChanges.map((c) => ({ ...c }));
   return invoke<ChangedFile[]>("git_changes");
 }
 
@@ -51,8 +52,68 @@ export async function getFileDiff(path: string): Promise<FileDiff> {
 }
 
 export async function discardFile(path: string, isUntracked: boolean): Promise<void> {
-  if (!isTauri()) return;
+  if (!isTauri()) {
+    mockChanges = mockChanges.filter((c) => c.path !== path);
+    return;
+  }
   await invoke("git_discard", { path, isUntracked });
+}
+
+export async function stageFile(path: string): Promise<void> {
+  if (!isTauri()) {
+    mockChanges = mockChanges.map((c) =>
+      c.path === path && !c.staged ? { ...c, staged: true, isUntracked: false } : c,
+    );
+    return;
+  }
+  await invoke("git_stage", { path });
+}
+
+export async function unstageFile(path: string): Promise<void> {
+  if (!isTauri()) {
+    mockChanges = mockChanges.map((c) =>
+      c.path === path && c.staged ? { ...c, staged: false } : c,
+    );
+    return;
+  }
+  await invoke("git_unstage", { path });
+}
+
+export async function stageAll(): Promise<void> {
+  if (!isTauri()) {
+    mockChanges = mockChanges.map((c) => ({ ...c, staged: true, isUntracked: false }));
+    return;
+  }
+  await invoke("git_stage_all");
+}
+
+export async function unstageAll(): Promise<void> {
+  if (!isTauri()) {
+    mockChanges = mockChanges.map((c) => ({ ...c, staged: false }));
+    return;
+  }
+  await invoke("git_unstage_all");
+}
+
+export async function commit(message: string): Promise<void> {
+  if (!isTauri()) {
+    mockChanges = mockChanges.filter((c) => !c.staged);
+    return;
+  }
+  await invoke("git_commit", { message });
+}
+
+export async function push(): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("git_push");
+}
+
+export async function getStagedDiff(): Promise<string> {
+  if (!isTauri()) {
+    const staged = mockChanges.filter((c) => c.staged);
+    return staged.map((c) => `diff --git a/${c.path} b/${c.path}\n+ mock change`).join("\n");
+  }
+  return invoke<string>("git_staged_diff");
 }
 
 export async function listDir(path: string): Promise<DirEntry[]> {
