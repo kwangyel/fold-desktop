@@ -4,6 +4,7 @@ use std::process::Command;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
+use crate::github::detect_github_remote;
 use crate::AppState;
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -26,6 +27,8 @@ pub struct Project {
     /// Original repository checkout (source for `git worktree add`).
     path: String,
     created_on_github: bool,
+    #[serde(default)]
+    has_github_remote: bool,
     #[serde(default)]
     worktrees: Vec<Worktree>,
     #[serde(default)]
@@ -196,6 +199,26 @@ fn default_base_ref(repo: &Path) -> String {
     "HEAD".to_string()
 }
 
+/// Ref new worktrees should branch from. When the repo has an `origin` remote,
+/// fetch the base branch first and prefer the freshly-updated `origin/<base>`
+/// so new worktrees start from the latest remote commit instead of a stale
+/// local branch. The fetch is best-effort — offline/auth failures fall back to
+/// the local base ref.
+fn resolve_base_ref(repo: &Path) -> String {
+    let base = default_base_ref(repo);
+    if base == "HEAD" {
+        return base;
+    }
+    if git_ok(repo, &["remote", "get-url", "origin"]) {
+        let _ = git_in(repo, &["fetch", "origin", &base]);
+        let remote_ref = format!("origin/{base}");
+        if git_ok(repo, &["rev-parse", "--verify", &remote_ref]) {
+            return remote_ref;
+        }
+    }
+    base
+}
+
 fn head_tree_is_empty(repo: &Path) -> bool {
     match git_stdout(repo, &["ls-tree", "-r", "--name-only", "HEAD"]) {
         Ok(names) => names.is_empty(),
@@ -270,10 +293,11 @@ fn add_worktree(repo: &Path, dest: &Path, branch: &str) -> Result<(), String> {
             .map_err(|e| format!("failed to create worktree parent: {e}"))?;
     }
 
-    let base = default_base_ref(repo);
+    let base = resolve_base_ref(repo);
     let dest_s = dest.to_string_lossy().to_string();
 
-    // New branch from main/master (full file tree), checked out in `dest`.
+    // New branch from the latest main/master (full file tree), checked out in
+    // `dest`. `resolve_base_ref` fetches origin first when a remote exists.
     let output = git_in(
         repo,
         &["worktree", "add", "-b", branch, &dest_s, &base],
@@ -318,6 +342,7 @@ pub fn create_project(
         name: name.to_string(),
         path: dir.to_string_lossy().to_string(),
         created_on_github: create_github,
+        has_github_remote: false,
         worktrees: Vec::new(),
         active_worktree_id: None,
     };
@@ -377,10 +402,12 @@ pub fn open_project(
         return Ok(existing);
     }
 
+    let project_path = dir.to_string_lossy().to_string();
     let project = Project {
         id: new_id("p"),
         name,
-        path: dir.to_string_lossy().to_string(),
+        has_github_remote: detect_github_remote(&project_path),
+        path: project_path,
         created_on_github: create_github,
         worktrees: Vec::new(),
         active_worktree_id: None,

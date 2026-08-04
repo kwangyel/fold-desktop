@@ -259,3 +259,22 @@ pub fn write_file(
     let abs = safe_join(&root, &path)?;
     std::fs::write(&abs, content).map_err(|e| format!("failed to write file: {e}"))
 }
+
+/// List local branch names for the repo at `path`.
+#[tauri::command]
+pub fn git_list_branches(path: String) -> Result<Vec<String>, String> {
+    let output = Command::new("git")
+        .args(["branch", "--format=%(refname:short)"])
+        .current_dir(&path)
+        .output()
+        .map_err(|e| format!("failed to run git branch: {e}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    let branches = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+    Ok(branches)
+}

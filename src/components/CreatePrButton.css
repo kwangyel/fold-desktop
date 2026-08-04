@@ -1,0 +1,85 @@
+.create-pr-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  padding: 0 8px;
+  flex-shrink: 0;
+}
+
+.create-pr-split {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.create-pr-main {
+  padding: 4px 10px;
+  background: var(--panel-2);
+  color: var(--muted);
+  border: none;
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+
+.create-pr-main:hover {
+  color: var(--text);
+  background: var(--panel-3, var(--panel-2));
+}
+
+.create-pr-arrow {
+  padding: 4px 7px;
+  background: var(--panel-2);
+  color: var(--muted);
+  border: none;
+  border-left: 1px solid var(--border);
+  font-size: 10px;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+  line-height: 1;
+}
+
+.create-pr-arrow:hover {
+  color: var(--text);
+  background: var(--panel-3, var(--panel-2));
+}
+
+.create-pr-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  z-index: 100;
+  min-width: 160px;
+  overflow: hidden;
+}
+
+.create-pr-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+
+.create-pr-item:hover {
+  color: var(--text);
+  background: var(--panel-3, var(--panel));
+}
+
+.create-pr-item-active {
+  color: var(--text);
+}

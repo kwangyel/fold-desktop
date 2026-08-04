@@ -185,6 +185,36 @@ pub fn gh_auth_cancel(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+/// Check if the git repo at `path` has a GitHub remote as `origin`.
+pub fn detect_github_remote(path: &str) -> bool {
+    Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .current_dir(path)
+        .output()
+        .map(|o| {
+            o.status.success()
+                && String::from_utf8_lossy(&o.stdout).contains("github.com")
+        })
+        .unwrap_or(false)
+}
+
+/// Expose GitHub remote detection to the frontend.
+#[tauri::command]
+pub fn git_github_remote(path: String) -> bool {
+    detect_github_remote(&path)
+}
+
+/// Open the GitHub PR creation page in the browser via `gh pr create --web`.
+#[tauri::command]
+pub fn gh_pr_create_web(worktree_path: String) -> Result<(), String> {
+    Command::new(gh_bin())
+        .args(["pr", "create", "--web"])
+        .current_dir(&worktree_path)
+        .spawn()
+        .map_err(|e| format!("failed to run gh pr create --web: {e}"))?;
+    Ok(())
+}
+
 /// Open a URL in the user's default web browser.
 #[tauri::command]
 pub fn open_external(url: String) -> Result<(), String> {

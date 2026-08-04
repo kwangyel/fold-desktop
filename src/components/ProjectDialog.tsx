@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { IconFolder, IconGitBranch, IconAlertTriangle } from "@tabler/icons-react";
+import { IconFolder, IconGitBranch, IconAlertTriangle, IconBrandGithub } from "@tabler/icons-react";
 import { isGitRepo, pickFolder } from "../lib/projects";
+import { gitGithubRemote } from "../lib/git";
 import { useProjectStore } from "../store/projectStore";
 import "./ProjectDialog.css";
 
@@ -27,6 +28,7 @@ export default function ProjectDialog({
   const [initGit, setInitGit] = useState(false);
   // null = not checked yet (open mode, no folder chosen).
   const [isRepo, setIsRepo] = useState<boolean | null>(null);
+  const [hasGithubRemote, setHasGithubRemote] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -65,6 +67,11 @@ export default function ProjectDialog({
     const repo = await isGitRepo(picked);
     setIsRepo(repo);
     setInitGit(false);
+    setHasGithubRemote(null);
+    if (repo) {
+      const ghRemote = await gitGithubRemote(picked);
+      setHasGithubRemote(ghRemote);
+    }
   }
 
   async function submit() {
@@ -151,6 +158,13 @@ export default function ProjectDialog({
                     <div className="git-status ok">
                       <IconGitBranch size={15} stroke={1.75} />
                       <span>Git repository detected</span>
+                    </div>
+                  )}
+
+                  {isRepo === true && hasGithubRemote === true && (
+                    <div className="git-status ok">
+                      <IconBrandGithub size={15} stroke={1.75} />
+                      <span>GitHub remote detected</span>
                     </div>
                   )}
 
