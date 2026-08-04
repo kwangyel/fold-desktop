@@ -389,6 +389,16 @@ select {
   border-bottom: 1px solid var(--border);
   background: var(--panel);
   padding: 0 4px;
+  overflow: hidden;
+  gap: 0;
+}
+
+/* Tabs scroll independently so the PR / merge button stays pinned on the right. */
+.tabbar-tabs {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
   overflow-x: auto;
 }
 

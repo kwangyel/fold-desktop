@@ -1,4 +1,15 @@
 [[permission]]
 identifier = "github-commands"
-description = "GitHub CLI (gh) commands for connecting a GitHub account"
-commands.allow = ["gh_auth_status", "gh_auth_login", "gh_auth_cancel", "gh_auth_logout", "open_external"]
+description = "GitHub CLI (gh) commands for auth, remotes, and pull requests"
+commands.allow = [
+  "gh_auth_status",
+  "gh_auth_login",
+  "gh_auth_cancel",
+  "gh_auth_logout",
+  "git_github_remote",
+  "gh_pr_create_web",
+  "gh_pr_view",
+  "gh_pr_merge_method",
+  "gh_pr_merge",
+  "open_external",
+]

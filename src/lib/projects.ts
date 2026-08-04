@@ -85,6 +85,7 @@ export async function createProject(
       name: name.trim(),
       path: `${parent.replace(/[\\/]+$/, "")}/${name.trim()}`,
       createdOnGithub: createGithub,
+      hasGithubRemote: createGithub,
       worktrees: [],
       activeWorktreeId: null,
     };
@@ -111,6 +112,7 @@ export async function openProject(
       name: name.trim() || basename(path),
       path,
       createdOnGithub: createGithub,
+      hasGithubRemote: createGithub,
       worktrees: [],
       activeWorktreeId: null,
     };

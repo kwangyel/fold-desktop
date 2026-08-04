@@ -12,6 +12,7 @@ commands.allow = [
   "git_commit",
   "git_push",
   "git_staged_diff",
+  "git_list_branches",
   "list_dir",
   "read_file",
   "write_file",

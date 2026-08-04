@@ -1,7 +1,8 @@
 import { create } from "zustand";
 import { readFile } from "../lib/git";
+import { ghPrView, type PrInfo } from "../lib/github";
 
-export type CenterTabType = "chat" | "editor" | "diff";
+export type CenterTabType = "chat" | "editor" | "diff" | "pr";
 
 export type CenterTab = {
   id: string;
@@ -13,6 +14,10 @@ export type CenterTab = {
   fileLoading?: boolean;
   diffOriginal?: string;
   diffModified?: string;
+  prWorktreePath?: string;
+  prInfo?: PrInfo;
+  prLoading?: boolean;
+  prError?: string;
 };
 
 function fileName(path: string): string {
@@ -42,6 +47,8 @@ type CenterViewStore = {
   openDiffTab: (path: string, original: string, modified: string) => void;
   updateDiffContent: (id: string, original: string, modified: string) => void;
   closeDiffTab: () => void;
+  openPrTab: (worktreePath: string) => void;
+  setPrMerged: (id: string) => void;
   /** Drop editor/diff tabs when switching projects or worktrees. */
   closeWorkspaceTabs: () => void;
   pinTab: (id: string) => void;
@@ -208,6 +215,74 @@ export const useCenterViewStore = create<CenterViewStore>((set, get) => ({
       }
       return { tabs: newTabs, activeTabId };
     });
+  },
+
+  openPrTab: (worktreePath) => {
+    const state = get();
+    const existing = state.tabs.find((tab) => tab.type === "pr");
+    const tabId = existing ? existing.id : `pr-${Date.now()}`;
+
+    if (existing) {
+      set({
+        tabs: state.tabs.map((tab) =>
+          tab.id === existing.id
+            ? { ...tab, prWorktreePath: worktreePath, prLoading: true, prError: undefined }
+            : tab,
+        ),
+        activeTabId: existing.id,
+      });
+    } else {
+      const tab: CenterTab = {
+        id: tabId,
+        type: "pr",
+        label: "Pull Request",
+        prWorktreePath: worktreePath,
+        prLoading: true,
+      };
+      set({ tabs: [...state.tabs, tab], activeTabId: tabId });
+    }
+
+    void ghPrView(worktreePath)
+      .then((info) => {
+        set((s) => {
+          const tab = s.tabs.find((t) => t.id === tabId);
+          if (!tab || tab.prWorktreePath !== worktreePath) return s;
+          return {
+            tabs: s.tabs.map((t) =>
+              t.id === tabId
+                ? {
+                    ...t,
+                    prInfo: info ?? undefined,
+                    label: info ? `PR #${info.number}` : "Pull Request",
+                    prLoading: false,
+                    prError: info ? undefined : "No pull request found for this branch.",
+                  }
+                : t,
+            ),
+          };
+        });
+      })
+      .catch((err) => {
+        set((s) => {
+          const tab = s.tabs.find((t) => t.id === tabId);
+          if (!tab || tab.prWorktreePath !== worktreePath) return s;
+          return {
+            tabs: s.tabs.map((t) =>
+              t.id === tabId ? { ...t, prLoading: false, prError: String(err) } : t,
+            ),
+          };
+        });
+      });
+  },
+
+  setPrMerged: (id) => {
+    set((state) => ({
+      tabs: state.tabs.map((tab) =>
+        tab.id === id && tab.prInfo
+          ? { ...tab, prInfo: { ...tab.prInfo, state: "MERGED" } }
+          : tab,
+      ),
+    }));
   },
 
   closeWorkspaceTabs: () => {

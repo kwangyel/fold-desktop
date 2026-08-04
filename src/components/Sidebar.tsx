@@ -7,11 +7,13 @@ import {
   IconArchive,
   IconPlus,
   IconGitBranch,
+  IconGitPullRequest,
   IconPlug,
   IconRobot,
 } from "@tabler/icons-react";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { useProjectStore } from "../store/projectStore";
+import { useCenterViewStore } from "../store/centerViewStore";
 import { isTauri } from "../lib/git";
 import { pickWorktreeName } from "../lib/worktreeNames";
 import ProjectDialog from "./ProjectDialog";
@@ -267,6 +269,25 @@ export default function Sidebar({ width, topRatio = 0.38, onSplitDrag }: Props) 
             </button>
           ) : (
             <>
+              {!menu.archived && (
+                <button
+                  className="context-menu-item"
+                  onClick={() => {
+                    const { projectId, worktreeId } = menu;
+                    setMenu(null);
+                    const project = useProjectStore
+                      .getState()
+                      .projects.find((p) => p.id === projectId);
+                    const wt = project?.worktrees.find((w) => w.id === worktreeId);
+                    if (!wt) return;
+                    void selectWorktree(projectId, worktreeId);
+                    useCenterViewStore.getState().openPrTab(wt.path);
+                  }}
+                >
+                  <IconGitPullRequest size={14} stroke={1.75} />
+                  View pull request
+                </button>
+              )}
               {!menu.archived && (
                 <button
                   className="context-menu-item"

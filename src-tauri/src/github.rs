@@ -1,7 +1,8 @@
 use std::io::Read;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::Duration;
 
@@ -18,10 +19,82 @@ pub struct GhStatus {
     username: Option<String>,
 }
 
-/// Resolve the `gh` executable. Plain `"gh"` relies on inherited PATH, which
-/// matches how the existing `git` commands are invoked.
-fn gh_bin() -> &'static str {
-    "gh"
+fn is_executable(path: &std::path::Path) -> bool {
+    path.is_file()
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
+/// Resolve the `gh` executable.
+///
+/// macOS GUI / Tauri apps often inherit a stripped PATH that omits Homebrew and
+/// Conductor-injected bins. Search PATH first, then common install locations
+/// (same approach as the agent CLI resolvers).
+fn gh_bin() -> String {
+    static CACHED: OnceLock<String> = OnceLock::new();
+    CACHED
+        .get_or_init(|| {
+            if Command::new("gh")
+                .arg("--version")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
+                if let Ok(which) = Command::new("which").arg("gh").output() {
+                    if which.status.success() {
+                        let path = String::from_utf8_lossy(&which.stdout).trim().to_string();
+                        if !path.is_empty() {
+                            return path;
+                        }
+                    }
+                }
+                return "gh".to_string();
+            }
+
+            let mut candidates: Vec<PathBuf> = Vec::new();
+            if let Some(home) = home_dir() {
+                candidates.push(home.join(".local/bin/gh"));
+                candidates.push(home.join("bin/gh"));
+                candidates.push(
+                    home.join("Library/Application Support/com.conductor.app/bin/gh"),
+                );
+                candidates.push(home.join(".bun/bin/gh"));
+            }
+            candidates.push(PathBuf::from("/opt/homebrew/bin/gh"));
+            candidates.push(PathBuf::from("/usr/local/bin/gh"));
+
+            if let Some(path) = std::env::var_os("PATH") {
+                for dir in std::env::split_paths(&path) {
+                    candidates.push(dir.join("gh"));
+                }
+            }
+
+            for candidate in candidates {
+                if !is_executable(&candidate) {
+                    continue;
+                }
+                let resolved = std::fs::canonicalize(&candidate).unwrap_or(candidate);
+                if Command::new(&resolved)
+                    .arg("--version")
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false)
+                {
+                    return resolved.to_string_lossy().to_string();
+                }
+            }
+
+            "gh".to_string()
+        })
+        .clone()
 }
 
 fn gh(args: &[&str]) -> Result<std::process::Output, String> {
@@ -212,6 +285,90 @@ pub fn gh_pr_create_web(worktree_path: String) -> Result<(), String> {
         .current_dir(&worktree_path)
         .spawn()
         .map_err(|e| format!("failed to run gh pr create --web: {e}"))?;
+    Ok(())
+}
+
+/// Fetch the PR associated with the current branch as raw JSON (parsed on the
+/// frontend). When no PR exists for the branch, `gh` exits non-zero — we return
+/// an error whose message starts with `NO_PR` so the caller can distinguish
+/// "no PR yet" from a genuine failure.
+#[tauri::command]
+pub fn gh_pr_view(worktree_path: String) -> Result<String, String> {
+    let output = Command::new(gh_bin())
+        .args([
+            "pr",
+            "view",
+            "--json",
+            "number,title,body,state,author,headRefName,baseRefName,url,isDraft,mergeable,files,additions,deletions,changedFiles",
+        ])
+        .current_dir(&worktree_path)
+        .output()
+        .map_err(|e| format!("failed to run gh pr view: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("no pull requests found")
+            || stderr.contains("no open pull requests")
+        {
+            return Err(format!("NO_PR: {}", stderr.trim()));
+        }
+        return Err(stderr.trim().to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// Resolve the repository's preferred merge method, preferring squash, then a
+/// merge commit, then rebase — mirroring the repo's actual GitHub settings.
+#[tauri::command]
+pub fn gh_pr_merge_method(worktree_path: String) -> Result<String, String> {
+    let output = Command::new(gh_bin())
+        .args([
+            "repo",
+            "view",
+            "--json",
+            "mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed",
+        ])
+        .current_dir(&worktree_path)
+        .output()
+        .map_err(|e| format!("failed to run gh repo view: {e}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    let json = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value =
+        serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    let allowed = |key: &str| value.get(key).and_then(|v| v.as_bool()).unwrap_or(false);
+    let method = if allowed("squashMergeAllowed") {
+        "squash"
+    } else if allowed("mergeCommitAllowed") {
+        "merge"
+    } else if allowed("rebaseMergeAllowed") {
+        "rebase"
+    } else {
+        "squash"
+    };
+    Ok(method.to_string())
+}
+
+/// Merge the PR for the current branch using the given method
+/// (`squash` | `merge` | `rebase`). On failure the `gh` stderr is returned so
+/// the UI can surface conflicts or permission errors. The branch is retained;
+/// worktree cleanup is handled separately by the archive flow.
+#[tauri::command]
+pub fn gh_pr_merge(worktree_path: String, method: String) -> Result<(), String> {
+    let method_flag = match method.as_str() {
+        "squash" => "--squash",
+        "merge" => "--merge",
+        "rebase" => "--rebase",
+        other => return Err(format!("unknown merge method: {other}")),
+    };
+    let output = Command::new(gh_bin())
+        .args(["pr", "merge", method_flag, "--delete-branch=false"])
+        .current_dir(&worktree_path)
+        .output()
+        .map_err(|e| format!("failed to run gh pr merge: {e}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
     Ok(())
 }
 
