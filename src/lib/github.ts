@@ -79,3 +79,59 @@ export async function ghPrCreateWeb(worktreePath: string): Promise<void> {
   if (!isTauri()) return;
   await invoke("gh_pr_create_web", { worktreePath });
 }
+
+export type PrMergeMethod = "squash" | "merge" | "rebase";
+
+export interface PrFile {
+  path: string;
+  additions: number;
+  deletions: number;
+}
+
+/** PR details for the current branch, as returned by `gh pr view --json`. */
+export interface PrInfo {
+  number: number;
+  title: string;
+  body: string;
+  state: string;
+  author: { login: string } | null;
+  headRefName: string;
+  baseRefName: string;
+  url: string;
+  isDraft: boolean;
+  mergeable: string;
+  files: PrFile[];
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+}
+
+/**
+ * Fetch the PR for the current branch. Resolves to `null` when no PR exists yet
+ * (the backend signals this with a `NO_PR` error). Other errors propagate.
+ */
+export async function ghPrView(worktreePath: string): Promise<PrInfo | null> {
+  if (!isTauri()) return null;
+  try {
+    const json = await invoke<string>("gh_pr_view", { worktreePath });
+    return JSON.parse(json) as PrInfo;
+  } catch (e) {
+    if (String(e).startsWith("NO_PR")) return null;
+    throw e;
+  }
+}
+
+/** Resolve the repository's preferred merge method. */
+export async function ghPrMergeMethod(worktreePath: string): Promise<PrMergeMethod> {
+  if (!isTauri()) return "squash";
+  return invoke<PrMergeMethod>("gh_pr_merge_method", { worktreePath });
+}
+
+/** Merge the PR for the current branch using the given method. */
+export async function ghPrMerge(
+  worktreePath: string,
+  method: PrMergeMethod,
+): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("gh_pr_merge", { worktreePath, method });
+}

@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { useCenterViewStore } from '../store/centerViewStore';
 import { useChatStore } from '../store/chatStore';
 import { useProjectStore } from '../store/projectStore';
-import { ghPrCreateWeb } from '../lib/github';
-import { gitListBranches } from '../lib/git';
+import { ghPrCreateWeb, ghPrView, type PrInfo } from '../lib/github';
+import { gitGithubRemote, gitListBranches } from '../lib/git';
 import { PR_CREATION_PROMPT, mergeBranchPrompt } from '../lib/prPrompt';
 import './CreatePrButton.css';
 
@@ -11,18 +11,41 @@ export default function CreatePrButton() {
   const [open, setOpen] = useState(false);
   const [branches, setBranches] = useState<string[]>([]);
   const [mergeTo, setMergeTo] = useState('main');
+  const [existingPr, setExistingPr] = useState<PrInfo | null>(null);
+  // Detected live from the worktree (not the persisted project flag), so a
+  // remote added after project creation still shows the PR button.
+  const [hasGithubRemote, setHasGithubRemote] = useState(false);
 
   const tabs = useCenterViewStore((s) => s.tabs);
   const activeTabId = useCenterViewStore((s) => s.activeTabId);
   const addChatTab = useCenterViewStore((s) => s.addChatTab);
   const setActiveTab = useCenterViewStore((s) => s.setActiveTab);
+  const openPrTab = useCenterViewStore((s) => s.openPrTab);
 
   const activePath = useProjectStore((s) => s.activePath);
-  const activeProject = useProjectStore((s) => {
+  const projectHasGithubRemote = useProjectStore((s) => {
     const proj = s.projects.find((p) => p.id === s.activeId);
-    return proj ?? null;
+    return proj?.hasGithubRemote ?? false;
   });
-  const hasGithubRemote = activeProject?.hasGithubRemote ?? false;
+
+  // Prefer live detection; fall back to the persisted flag while checking.
+  useEffect(() => {
+    setHasGithubRemote(projectHasGithubRemote);
+    if (!activePath) {
+      setHasGithubRemote(false);
+      return;
+    }
+    const path = activePath;
+    let cancelled = false;
+    void gitGithubRemote(path).then((hasRemote) => {
+      if (!cancelled && path === activePath) setHasGithubRemote(hasRemote);
+    }).catch(() => {
+      if (!cancelled) setHasGithubRemote(projectHasGithubRemote);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activePath, projectHasGithubRemote]);
 
   // Load branches for local-repo mode
   useEffect(() => {
@@ -36,6 +59,30 @@ export default function CreatePrButton() {
         setMergeTo('main');
       }
     }).catch(() => setBranches([]));
+  }, [hasGithubRemote, activePath]);
+
+  // Detect an existing PR for the current branch so we can surface a "View PR"
+  // affordance. Re-checks periodically to catch PRs created out of band.
+  useEffect(() => {
+    setExistingPr(null);
+    if (!hasGithubRemote || !activePath) return;
+    const path = activePath;
+    let cancelled = false;
+
+    const check = () => {
+      ghPrView(path)
+        .then((info) => {
+          if (!cancelled && path === activePath) setExistingPr(info);
+        })
+        .catch(() => {});
+    };
+
+    check();
+    const timer = window.setInterval(check, 15000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, [hasGithubRemote, activePath]);
 
   useEffect(() => {
@@ -73,12 +120,23 @@ export default function CreatePrButton() {
 
   // --- GitHub remote: PR flow ---
   if (hasGithubRemote) {
+    const hasPr = existingPr !== null;
     return (
       <div className="create-pr-wrap">
         <div className="create-pr-split">
-          <button className="create-pr-main" onClick={() => sendToChat(PR_CREATION_PROMPT)}>
-            Create PR
-          </button>
+          {hasPr ? (
+            <button
+              className="create-pr-main create-pr-view"
+              onClick={() => openPrTab(activePath)}
+              title={existingPr?.title}
+            >
+              View PR #{existingPr?.number}
+            </button>
+          ) : (
+            <button className="create-pr-main" onClick={() => sendToChat(PR_CREATION_PROMPT)}>
+              Create PR
+            </button>
+          )}
           <button
             className="create-pr-arrow"
             onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
@@ -89,6 +147,29 @@ export default function CreatePrButton() {
         </div>
         {open && (
           <div className="create-pr-dropdown">
+            {hasPr ? (
+              <button
+                className="create-pr-item"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setOpen(false);
+                  sendToChat(PR_CREATION_PROMPT);
+                }}
+              >
+                Create new PR
+              </button>
+            ) : (
+              <button
+                className="create-pr-item"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setOpen(false);
+                  openPrTab(activePath);
+                }}
+              >
+                View PR
+              </button>
+            )}
             <button
               className="create-pr-item"
               onClick={(e) => {

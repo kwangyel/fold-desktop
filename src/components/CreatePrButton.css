@@ -2,9 +2,10 @@
   position: relative;
   display: flex;
   align-items: center;
-  margin-left: auto;
   padding: 0 8px;
   flex-shrink: 0;
+  /* Keep the button visible while tabs scroll in .tabbar-tabs. */
+  border-left: 1px solid var(--border);
 }
 
 .create-pr-split {
@@ -29,6 +30,17 @@
 .create-pr-main:hover {
   color: var(--text);
   background: var(--panel-3, var(--panel-2));
+}
+
+.create-pr-view {
+  color: var(--text);
+  font-weight: 600;
+  background: var(--accent-dim);
+}
+
+.create-pr-view:hover {
+  color: var(--text);
+  background: var(--accent);
 }
 
 .create-pr-arrow {
