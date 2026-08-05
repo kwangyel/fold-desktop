@@ -19,8 +19,12 @@ use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::State;
 
+use crate::bin_cache::BinCache;
 use crate::pty::PtySession;
 use crate::AppState;
+
+/// Resolved `codex` CLI path, cached so status checks don't re-probe PATH.
+static CODEX_BIN: BinCache = BinCache::new();
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -75,8 +79,13 @@ fn is_executable(path: &std::path::Path) -> bool {
     }
 }
 
-/// Resolve the `codex` binary (PATH + common install dirs + Conductor bins).
+/// Resolve the codex CLI, reusing the cached path when still fresh.
 fn resolve_codex_bin() -> Option<PathBuf> {
+    CODEX_BIN.get(probe_codex_bin)
+}
+
+/// Resolve the `codex` binary (PATH + common install dirs + Conductor bins).
+fn probe_codex_bin() -> Option<PathBuf> {
     if Command::new("codex")
         .arg("--version")
         .stdout(Stdio::null())
@@ -177,8 +186,11 @@ fn login_status_ok(bin: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
-#[tauri::command]
-pub fn codex_status() -> Result<CodexStatus, String> {
+#[tauri::command(async)]
+pub fn codex_status(force: Option<bool>) -> Result<CodexStatus, String> {
+    if force.unwrap_or(false) {
+        CODEX_BIN.clear();
+    }
     let installed = is_installed();
     if !installed {
         return Ok(CodexStatus {
@@ -215,7 +227,7 @@ pub fn codex_status() -> Result<CodexStatus, String> {
 }
 
 /// Start interactive `codex login` in a PTY (browser OAuth / device auth).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn codex_login(on_output: Channel, state: State<'_, AppState>) -> Result<(), String> {
     {
         let mut slot = state.codex_login.lock().map_err(|e| e.to_string())?;
@@ -249,7 +261,7 @@ pub fn codex_login_write(data: String, state: State<'_, AppState>) -> Result<(),
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn codex_login_cancel(state: State<'_, AppState>) -> Result<(), String> {
     let mut slot = state.codex_login.lock().map_err(|e| e.to_string())?;
     let _ = slot.take();
@@ -257,7 +269,7 @@ pub fn codex_login_cancel(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 /// Codex has no `models` CLI — return a documented catalog for the picker.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn codex_list_models() -> Result<Vec<CodexModelInfo>, String> {
     Ok(vec![
         CodexModelInfo {
@@ -325,24 +337,8 @@ pub fn codex_list_models() -> Result<Vec<CodexModelInfo>, String> {
     ])
 }
 
-fn stream_pipe<R: Read + Send + 'static>(mut reader: R, on_output: Channel) {
-    thread::spawn(move || {
-        let mut buf = [0u8; 4096];
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    if on_output
-                        .send(InvokeResponseBody::Raw(buf[..n].to_vec()))
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-    });
+fn stream_pipe<R: Read + Send + 'static>(reader: R, on_output: Channel) {
+    crate::stream::pipe_to_channel(reader, on_output);
 }
 
 /// Quote a value as a TOML basic string for `codex -c key=value` overrides.
@@ -351,7 +347,7 @@ fn toml_str(value: &str) -> String {
 }
 
 /// Run `codex exec --json` in a worktree. Emits `__CODEX_EXIT__:<code>` on exit.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn codex_agent_run(
     session_id: String,
     prompt: String,
@@ -369,7 +365,18 @@ pub fn codex_agent_run(
         prev.store(true, Ordering::SeqCst);
     }
 
-    let status = codex_status()?;
+    // Register the cancel flag before the child is spawned. Commands run
+    // concurrently, so a cancel issued while the agent is still starting must
+    // find a flag to set — otherwise the run would keep going after the UI has
+    // already returned to idle.
+    let cancel = Arc::new(AtomicBool::new(false));
+    state
+        .codex_agents
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(session_id.clone(), cancel.clone());
+
+    let status = codex_status(None)?;
     if !status.authenticated {
         return Err(
             "Codex is not authenticated. Open Connect Harness and log in.".to_string(),
@@ -436,7 +443,6 @@ pub fn codex_agent_run(
         stream_pipe(err, on_output.clone());
     }
 
-    let cancel = Arc::new(AtomicBool::new(false));
     let cancel_monitor = cancel.clone();
     let exit_channel = on_output;
     thread::spawn(move || {
@@ -457,15 +463,10 @@ pub fn codex_agent_run(
         let _ = exit_channel.send(InvokeResponseBody::Raw(marker.into_bytes()));
     });
 
-    state
-        .codex_agents
-        .lock()
-        .map_err(|e| e.to_string())?
-        .insert(session_id, cancel);
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn codex_agent_cancel(session_id: String, state: State<'_, AppState>) -> Result<(), String> {
     if let Some(cancel) = state
         .codex_agents

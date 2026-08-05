@@ -28,7 +28,7 @@ export function opencodeReleaseChannel(sessionId?: string): void {
   }
 }
 
-export async function opencodeStatus(): Promise<OpenCodeStatus> {
+export async function opencodeStatus(force = false): Promise<OpenCodeStatus> {
   if (!isTauri()) {
     return {
       installed: false,
@@ -37,7 +37,7 @@ export async function opencodeStatus(): Promise<OpenCodeStatus> {
       providerCount: 0,
     };
   }
-  return invoke<OpenCodeStatus>("opencode_status");
+  return invoke<OpenCodeStatus>("opencode_status", { force });
 }
 
 export async function opencodeListModels(): Promise<ModelInfo[]> {

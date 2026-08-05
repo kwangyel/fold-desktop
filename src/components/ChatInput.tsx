@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { IconChecklist } from '@tabler/icons-react';
 import { useChatStore } from '../store/chatStore';
 import { findHarnessModel, useHarnessStore } from '../store/harnessStore';
@@ -42,7 +43,23 @@ export default function ChatInput({ tabId }: ChatInputProps) {
   const [message, setMessage] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const tab = useChatStore((state) => state.tabs[tabId]);
+  // Everything except `messages` — subscribing to the whole tab would re-render
+  // the composer (and the model picker) on every streamed token.
+  const tab = useChatStore(
+    useShallow((state) => {
+      const t = state.tabs[tabId];
+      if (!t) return null;
+      return {
+        selectedModel: t.selectedModel,
+        selectedHarness: t.selectedHarness,
+        modelEffort: t.modelEffort,
+        mode: t.mode,
+        planMode: t.planMode,
+        attachments: t.attachments,
+        loading: t.loading,
+      };
+    }),
+  );
   const addAttachment = useChatStore((state) => state.addAttachment);
   const removeAttachment = useChatStore((state) => state.removeAttachment);
   const setModel = useChatStore((state) => state.setModel);

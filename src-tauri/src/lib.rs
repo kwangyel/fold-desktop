@@ -1,4 +1,5 @@
 mod auth;
+mod bin_cache;
 mod claude;
 mod codex;
 mod cursor;
@@ -8,6 +9,7 @@ mod github;
 mod opencode;
 mod projects;
 mod pty;
+mod stream;
 
 use std::collections::HashMap;
 use std::path::PathBuf;

@@ -58,7 +58,7 @@ export const useCursorStore = create<CursorStore>((set, get) => ({
     inflightRefresh = (async () => {
       set({ checking: true, error: null });
       try {
-        const status = await cursorStatus();
+        const status = await cursorStatus(force);
         checkedAt = Date.now();
         set({
           authenticated: status.authenticated,

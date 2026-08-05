@@ -107,7 +107,7 @@ fn gh(args: &[&str]) -> Result<std::process::Output, String> {
 /// Report whether the user is logged into GitHub via `gh`, and if so as whom.
 /// `gh api user --jq .login` prints the account login and exits 0 only when a
 /// valid token exists.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn gh_auth_status() -> Result<GhStatus, String> {
     let output = gh(&["api", "user", "--jq", ".login"])?;
     if !output.status.success() {
@@ -132,7 +132,7 @@ pub fn gh_auth_status() -> Result<GhStatus, String> {
 /// Log out of GitHub, removing gh's stored credentials for github.com. Scoped
 /// to the currently active account when one is known so the flag is
 /// unambiguous (and thus non-interactive).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn gh_auth_logout() -> Result<(), String> {
     let mut args = vec!["auth", "logout", "--hostname", "github.com"];
     let login = gh(&["api", "user", "--jq", ".login"])
@@ -157,24 +157,8 @@ pub fn gh_auth_logout() -> Result<(), String> {
 }
 
 /// Stream a child pipe's bytes to the frontend channel on a background thread.
-fn stream_pipe<R: Read + Send + 'static>(mut reader: R, on_output: Channel) {
-    thread::spawn(move || {
-        let mut buf = [0u8; 4096];
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    if on_output
-                        .send(InvokeResponseBody::Raw(buf[..n].to_vec()))
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-    });
+fn stream_pipe<R: Read + Send + 'static>(reader: R, on_output: Channel) {
+    crate::stream::pipe_to_channel(reader, on_output);
 }
 
 /// Start the browser (device) OAuth login and stream its output.
@@ -191,7 +175,7 @@ fn stream_pipe<R: Read + Send + 'static>(mut reader: R, on_output: Channel) {
 ///
 /// When the child exits (naturally or via cancel), a sentinel line
 /// `__GH_EXIT__:<code>` is sent on the channel so the frontend can stop waiting.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn gh_auth_login(on_output: Channel, state: State<'_, AppState>) -> Result<(), String> {
     // Cancel any prior login flow still in progress.
     if let Some(prev) = state.gh_login.lock().map_err(|e| e.to_string())?.take() {
@@ -250,7 +234,7 @@ pub fn gh_auth_login(on_output: Channel, state: State<'_, AppState>) -> Result<(
 
 /// Stop an in-progress login flow (used when the user cancels/closes the
 /// dialog before authorizing). Never called on success.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn gh_auth_cancel(state: State<'_, AppState>) -> Result<(), String> {
     if let Some(cancel) = state.gh_login.lock().map_err(|e| e.to_string())?.take() {
         cancel.store(true, Ordering::SeqCst);
@@ -356,25 +340,25 @@ pub fn github_repo_owner(path: &str) -> Option<GithubRepoOwner> {
 }
 
 /// Expose GitHub remote detection to the frontend.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_github_remote(path: String) -> bool {
     detect_github_remote(&path)
 }
 
 /// Expose GitHub owner lookup for a repo's `origin` remote.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_github_owner(path: String) -> Option<String> {
     github_owner_from_remote(&path)
 }
 
 /// Expose GitHub repo owner + avatar for the repo at `path`.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_github_repo_owner(path: String) -> Option<GithubRepoOwner> {
     github_repo_owner(&path)
 }
 
 /// Open the GitHub PR creation page in the browser via `gh pr create --web`.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn gh_pr_create_web(worktree_path: String) -> Result<(), String> {
     Command::new(gh_bin())
         .args(["pr", "create", "--web"])
@@ -388,7 +372,7 @@ pub fn gh_pr_create_web(worktree_path: String) -> Result<(), String> {
 /// frontend). When no PR exists for the branch, `gh` exits non-zero — we return
 /// an error whose message starts with `NO_PR` so the caller can distinguish
 /// "no PR yet" from a genuine failure.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn gh_pr_view(worktree_path: String) -> Result<String, String> {
     let output = Command::new(gh_bin())
         .args([
@@ -414,7 +398,7 @@ pub fn gh_pr_view(worktree_path: String) -> Result<String, String> {
 
 /// Resolve the repository's preferred merge method, preferring squash, then a
 /// merge commit, then rebase — mirroring the repo's actual GitHub settings.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn gh_pr_merge_method(worktree_path: String) -> Result<String, String> {
     let output = Command::new(gh_bin())
         .args([
@@ -449,7 +433,7 @@ pub fn gh_pr_merge_method(worktree_path: String) -> Result<String, String> {
 /// (`squash` | `merge` | `rebase`). On failure the `gh` stderr is returned so
 /// the UI can surface conflicts or permission errors. The branch is retained;
 /// worktree cleanup is handled separately by the archive flow.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn gh_pr_merge(worktree_path: String, method: String) -> Result<(), String> {
     let method_flag = match method.as_str() {
         "squash" => "--squash",
@@ -506,7 +490,7 @@ fn validate_github_repo_name(name: &str) -> Option<&'static str> {
 }
 
 /// Whether `name` can be created as a new private repo for the authenticated user.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn gh_repo_name_check(name: String) -> Result<GhRepoNameCheck, String> {
     let name = name.trim();
     if let Some(msg) = validate_github_repo_name(name) {
@@ -663,7 +647,7 @@ pub struct GhRepo {
 }
 
 /// List the authenticated user plus every organization they belong to.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn gh_list_owners() -> Result<Vec<GhOwner>, String> {
     let status = gh_auth_status()?;
     let Some(login) = status.username else {
@@ -837,7 +821,7 @@ fn list_personal_accessible_repos(query: &str, limit: u32) -> Result<Vec<GhRepo>
 ///
 /// Empty `query` returns the most recently updated repos (capped at `limit`,
 /// default 5). With a query, filters by name / full name / description.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn gh_list_repos(
     owner: String,
     query: Option<String>,
@@ -916,7 +900,7 @@ pub fn gh_list_repos(
 }
 
 /// Default parent folder for cloning GitHub projects: `~/fold/projects`.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn default_clone_parent() -> Result<String, String> {
     let home = home_dir().ok_or_else(|| "could not resolve home directory".to_string())?;
     let root = home.join("fold").join("projects");
@@ -980,7 +964,7 @@ pub fn clone_github_repo(full_name: &str, parent: &str) -> Result<String, String
 }
 
 /// Open a URL in the user's default web browser.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_external(url: String) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     let mut cmd = {

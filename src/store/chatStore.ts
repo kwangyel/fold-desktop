@@ -158,6 +158,10 @@ type ChatStore = {
     messageId: string,
     patch: Partial<Message>,
   ) => void;
+  /** Append streamed text to a message in a single store write. */
+  appendToMessage: (tabId: string, messageId: string, text: string) => void;
+  /** Mark every still-running tool row as done in one write. */
+  settleRunningTools: (tabId: string) => void;
   setModel: (tabId: string, model: string, harnessId?: string) => void;
   setEffort: (tabId: string, effort: EffortLevel) => void;
   setMode: (tabId: string, mode: 'normal' | 'fast') => void;
@@ -422,6 +426,36 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             ),
           },
         },
+      };
+    }),
+
+  appendToMessage: (tabId, messageId, text) =>
+    set((state) => {
+      const tab = state.tabs[tabId];
+      if (!tab || !text) return state;
+      const index = tab.messages.findIndex((m) => m.id === messageId);
+      if (index === -1) return state;
+      const messages = tab.messages.slice();
+      const target = messages[index];
+      messages[index] = { ...target, content: target.content + text };
+      return {
+        tabs: { ...state.tabs, [tabId]: { ...tab, messages } },
+      };
+    }),
+
+  settleRunningTools: (tabId) =>
+    set((state) => {
+      const tab = state.tabs[tabId];
+      if (!tab) return state;
+      let changed = false;
+      const messages = tab.messages.map((m) => {
+        if (m.role !== 'tool' || m.toolStatus !== 'running') return m;
+        changed = true;
+        return { ...m, toolStatus: 'done' as const };
+      });
+      if (!changed) return state;
+      return {
+        tabs: { ...state.tabs, [tabId]: { ...tab, messages } },
       };
     }),
 
@@ -806,11 +840,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       if (!pendingAssistantText) return;
       const text = pendingAssistantText;
       pendingAssistantText = '';
-      const id = ensureAssistant();
-      const current = get().tabs[tabId]?.messages.find((m) => m.id === id);
-      get().updateMessage(tabId, id, {
-        content: (current?.content ?? '') + text,
-      });
+      get().appendToMessage(tabId, ensureAssistant(), text);
     };
 
     const appendAssistant = (text: string) => {
@@ -848,12 +878,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           content: existing ? `${existing}\n\n${errorText}` : errorText,
         });
       }
-      const messages = get().tabs[tabId]?.messages ?? [];
-      for (const m of messages) {
-        if (m.role === 'tool' && m.toolStatus === 'running') {
-          get().updateMessage(tabId, m.id, { toolStatus: 'done' });
-        }
-      }
+      get().settleRunningTools(tabId);
       get().setLoading(tabId, false);
       releaseChannelFor(harnessId, tabId);
       // The agent is gone, so nothing is listening for an answer any more.

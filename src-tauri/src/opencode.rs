@@ -19,8 +19,12 @@ use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::State;
 
+use crate::bin_cache::BinCache;
 use crate::pty::PtySession;
 use crate::AppState;
+
+/// Resolved `opencode` CLI path, cached so status checks don't re-probe PATH.
+static OPENCODE_BIN: BinCache = BinCache::new();
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -77,8 +81,13 @@ fn is_executable(path: &std::path::Path) -> bool {
     }
 }
 
-/// Resolve the `opencode` binary (PATH + common install dirs).
+/// Resolve the opencode CLI, reusing the cached path when still fresh.
 fn resolve_opencode_bin() -> Option<PathBuf> {
+    OPENCODE_BIN.get(probe_opencode_bin)
+}
+
+/// Resolve the `opencode` binary (PATH + common install dirs).
+fn probe_opencode_bin() -> Option<PathBuf> {
     if Command::new("opencode")
         .arg("--version")
         .stdout(Stdio::null())
@@ -200,8 +209,11 @@ fn auth_list_has_providers(bin: &std::path::Path) -> bool {
     }
 }
 
-#[tauri::command]
-pub fn opencode_status() -> Result<OpenCodeStatus, String> {
+#[tauri::command(async)]
+pub fn opencode_status(force: Option<bool>) -> Result<OpenCodeStatus, String> {
+    if force.unwrap_or(false) {
+        OPENCODE_BIN.clear();
+    }
     let installed = is_installed();
     if !installed {
         return Ok(OpenCodeStatus {
@@ -239,7 +251,7 @@ pub fn opencode_status() -> Result<OpenCodeStatus, String> {
 }
 
 /// Start interactive `opencode auth login` in a PTY.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn opencode_login(on_output: Channel, state: State<'_, AppState>) -> Result<(), String> {
     {
         let mut slot = state.opencode_login.lock().map_err(|e| e.to_string())?;
@@ -273,7 +285,7 @@ pub fn opencode_login_write(data: String, state: State<'_, AppState>) -> Result<
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn opencode_login_cancel(state: State<'_, AppState>) -> Result<(), String> {
     let mut slot = state.opencode_login.lock().map_err(|e| e.to_string())?;
     let _ = slot.take();
@@ -281,7 +293,7 @@ pub fn opencode_login_cancel(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 /// List models via `opencode models` (`provider/model` lines).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn opencode_list_models() -> Result<Vec<OpenCodeModelInfo>, String> {
     let bin = resolve_opencode_bin().ok_or_else(|| "OpenCode CLI not found".to_string())?;
     let output = Command::new(&bin)
@@ -332,28 +344,12 @@ pub fn opencode_list_models() -> Result<Vec<OpenCodeModelInfo>, String> {
     Ok(models)
 }
 
-fn stream_pipe<R: Read + Send + 'static>(mut reader: R, on_output: Channel) {
-    thread::spawn(move || {
-        let mut buf = [0u8; 4096];
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    if on_output
-                        .send(InvokeResponseBody::Raw(buf[..n].to_vec()))
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-    });
+fn stream_pipe<R: Read + Send + 'static>(reader: R, on_output: Channel) {
+    crate::stream::pipe_to_channel(reader, on_output);
 }
 
 /// Run `opencode run --format json` in a worktree. Emits `__OPENCODE_EXIT__:<code>`.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn opencode_agent_run(
     session_id: String,
     prompt: String,
@@ -372,7 +368,18 @@ pub fn opencode_agent_run(
         prev.store(true, Ordering::SeqCst);
     }
 
-    let status = opencode_status()?;
+    // Register the cancel flag before the child is spawned. Commands run
+    // concurrently, so a cancel issued while the agent is still starting must
+    // find a flag to set — otherwise the run would keep going after the UI has
+    // already returned to idle.
+    let cancel = Arc::new(AtomicBool::new(false));
+    state
+        .opencode_agents
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(session_id.clone(), cancel.clone());
+
+    let status = opencode_status(None)?;
     if !status.authenticated {
         return Err(
             "OpenCode is not authenticated. Open Connect Harness and log in.".to_string(),
@@ -436,7 +443,6 @@ pub fn opencode_agent_run(
         stream_pipe(err, on_output.clone());
     }
 
-    let cancel = Arc::new(AtomicBool::new(false));
     let cancel_monitor = cancel.clone();
     let exit_channel = on_output;
     thread::spawn(move || {
@@ -457,15 +463,10 @@ pub fn opencode_agent_run(
         let _ = exit_channel.send(InvokeResponseBody::Raw(marker.into_bytes()));
     });
 
-    state
-        .opencode_agents
-        .lock()
-        .map_err(|e| e.to_string())?
-        .insert(session_id, cancel);
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn opencode_agent_cancel(
     session_id: String,
     state: State<'_, AppState>,

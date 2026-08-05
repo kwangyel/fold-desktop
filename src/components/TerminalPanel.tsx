@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { memo, lazy, Suspense, useEffect, useState } from "react";
 import { useProjectStore } from "../store/projectStore";
 import "./TerminalPanel.css";
 
@@ -20,7 +20,7 @@ function createTerminalTab(): TerminalTab {
 
 const INITIAL_TERMINAL = createTerminalTab();
 
-export default function TerminalPanel() {
+function TerminalPanel() {
   const [terminals, setTerminals] = useState<TerminalTab[]>([INITIAL_TERMINAL]);
   const [activeId, setActiveId] = useState(INITIAL_TERMINAL.id);
   // Defer PTY spawn so it doesn't compete with auth/projects/harness startup.
@@ -121,3 +121,6 @@ export default function TerminalPanel() {
     </div>
   );
 }
+
+/** Panel resizes re-render the parent every frame; this subtree doesn't need to. */
+export default memo(TerminalPanel);

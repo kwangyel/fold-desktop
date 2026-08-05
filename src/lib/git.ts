@@ -159,6 +159,42 @@ export async function gitGithubRepoOwner(
   return invoke<GithubRepoOwner | null>("git_github_repo_owner", { path });
 }
 
+/**
+ * Owner lookup shared across the app. The underlying command shells out to
+ * `gh repo view` (a network round-trip), and the sidebar asks for one per
+ * project every time it mounts — so results are cached for the session and
+ * concurrent callers share a single in-flight request.
+ */
+const ownerCache = new Map<string, GithubRepoOwner | null>();
+const ownerInflight = new Map<string, Promise<GithubRepoOwner | null>>();
+
+export async function gitGithubRepoOwnerCached(
+  path: string,
+): Promise<GithubRepoOwner | null> {
+  const cached = ownerCache.get(path);
+  if (cached !== undefined) return cached;
+
+  const pending = ownerInflight.get(path);
+  if (pending) return pending;
+
+  const request = gitGithubRepoOwner(path)
+    .then((owner) => {
+      ownerCache.set(path, owner);
+      return owner;
+    })
+    .catch(() => {
+      // Don't cache failures — a transient `gh` error shouldn't hide the avatar
+      // for the rest of the session.
+      return null;
+    })
+    .finally(() => {
+      ownerInflight.delete(path);
+    });
+
+  ownerInflight.set(path, request);
+  return request;
+}
+
 /** Current HEAD commit SHA for the repo at `path` ("" if there are no commits). */
 export async function gitHeadCommit(path: string): Promise<string> {
   if (!isTauri()) return "";

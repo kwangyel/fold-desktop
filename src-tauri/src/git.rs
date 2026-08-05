@@ -110,9 +110,42 @@ fn git_stderr(output: &std::process::Output) -> String {
     String::from_utf8_lossy(&output.stderr).trim().to_string()
 }
 
+/// Stop counting lines past this much of a file. An untracked directory can
+/// hold very large files (build output, dumps, media); the changes list only
+/// needs a line count for the "+N" badge, so reading gigabytes to render it is
+/// never worth it.
+const MAX_LINE_COUNT_BYTES: u64 = 2 * 1024 * 1024;
+
+/// Line count for an untracked file, streamed and capped.
+///
+/// Reads bytes rather than `read_to_string`, so binary files don't cost a UTF-8
+/// validation pass and no file is ever fully buffered in memory.
+fn count_lines(path: &Path) -> u32 {
+    use std::io::{BufReader, Read};
+
+    let Ok(file) = std::fs::File::open(path) else {
+        return 0;
+    };
+    let mut reader = BufReader::new(file.take(MAX_LINE_COUNT_BYTES));
+    let mut buf = [0u8; 16 * 1024];
+    let mut lines: u32 = 0;
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                lines = lines.saturating_add(
+                    buf[..n].iter().filter(|b| **b == b'\n').count() as u32
+                );
+            }
+            Err(_) => break,
+        }
+    }
+    lines
+}
+
 /// List uncommitted changes split into staged and unstaged/untracked rows.
 /// A partially staged file may appear twice (once per side).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_changes(state: State<'_, AppState>) -> Result<Vec<ChangedFile>, String> {
     let root = repo_root(&state)?;
 
@@ -169,10 +202,7 @@ pub fn git_changes(state: State<'_, AppState>) -> Result<Vec<ChangedFile>, Strin
         // Unstaged / untracked: worktree column dirty, or untracked.
         if is_untracked || (worktree_code != ' ' && worktree_code != '?') {
             let (additions, deletions) = if is_untracked {
-                let count = std::fs::read_to_string(root.join(&path))
-                    .map(|c| c.lines().count() as u32)
-                    .unwrap_or(0);
-                (count, 0)
+                (count_lines(&root.join(&path)), 0)
             } else {
                 unstaged_stats.get(&path).copied().unwrap_or((0, 0))
             };
@@ -190,7 +220,7 @@ pub fn git_changes(state: State<'_, AppState>) -> Result<Vec<ChangedFile>, Strin
     Ok(files)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_stage(path: String, state: State<'_, AppState>) -> Result<(), String> {
     let root = repo_root(&state)?;
     let _ = safe_join(&root, &path)?;
@@ -201,7 +231,7 @@ pub fn git_stage(path: String, state: State<'_, AppState>) -> Result<(), String>
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_unstage(path: String, state: State<'_, AppState>) -> Result<(), String> {
     let root = repo_root(&state)?;
     let _ = safe_join(&root, &path)?;
@@ -212,7 +242,7 @@ pub fn git_unstage(path: String, state: State<'_, AppState>) -> Result<(), Strin
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_stage_all(state: State<'_, AppState>) -> Result<(), String> {
     let root = repo_root(&state)?;
     let output = git_in_root(&root, &["add", "-A"])?;
@@ -222,7 +252,7 @@ pub fn git_stage_all(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_unstage_all(state: State<'_, AppState>) -> Result<(), String> {
     let root = repo_root(&state)?;
     let output = git_in_root(&root, &["reset", "HEAD"])?;
@@ -232,7 +262,7 @@ pub fn git_unstage_all(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_commit(message: String, state: State<'_, AppState>) -> Result<(), String> {
     let root = repo_root(&state)?;
     let trimmed = message.trim();
@@ -246,7 +276,7 @@ pub fn git_commit(message: String, state: State<'_, AppState>) -> Result<(), Str
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_push(state: State<'_, AppState>) -> Result<(), String> {
     let root = repo_root(&state)?;
     let output = git_in_root(&root, &["push"])?;
@@ -257,7 +287,7 @@ pub fn git_push(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 /// Staged diff text for AI commit-message generation (truncated).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_staged_diff(state: State<'_, AppState>) -> Result<String, String> {
     let root = repo_root(&state)?;
     let output = git_in_root(&root, &["diff", "--cached"])?;
@@ -274,7 +304,7 @@ pub fn git_staged_diff(state: State<'_, AppState>) -> Result<String, String> {
 }
 
 /// Return the HEAD version (original) and working-tree version (modified) of a file.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_file_diff(path: String, state: State<'_, AppState>) -> Result<FileDiff, String> {
     let root = repo_root(&state)?;
     let abs = safe_join(&root, &path)?;
@@ -295,7 +325,7 @@ pub fn git_file_diff(path: String, state: State<'_, AppState>) -> Result<FileDif
 
 /// Discard working-tree changes for a file. Untracked files are deleted; tracked
 /// files are restored from the index (staged changes are left alone).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_discard(
     path: String,
     is_untracked: bool,
@@ -318,7 +348,7 @@ pub fn git_discard(
 
 /// List the entries of a repo-relative directory (`""` = project root),
 /// folders first then files, both alphabetical. Skips the `.git` directory.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_dir(path: String, state: State<'_, AppState>) -> Result<Vec<DirEntry>, String> {
     let root = repo_root(&state)?;
     let dir = if path.is_empty() {
@@ -353,7 +383,7 @@ pub fn list_dir(path: String, state: State<'_, AppState>) -> Result<Vec<DirEntry
 }
 
 /// Read a repo-relative file from disk.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_file(path: String, state: State<'_, AppState>) -> Result<String, String> {
     let root = repo_root(&state)?;
     let abs = safe_join(&root, &path)?;
@@ -361,7 +391,7 @@ pub fn read_file(path: String, state: State<'_, AppState>) -> Result<String, Str
 }
 
 /// Write a repo-relative file to disk.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn write_file(
     path: String,
     content: String,
@@ -380,7 +410,7 @@ pub fn write_file(
 
 /// Current HEAD commit SHA for the repo at `path`. Empty on a repo with no
 /// commits yet.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_head_commit(path: String) -> Result<String, String> {
     let output = git_in_root(Path::new(&path), &["rev-parse", "HEAD"])?;
     if !output.status.success() {
@@ -392,7 +422,7 @@ pub fn git_head_commit(path: String) -> Result<String, String> {
 
 /// Number of files that differ between `base` and the current working tree.
 /// Used to tell whether an implementation run actually changed anything.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_changed_since(path: String, base: String) -> Result<u32, String> {
     let root = Path::new(&path);
     let mut changed: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -422,7 +452,7 @@ pub fn git_changed_since(path: String, base: String) -> Result<u32, String> {
 }
 
 /// List local branch names for the repo at `path`.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_list_branches(path: String) -> Result<Vec<String>, String> {
     let output = Command::new("git")
         .args(["branch", "--format=%(refname:short)"])

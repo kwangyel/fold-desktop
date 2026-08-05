@@ -34,11 +34,11 @@ export function claudeReleaseChannel(sessionId?: string): void {
 }
 
 /** Current Claude Code CLI install + auth state. */
-export async function claudeStatus(): Promise<ClaudeStatus> {
+export async function claudeStatus(force = false): Promise<ClaudeStatus> {
   if (!isTauri()) {
     return { installed: false, authenticated: false, method: null };
   }
-  return invoke<ClaudeStatus>("claude_status");
+  return invoke<ClaudeStatus>("claude_status", { force });
 }
 
 /**

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { readFile } from "../lib/git";
-import { ghPrView, type PrInfo } from "../lib/github";
+import { ghPrViewCached, type PrInfo } from "../lib/github";
 
 export type CenterTabType = "chat" | "editor" | "diff" | "pr" | "plan";
 
@@ -264,7 +264,7 @@ export const useCenterViewStore = create<CenterViewStore>((set, get) => ({
       set({ tabs: [...state.tabs, tab], activeTabId: tabId });
     }
 
-    void ghPrView(worktreePath)
+    void ghPrViewCached(worktreePath)
       .then((info) => {
         set((s) => {
           const tab = s.tabs.find((t) => t.id === tabId);

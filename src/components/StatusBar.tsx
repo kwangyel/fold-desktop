@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { IconChevronUp, IconGitBranch } from "@tabler/icons-react";
 import {
   formatResetsIn,
@@ -56,7 +56,7 @@ function UsageMeter({
   );
 }
 
-export default function StatusBar() {
+function StatusBar() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerRef = useRef<HTMLDivElement>(null);
 
@@ -270,3 +270,6 @@ export default function StatusBar() {
     </footer>
   );
 }
+
+/** Panel resizes re-render the parent every frame; this subtree doesn't need to. */
+export default memo(StatusBar);

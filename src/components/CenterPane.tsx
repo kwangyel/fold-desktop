@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef } from "react";
+import { memo, lazy, Suspense, useEffect, useRef } from "react";
 import ChatInterface from "./ChatInterface";
 import CreatePrButton from "./CreatePrButton";
 import GlobalQuestionOverlay from "./GlobalQuestionOverlay";
@@ -7,7 +7,7 @@ import { closeActiveTab } from "../lib/closeActiveTab";
 import { useCenterViewStore, getLiveEditorContent, setLiveEditorContent } from "../store/centerViewStore";
 import { useChatStore } from "../store/chatStore";
 import { useProjectStore } from "../store/projectStore";
-import { ghPrView } from "../lib/github";
+import { ghPrViewCached } from "../lib/github";
 import { gitGithubRemote } from "../lib/git";
 import "./CodeEditor.css";
 
@@ -16,7 +16,7 @@ const DiffPane = lazy(() => import("./DiffPane"));
 const PrView = lazy(() => import("./PrView"));
 const PlanView = lazy(() => import("./PlanView"));
 
-export default function CenterPane() {
+function CenterPane() {
   const tabs = useCenterViewStore((state) => state.tabs);
   const activeTabId = useCenterViewStore((state) => state.activeTabId);
   const addChatTab = useCenterViewStore((state) => state.addChatTab);
@@ -108,7 +108,7 @@ export default function CenterPane() {
 
     const check = async () => {
       try {
-        const info = await ghPrView(path);
+        const info = await ghPrViewCached(path);
         if (cancelled || !info) return;
         if (!autoOpened.current.has(path)) {
           autoOpened.current.add(path);
@@ -254,3 +254,6 @@ export default function CenterPane() {
     </section>
   );
 }
+
+/** Panel resizes re-render the parent every frame; this subtree doesn't need to. */
+export default memo(CenterPane);

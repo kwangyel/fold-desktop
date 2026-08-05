@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { ChangedFile, discardFile } from "../lib/git";
 import { generateCommitMessage } from "../lib/generateCommitMessage";
 import { openDiffForPath } from "../lib/diffActions";
@@ -12,7 +12,7 @@ const STATUS_LABELS: Record<ChangedFile["status"], string> = {
   deleted: "D",
 };
 
-export default function ChangesList() {
+function ChangesList() {
   const changes = useChangesStore((state) => state.changes);
   const loading = useChangesStore((state) => state.loading);
   const error = useChangesStore((state) => state.error);
@@ -288,3 +288,6 @@ export default function ChangesList() {
     </div>
   );
 }
+
+/** Panel resizes re-render the parent every frame; this subtree doesn't need to. */
+export default memo(ChangesList);

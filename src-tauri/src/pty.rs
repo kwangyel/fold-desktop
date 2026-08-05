@@ -1,9 +1,8 @@
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::PathBuf;
-use std::thread;
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
-use tauri::ipc::{Channel, InvokeResponseBody};
+use tauri::ipc::Channel;
 
 pub struct PtySession {
     master: Box<dyn MasterPty + Send>,
@@ -65,26 +64,12 @@ impl PtySession {
         let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
         drop(pair.slave);
 
-        let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
+        let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
         let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
 
-        thread::spawn(move || {
-            let mut buf = [0u8; 8192];
-            loop {
-                match reader.read(&mut buf) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        if on_output
-                            .send(InvokeResponseBody::Raw(buf[..n].to_vec()))
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
-        });
+        // Batched: a command that dumps output would otherwise post an IPC
+        // message per 8 KB read and stall the webview's main thread.
+        crate::stream::pipe_to_channel(reader, on_output);
 
         Ok(Self {
             master: pair.master,
