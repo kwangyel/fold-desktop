@@ -9,8 +9,8 @@
  * same capability and the same Fold UI.
  *
  * The server runs as its own process, so it reaches the app through files: the
- * request is written to `<worktree>/.fold/asks/<askId>.json` and the answer is
- * awaited at `<askId>.answer.json`. Fold watches that directory.
+ * request is written to `{workspaces}/.fold/{worktree}/asks/<askId>.json` and
+ * the answer is awaited at `<askId>.answer.json`. Fold watches that directory.
  *
  * Usage: fold-mcp-server.mjs <worktree-path>
  */
@@ -18,10 +18,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 const worktree = process.argv[2] || process.cwd();
-const asksDir = join(worktree, ".fold", "asks");
+/**
+ * Asks live beside the worktree, not inside it:
+ *   ~/fold/workspaces/<project>/.fold/<worktree-name>/asks/
+ */
+const asksDir = join(dirname(worktree), ".fold", basename(worktree), "asks");
 
 /** How often to check for the answer file, and how long to wait overall. */
 const POLL_INTERVAL_MS = 300;

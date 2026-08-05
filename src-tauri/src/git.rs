@@ -62,19 +62,11 @@ fn repo_root(state: &State<'_, AppState>) -> Result<PathBuf, String> {
     Ok(PathBuf::from(root))
 }
 
-/// Reject absolute paths and any path that tries to escape the repo root.
+/// Resolve a path under the active worktree. Paths under `.fold/` are redirected
+/// to the sibling Fold data directory (see `fold_paths`) so plans/asks never
+/// land inside the git worktree.
 fn safe_join(root: &Path, rel: &str) -> Result<PathBuf, String> {
-    let candidate = Path::new(rel);
-    if candidate.is_absolute() {
-        return Err("absolute paths are not allowed".to_string());
-    }
-    if candidate
-        .components()
-        .any(|c| matches!(c, std::path::Component::ParentDir))
-    {
-        return Err("path traversal is not allowed".to_string());
-    }
-    Ok(root.join(candidate))
+    crate::fold_paths::resolve_under_worktree(root, rel)
 }
 
 /// Run a git command in the repo root and return stdout as a string.
@@ -339,7 +331,8 @@ pub fn list_dir(path: String, state: State<'_, AppState>) -> Result<Vec<DirEntry
     for entry in std::fs::read_dir(&dir).map_err(|e| format!("failed to read dir: {e}"))? {
         let entry = entry.map_err(|e| e.to_string())?;
         let name = entry.file_name().to_string_lossy().to_string();
-        if name == ".git" {
+        // Hide VCS and any leftover in-worktree Fold data from the explorer.
+        if name == ".git" || name == ".fold" {
             continue;
         }
         let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
@@ -377,7 +370,7 @@ pub fn write_file(
     let root = repo_root(&state)?;
     let abs = safe_join(&root, &path)?;
     // Create parent directories so callers can write into new subtrees such as
-    // `.fold/plans/` without a separate mkdir step.
+    // the Fold plans/asks dirs without a separate mkdir step.
     if let Some(parent) = abs.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("failed to create directory: {e}"))?;

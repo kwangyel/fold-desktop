@@ -13,8 +13,8 @@ const POLL_INTERVAL_MS = 500;
  *
  * Claude Code asks over the Agent SDK's control channel, so it needs none of
  * this. The other harnesses run the MCP server as a separate process, which
- * drops a request file into `.fold/asks/` and polls for our answer — so the app
- * has to watch that directory while a run is in flight.
+ * drops a request file into the Fold asks directory and polls for our answer —
+ * so the app has to watch that directory while a run is in flight.
  */
 export function useAskWatcher(tabId: string): void {
   const loading = useChatStore((s) => s.tabs[tabId]?.loading ?? false);

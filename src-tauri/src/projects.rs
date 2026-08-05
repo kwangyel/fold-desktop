@@ -699,6 +699,7 @@ pub fn create_worktree(
     if let Err(e) = apply_env_transfers(&repo, &dest, &transfers) {
         // Roll back the half-created worktree so the user can retry cleanly.
         let _ = git_in(&repo, &["worktree", "remove", "--force", &dest.to_string_lossy()]);
+        crate::fold_paths::remove_fold_data_dir(&dest);
         remove_worktree_dir(&dest);
         return Err(e);
     }
@@ -805,10 +806,12 @@ pub fn remove_worktree(
     // Best-effort: unregister + delete the worktree folder, then delete the
     // branch (force, since it may hold unmerged commits). This also handles
     // removing an already-archived worktree — the folder is gone, but the
-    // `branch -D` still fires.
+    // `branch -D` still fires. Also drop the sibling Fold data dir (plans/asks).
     let repo = PathBuf::from(&project.path);
+    let wt_path = PathBuf::from(&removed.path);
+    crate::fold_paths::remove_fold_data_dir(&wt_path);
     let _ = git_in(&repo, &["worktree", "remove", "--force", &removed.path]);
-    let _ = std::fs::remove_dir_all(&removed.path);
+    let _ = std::fs::remove_dir_all(&wt_path);
     let _ = git_in(&repo, &["worktree", "prune"]);
     let _ = git_in(&repo, &["branch", "-D", &removed.branch]);
 
@@ -853,9 +856,12 @@ pub fn archive_worktree(
     }
 
     // Best-effort: unregister + delete the worktree folder, but KEEP the branch.
+    // Also drop the sibling Fold data dir (plans/asks) for this worktree.
     let repo = PathBuf::from(&project.path);
+    let wt_path = PathBuf::from(&path);
+    crate::fold_paths::remove_fold_data_dir(&wt_path);
     let _ = git_in(&repo, &["worktree", "remove", "--force", &path]);
-    let _ = std::fs::remove_dir_all(&path);
+    let _ = std::fs::remove_dir_all(&wt_path);
     let _ = git_in(&repo, &["worktree", "prune"]);
 
     let updated = project.clone();

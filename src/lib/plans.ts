@@ -2,13 +2,40 @@ import { listDir, readFile, writeFile } from "./git";
 import type { HarnessId } from "./harnesses";
 
 /**
- * Plans live inside the worktree rather than in a harness-specific location, so
- * a plan written by one harness can be read and implemented by another. This is
- * also the directory Claude Code writes to directly, via the Agent SDK's
- * `plansDirectory` setting (see `PLANS_DIR` in src-tauri/src/claude.rs).
+ * Plans live in a Fold data directory *beside* the git worktree (not inside
+ * it), so they never appear in the explorer or dirty the working tree:
+ *
+ *   ~/fold/workspaces/<project>/.fold/<worktree>/plans/
+ *
+ * Logical paths still use the `.fold/plans/...` prefix; the Tauri backend
+ * redirects those to the sibling directory. Claude writes there via an
+ * absolute `plansDirectory` (see `fold_paths` / `claude.rs`).
  */
 export const PLANS_DIR = ".fold/plans";
 const INDEX_PATH = `${PLANS_DIR}/index.json`;
+
+/**
+ * Absolute Fold data root for a worktree:
+ * `{parent}/.fold/{worktree-name}/`.
+ */
+export function foldDataDir(worktreePath: string): string {
+  const norm = worktreePath.replace(/\\/g, "/").replace(/\/$/, "");
+  const slash = norm.lastIndexOf("/");
+  const parent = slash >= 0 ? norm.slice(0, slash) : norm;
+  const name = slash >= 0 ? norm.slice(slash + 1) : norm;
+  return `${parent}/.fold/${name}`;
+}
+
+/** Absolute path for a logical `.fold/...` path under a worktree. */
+export function absoluteFoldPath(
+  worktreePath: string,
+  logicalPath: string,
+): string {
+  const norm = logicalPath.replace(/\\/g, "/").replace(/^\.\//, "");
+  const rest = norm === ".fold" ? "" : norm.replace(/^\.fold\/?/, "");
+  const base = foldDataDir(worktreePath);
+  return rest ? `${base}/${rest}` : base;
+}
 
 /**
  * No harness reports whether a plan was carried out, so status is derived from
@@ -25,7 +52,7 @@ export type PlanStatus =
 export type PlanRecord = {
   id: string;
   title: string;
-  /** Worktree-relative path of the plan markdown — the cross-harness handoff. */
+  /** Logical `.fold/plans/...` path — the cross-harness handoff. */
   path: string;
   worktreePath: string;
   createdByHarness: HarnessId;
@@ -54,15 +81,20 @@ export const PLAN_STATUS_LABELS: Record<PlanStatus, string> = {
   failed: "Failed",
 };
 
-/** Whether a path (absolute or worktree-relative) points at a plan markdown file. */
+/** Whether a path (absolute or logical) points at a plan markdown file. */
 export function isPlanFilePath(path: string): boolean {
   const norm = path.replace(/\\/g, "/");
-  return norm.includes(`${PLANS_DIR}/`) && norm.endsWith(".md");
+  if (!norm.endsWith(".md")) return false;
+  // Logical / legacy: `.fold/plans/...`
+  if (norm.includes(`${PLANS_DIR}/`)) return true;
+  // Absolute sibling layout: `.../.fold/<worktree>/plans/...`
+  return /\/\.fold\/[^/]+\/plans\//.test(norm);
 }
 
 /**
- * Turn an absolute or messy path into a worktree-relative one that `readFile`
- * accepts. Claude Code often reports absolute plan paths via Write / ExitPlanMode.
+ * Turn an absolute or messy path into a logical `.fold/...` path that
+ * `readFile` accepts. Claude Code often reports absolute plan paths via
+ * Write / ExitPlanMode.
  */
 export function toRepoRelativePath(
   path: string,
@@ -77,7 +109,17 @@ export function toRepoRelativePath(
     if (norm.startsWith(`${root}/`)) {
       return norm.slice(root.length + 1);
     }
+    // Absolute sibling Fold data dir for this worktree.
+    const data = foldDataDir(root);
+    if (norm === data) return ".fold";
+    if (norm.startsWith(`${data}/`)) {
+      return `.fold/${norm.slice(data.length + 1)}`;
+    }
   }
+
+  // Any `.../.fold/<name>/plans/...` absolute path → logical `.fold/plans/...`
+  const absFold = norm.match(/\/\.fold\/[^/]+\/(.+)$/);
+  if (absFold) return `.fold/${absFold[1]}`;
 
   // Fall back to the plans-directory suffix when the absolute root differs.
   const plansIdx = norm.indexOf(`${PLANS_DIR}/`);
@@ -208,7 +250,7 @@ export async function readPlanMarkdown(record: PlanRecord): Promise<string> {
   return readFile(rel);
 }
 
-/** Write a plan body and return its worktree-relative path. */
+/** Write a plan body and return its logical `.fold/plans/...` path. */
 export async function writePlanMarkdown(
   id: string,
   markdown: string,
@@ -227,10 +269,16 @@ export function newPlanId(): string {
  * Prompt handed to the harness chosen to implement a plan. It points at the
  * plan file rather than inlining it, so the same prompt works no matter which
  * harness wrote the plan or which one is implementing it.
+ *
+ * Uses an absolute path because plans live outside the git worktree.
  */
 export function buildImplementPrompt(record: PlanRecord): string {
+  const abs = absoluteFoldPath(
+    record.worktreePath,
+    toRepoRelativePath(record.path, record.worktreePath),
+  );
   return [
-    `Implement the plan at ${record.path} (relative to the repository root).`,
+    `Implement the plan at ${abs}.`,
     "",
     "Read that file first, then carry it out in full. Follow the plan's own",
     "verification section before reporting that you are done. If part of the",
@@ -247,6 +295,9 @@ export function buildImplementPrompt(record: PlanRecord): string {
  * responds (known Cursor CLI bug). Instead we stay in normal agent mode and
  * instruct the model to research, write the plan to a Fold path, and stop
  * without editing source files.
+ *
+ * `planPath` should be workspace-relative (`.fold/plans/...`) so Cursor's
+ * Write tool accepts it; Fold migrates the file out of the worktree on read.
  */
 export function buildCursorPlanPrompt(
   userPrompt: string,

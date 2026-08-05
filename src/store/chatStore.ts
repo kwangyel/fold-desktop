@@ -609,7 +609,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     // Set once a plan has been captured for this run, so the fallback capture
     // on exit doesn't produce a second record.
     let capturedPlan = false;
-    /** Plan file Claude Code wrote during this planning run (under `.fold/plans/`). */
+    /** Plan file Claude Code wrote during this planning run (Fold plans dir). */
     let trackedPlanPath: string | null = null;
     let cursorPlanPollTimer: number | undefined;
 

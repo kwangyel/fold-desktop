@@ -6,6 +6,9 @@
  * a way to reach the app: it writes `<askId>.json` here and polls for
  * `<askId>.answer.json`. Files keep this dependency-free — the alternative is a
  * loopback HTTP server in the Tauri backend.
+ *
+ * Logical path `.fold/asks`; on disk this is
+ * `{workspaces}/.fold/<worktree>/asks/` (beside the git worktree).
  */
 export const ASKS_DIR = ".fold/asks";
 
