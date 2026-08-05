@@ -2,7 +2,6 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import {
   IconFolderPlus,
   IconFolderOpen,
-  IconBrandGithub,
   IconTrash,
   IconArchive,
   IconPlus,
@@ -19,6 +18,7 @@ import ProjectDialog from "./ProjectDialog";
 import CreateWorktreeDialog from "./CreateWorktreeDialog";
 import ConnectAppDialog from "./ConnectAppDialog";
 import UserMenu from "./UserMenu";
+import ProjectGithubAvatar from "./ProjectGithubAvatar";
 import ResizeHandle from "./ResizeHandle";
 
 const ConnectHarnessDialog = lazy(() => import("./ConnectHarnessDialog"));
@@ -154,24 +154,16 @@ export default function Sidebar({ width, topRatio = 0.38, onSplitDrag }: Props) 
                   }}
                   title={p.path}
                 >
-                  <span
-                    className={`status-dot ${isActiveProject ? "" : "idle"}`}
-                  />
+                  <ProjectGithubAvatar path={p.path} active={isActiveProject} />
                   <div className="meta">
                     <div className="name">{p.name}</div>
-                    <div className="sub">
-                      {activeWorktrees.length > 0
-                        ? `${activeWorktrees.length} worktree${activeWorktrees.length === 1 ? "" : "s"}`
-                        : p.path}
-                    </div>
+                    {activeWorktrees.length > 0 && (
+                      <div className="sub">
+                        {activeWorktrees.length} worktree
+                        {activeWorktrees.length === 1 ? "" : "s"}
+                      </div>
+                    )}
                   </div>
-                  {p.hasGithubRemote && (
-                    <IconBrandGithub
-                      size={14}
-                      className="gh-badge"
-                      title="GitHub remote"
-                    />
-                  )}
                   <button
                     className="icon-btn project-plus"
                     type="button"

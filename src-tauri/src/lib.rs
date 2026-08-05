@@ -226,6 +226,8 @@ pub fn run() {
             github::gh_auth_cancel,
             github::gh_auth_logout,
             github::git_github_remote,
+            github::git_github_owner,
+            github::git_github_repo_owner,
             github::gh_repo_name_check,
             github::gh_pr_create_web,
             github::gh_pr_view,
