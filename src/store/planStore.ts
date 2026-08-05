@@ -13,7 +13,7 @@ type PlanStore = {
   loading: boolean;
   error: string | null;
 
-  /** Reload the index from `.fold/plans/index.json`. */
+  /** Reload the index from the Fold plans index (`.fold/plans/index.json`). */
   refresh: () => Promise<void>;
   /** Record a newly captured plan. */
   add: (record: PlanRecord) => Promise<void>;

@@ -2,6 +2,7 @@ mod auth;
 mod claude;
 mod codex;
 mod cursor;
+mod fold_paths;
 mod git;
 mod github;
 mod opencode;

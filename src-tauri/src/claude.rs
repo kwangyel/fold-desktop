@@ -463,12 +463,6 @@ pub fn resolve_fold_mcp_server() -> Option<(String, String)> {
     ))
 }
 
-/// Directory (relative to the worktree) where Claude Code writes plan files.
-/// Set via the Agent SDK's `plansDirectory` setting so plans land inside the
-/// worktree instead of the global `~/.claude/plans/`, which makes them readable
-/// by whichever harness later implements them.
-pub const PLANS_DIR: &str = ".fold/plans";
-
 /// Run a Claude Code agent in a worktree via the Agent SDK sidecar
 /// (`scripts/claude-agent.mjs`).
 ///
@@ -520,6 +514,14 @@ pub fn claude_agent_run(
     let node = resolve_node_bin()
         .ok_or_else(|| "Node.js not found (required to run the Claude Agent SDK)".to_string())?;
 
+    // Absolute plans dir outside the worktree so plan files never appear in
+    // the explorer / working tree. Create it up front so the SDK can write.
+    let plans_dir = crate::fold_paths::fold_plans_dir(&worktree_path).ok_or_else(|| {
+        "could not resolve Fold plans directory for worktree".to_string()
+    })?;
+    std::fs::create_dir_all(&plans_dir)
+        .map_err(|e| format!("failed to create plans directory: {e}"))?;
+
     let config = serde_json::json!({
         "prompt": prompt,
         "cwd": worktree,
@@ -528,7 +530,7 @@ pub fn claude_agent_run(
         "fastMode": fast_mode.unwrap_or(false),
         "permissionMode": permission_mode.filter(|s| !s.is_empty()),
         "resumeSessionId": resume_session_id.filter(|s| !s.is_empty()),
-        "plansDirectory": PLANS_DIR,
+        "plansDirectory": plans_dir.to_string_lossy(),
     });
 
     let mut child = Command::new(&node)

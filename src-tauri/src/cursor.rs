@@ -441,7 +441,7 @@ pub fn cursor_agent_run(
     // Cursor's native plan mode calls `create_plan` and then hangs waiting for
     // a UI client that never responds (confirmed Cursor CLI bug). Fold instead
     // uses a soft plan prompt (see `buildCursorPlanPrompt`) so the agent writes
-    // the plan to `.fold/plans/` and exits normally.
+    // the plan to the Fold data dir and exits normally.
     let _planning = plan_mode.unwrap_or(false);
     if fold_mcp {
         args.push("--approve-mcps".into());
