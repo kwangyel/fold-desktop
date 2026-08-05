@@ -1,7 +1,15 @@
 import { useEffect, useState } from "react";
-import { IconFolder, IconGitBranch, IconAlertTriangle, IconBrandGithub } from "@tabler/icons-react";
+import {
+  IconFolder,
+  IconGitBranch,
+  IconAlertTriangle,
+  IconBrandGithub,
+  IconLoader2,
+} from "@tabler/icons-react";
 import { isGitRepo, pickFolder } from "../lib/projects";
 import { gitGithubRemote } from "../lib/git";
+import { ghRepoNameCheck, type GhRepoNameCheck } from "../lib/github";
+import { useGithubStore } from "../store/githubStore";
 import { useProjectStore } from "../store/projectStore";
 import "./ProjectDialog.css";
 
@@ -21,6 +29,10 @@ export default function ProjectDialog({
 }) {
   const create = useProjectStore((s) => s.create);
   const open = useProjectStore((s) => s.open);
+  const ghAuthenticated = useGithubStore((s) => s.authenticated);
+  const ghUsername = useGithubStore((s) => s.username);
+  const ghChecking = useGithubStore((s) => s.checking);
+  const refreshGithub = useGithubStore((s) => s.refresh);
 
   const [name, setName] = useState("");
   const [folder, setFolder] = useState("");
@@ -31,6 +43,13 @@ export default function ProjectDialog({
   const [hasGithubRemote, setHasGithubRemote] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [nameCheck, setNameCheck] = useState<GhRepoNameCheck | null>(null);
+  const [nameChecking, setNameChecking] = useState(false);
+
+  // Refresh gh auth when the dialog opens.
+  useEffect(() => {
+    void refreshGithub();
+  }, [refreshGithub]);
 
   // Close on Escape.
   useEffect(() => {
@@ -41,16 +60,85 @@ export default function ProjectDialog({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  // Debounced GitHub name availability check while "create on GitHub" is on.
+  const effectiveName =
+    name.trim() || (mode === "open" && folder ? basename(folder) : "");
+
+  useEffect(() => {
+    if (!createGithub) {
+      setNameCheck(null);
+      setNameChecking(false);
+      return;
+    }
+    if (!effectiveName) {
+      setNameCheck(null);
+      setNameChecking(false);
+      return;
+    }
+    if (!ghAuthenticated) {
+      setNameCheck({
+        available: false,
+        message: "Connect GitHub via Connect App before creating a repository",
+        owner: null,
+      });
+      setNameChecking(false);
+      return;
+    }
+
+    let cancelled = false;
+    setNameChecking(true);
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const result = await ghRepoNameCheck(effectiveName);
+          if (!cancelled) {
+            setNameCheck(result);
+            setNameChecking(false);
+          }
+        } catch (e) {
+          if (!cancelled) {
+            setNameCheck({
+              available: false,
+              message: String(e),
+              owner: null,
+            });
+            setNameChecking(false);
+          }
+        }
+      })();
+    }, 400);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [createGithub, effectiveName, ghAuthenticated]);
+
   const title = mode === "create" ? "Create Project" : "Open Existing Project";
   const preview =
     mode === "create" && folder && name.trim()
       ? `${folder.replace(/[\\/]+$/, "")}/${name.trim()}`
       : "";
 
+  // Show create-on-GitHub for new projects, or existing projects without a
+  // GitHub remote (once a folder is chosen and git is present / will be inited).
+  const showCreateGithub =
+    mode === "create" ||
+    (mode === "open" &&
+      folder !== "" &&
+      hasGithubRemote === false &&
+      (isRepo === true || initGit));
+
+  const githubBlocked =
+    createGithub &&
+    (nameChecking ||
+      !ghAuthenticated ||
+      (effectiveName !== "" && nameCheck !== null && !nameCheck.available));
+
   const canSubmit =
-    mode === "create"
+    (mode === "create"
       ? Boolean(folder && name.trim())
-      : Boolean(folder) && (isRepo === true || initGit);
+      : Boolean(folder) && (isRepo === true || initGit)) && !githubBlocked;
 
   async function chooseCreateParent() {
     setError(null);
@@ -68,9 +156,13 @@ export default function ProjectDialog({
     setIsRepo(repo);
     setInitGit(false);
     setHasGithubRemote(null);
+    setCreateGithub(false);
     if (repo) {
       const ghRemote = await gitGithubRemote(picked);
       setHasGithubRemote(ghRemote);
+    } else {
+      // Not a repo yet — no remote; user can init + optionally create on GitHub.
+      setHasGithubRemote(false);
     }
   }
 
@@ -79,6 +171,15 @@ export default function ProjectDialog({
     setBusy(true);
     setError(null);
     try {
+      // Final name check right before create to avoid races.
+      if (createGithub && effectiveName) {
+        const check = await ghRepoNameCheck(effectiveName);
+        setNameCheck(check);
+        if (!check.available) {
+          setError(check.message ?? "Repository name is not available on GitHub");
+          return;
+        }
+      }
       if (mode === "create") {
         await create(folder, name.trim(), createGithub);
       } else {
@@ -178,7 +279,11 @@ export default function ProjectDialog({
                         <input
                           type="checkbox"
                           checked={initGit}
-                          onChange={(e) => setInitGit(e.target.checked)}
+                          onChange={(e) => {
+                            const next = e.target.checked;
+                            setInitGit(next);
+                            if (!next) setCreateGithub(false);
+                          }}
                         />
                         <span>Initialize a git repository here</span>
                       </label>
@@ -189,16 +294,54 @@ export default function ProjectDialog({
             </>
           )}
 
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
-              checked={createGithub}
-              onChange={(e) => setCreateGithub(e.target.checked)}
-            />
-            <span>
-              Also create on GitHub <em>(coming soon)</em>
-            </span>
-          </label>
+          {showCreateGithub && (
+            <div className="github-create">
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={createGithub}
+                  disabled={ghChecking}
+                  onChange={(e) => setCreateGithub(e.target.checked)}
+                />
+                <span>Also create on GitHub</span>
+              </label>
+
+              {createGithub && (
+                <div className="github-create-hint">
+                  {ghChecking ? (
+                    <span className="github-check muted">
+                      <IconLoader2 size={14} stroke={1.75} className="spin" />
+                      Checking GitHub connection…
+                    </span>
+                  ) : !ghAuthenticated ? (
+                    <span className="github-check warn-text">
+                      Connect GitHub via Connect App first
+                    </span>
+                  ) : nameChecking ? (
+                    <span className="github-check muted">
+                      <IconLoader2 size={14} stroke={1.75} className="spin" />
+                      Checking name availability…
+                    </span>
+                  ) : nameCheck && !nameCheck.available ? (
+                    <span className="github-check warn-text">
+                      {nameCheck.message ?? "Name is not available on GitHub"}
+                    </span>
+                  ) : nameCheck?.available ? (
+                    <span className="github-check ok-text">
+                      Will create private repo
+                      {nameCheck.owner || ghUsername
+                        ? ` @${nameCheck.owner ?? ghUsername}/${effectiveName}`
+                        : ""}
+                    </span>
+                  ) : effectiveName ? null : (
+                    <span className="github-check muted">
+                      Enter a project name to check availability
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {error && <div className="dialog-error">{error}</div>}
         </div>

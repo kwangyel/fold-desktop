@@ -74,6 +74,25 @@ export async function ghAuthLogout(): Promise<void> {
   await invoke("gh_auth_logout");
 }
 
+/** Whether a repo name can be created under the authenticated GitHub account. */
+export interface GhRepoNameCheck {
+  available: boolean;
+  message: string | null;
+  owner: string | null;
+}
+
+/** Check if `name` is creatable as a new GitHub repository for the signed-in user. */
+export async function ghRepoNameCheck(name: string): Promise<GhRepoNameCheck> {
+  if (!isTauri()) {
+    return {
+      available: Boolean(name.trim()),
+      message: name.trim() ? null : "Repository name is required",
+      owner: null,
+    };
+  }
+  return invoke<GhRepoNameCheck>("gh_repo_name_check", { name });
+}
+
 /** Open the GitHub PR creation page in the browser via `gh pr create --web`. */
 export async function ghPrCreateWeb(worktreePath: string): Promise<void> {
   if (!isTauri()) return;
