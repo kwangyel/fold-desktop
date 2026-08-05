@@ -154,6 +154,39 @@ export async function openProject(
   );
 }
 
+/** Clone a GitHub repo into `parent/<repo>` and register it as a project. */
+export async function cloneGithubProject(
+  fullName: string,
+  parent: string,
+  name?: string,
+): Promise<Project> {
+  if (!isTauri()) {
+    const repo = fullName.split("/").pop() || fullName;
+    const path = `${parent.replace(/[\\/]+$/, "")}/${repo}`;
+    const project: Project = {
+      id: `p${Date.now()}`,
+      name: name?.trim() || repo,
+      path,
+      createdOnGithub: false,
+      hasGithubRemote: true,
+      worktrees: [],
+      activeWorktreeId: null,
+    };
+    mockState = {
+      projects: [...mockState.projects, project],
+      activeId: project.id,
+    };
+    return project;
+  }
+  return normalizeProject(
+    await invoke<Project>("clone_github_project", {
+      fullName,
+      parent,
+      name: name?.trim() ? name.trim() : null,
+    }),
+  );
+}
+
 /** Whether the folder is already a git repository. */
 export async function isGitRepo(path: string): Promise<boolean> {
   if (!isTauri()) return true;

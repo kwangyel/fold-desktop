@@ -4,7 +4,7 @@ use std::process::Command;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
-use crate::github::{create_private_github_repo, detect_github_remote};
+use crate::github::{clone_github_repo, create_private_github_repo, detect_github_remote};
 use crate::AppState;
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -627,6 +627,30 @@ pub fn open_project(
     write_file(&app, &data)?;
     set_active_path(&state, None)?;
     Ok(project)
+}
+
+/// Clone a GitHub repository into `parent/<repo>` and register it as a project.
+#[tauri::command]
+pub fn clone_github_project(
+    app: AppHandle,
+    full_name: String,
+    parent: String,
+    name: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Project, String> {
+    let path = clone_github_repo(&full_name, &parent)?;
+    let display_name = name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| {
+            PathBuf::from(&path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "project".to_string())
+        });
+    open_project(app, path, display_name, false, false, state)
 }
 
 #[tauri::command]

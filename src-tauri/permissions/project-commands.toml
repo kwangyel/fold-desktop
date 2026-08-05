@@ -5,6 +5,7 @@ commands.allow = [
   "list_projects",
   "create_project",
   "open_project",
+  "clone_github_project",
   "is_git_repo",
   "set_active_project",
   "scan_worktree_env",
