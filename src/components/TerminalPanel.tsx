@@ -1,7 +1,8 @@
-import { useState } from "react";
-import XTerminal from "./XTerminal";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { useProjectStore } from "../store/projectStore";
 import "./TerminalPanel.css";
+
+const XTerminal = lazy(() => import("./XTerminal"));
 
 interface TerminalTab {
   id: string;
@@ -22,8 +23,38 @@ const INITIAL_TERMINAL = createTerminalTab();
 export default function TerminalPanel() {
   const [terminals, setTerminals] = useState<TerminalTab[]>([INITIAL_TERMINAL]);
   const [activeId, setActiveId] = useState(INITIAL_TERMINAL.id);
-  // Restart terminals in the new working directory when the worktree changes.
+  // Defer PTY spawn so it doesn't compete with auth/projects/harness startup.
+  const [spawnReady, setSpawnReady] = useState(false);
   const activePath = useProjectStore((s) => s.activePath);
+
+  useEffect(() => {
+    let cancelled = false;
+    const win = window as Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    let idleId: number;
+    if (typeof win.requestIdleCallback === "function") {
+      idleId = win.requestIdleCallback(
+        () => {
+          if (!cancelled) setSpawnReady(true);
+        },
+        { timeout: 1500 },
+      );
+    } else {
+      idleId = window.setTimeout(() => {
+        if (!cancelled) setSpawnReady(true);
+      }, 400);
+    }
+    return () => {
+      cancelled = true;
+      if (typeof win.cancelIdleCallback === "function") {
+        win.cancelIdleCallback(idleId);
+      } else {
+        window.clearTimeout(idleId);
+      }
+    };
+  }, []);
 
   const addTerminal = () => {
     const tab = createTerminalTab();
@@ -70,14 +101,19 @@ export default function TerminalPanel() {
         </div>
       </div>
       <div className="terminal-panel-body">
-        {activePath ? (
-          terminals.map((t) => (
-            <XTerminal
-              key={`${t.id}-${activePath}`}
-              id={t.id}
-              active={t.id === activeId}
-            />
-          ))
+        {activePath && spawnReady ? (
+          <Suspense fallback={<div className="terminal-empty">Starting terminal…</div>}>
+            {terminals.map((t) => (
+              <XTerminal
+                key={t.id}
+                id={t.id}
+                cwd={activePath}
+                active={t.id === activeId}
+              />
+            ))}
+          </Suspense>
+        ) : activePath ? (
+          <div className="terminal-empty">Starting terminal…</div>
         ) : (
           <div className="terminal-empty">No worktree selected</div>
         )}

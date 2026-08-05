@@ -6,7 +6,8 @@ import { useChatStore } from "../store/chatStore";
 import { useProjectStore } from "../store/projectStore";
 import { useCenterViewStore } from "../store/centerViewStore";
 
-const POLL_INTERVAL_MS = 500;
+// 500ms was aggressive — each tick does listDir + optional readFile IPC.
+const POLL_INTERVAL_MS = 1500;
 
 /**
  * Surface clarifying questions raised through Fold's `fold_ask_user` MCP tool.

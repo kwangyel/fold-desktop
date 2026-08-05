@@ -1,3 +1,4 @@
+import { memo } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
@@ -30,7 +31,7 @@ const components: Components = {
   },
 };
 
-export default function AssistantMarkdown({ content }: { content: string }) {
+function AssistantMarkdown({ content }: { content: string }) {
   return (
     <div className="assistant-markdown">
       <Markdown remarkPlugins={[remarkGfm]} components={components}>
@@ -39,3 +40,5 @@ export default function AssistantMarkdown({ content }: { content: string }) {
     </div>
   );
 }
+
+export default memo(AssistantMarkdown);

@@ -288,12 +288,16 @@ export default function ChatMessages({ tabId }: ChatMessagesProps) {
   const tab = useChatStore((state) => state.tabs[tabId]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  const scrollToBottom = (smooth: boolean) => {
+    messagesEndRef.current?.scrollIntoView({
+      behavior: smooth ? "smooth" : "instant",
+    });
   };
 
   useEffect(() => {
-    scrollToBottom();
+    // Smooth scroll only when idle — during streaming, smooth queues layout work
+    // on every token and feels laggy.
+    scrollToBottom(!tab?.loading);
   }, [tab?.messages, tab?.loading]);
 
   const turns = useMemo(
