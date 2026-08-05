@@ -201,6 +201,7 @@
   color: var(--text);
 }
 
+.plan-mode-btn,
 .fast-mode-btn {
   display: inline-flex;
   align-items: center;
@@ -221,16 +222,19 @@
   height: 16px;
 }
 
+.plan-mode-btn:hover:not(:disabled),
 .fast-mode-btn:hover:not(:disabled) {
   color: var(--text);
   background: rgba(124, 92, 255, 0.1);
 }
 
+.plan-mode-btn.active,
 .fast-mode-btn.active {
   background: rgba(124, 92, 255, 0.2);
   color: var(--accent);
 }
 
+.plan-mode-btn:disabled,
 .fast-mode-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;

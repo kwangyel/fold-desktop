@@ -36,6 +36,8 @@ export const opencodeAdapter: HarnessAdapter = {
     const { installed, authenticated } = useOpenCodeStore.getState();
     return installed && authenticated;
   },
+  // `opencode run --agent plan` (built-in read-only planning agent).
+  supportsPlanMode: true,
   listModels: async () => {
     try {
       return await opencodeListModels();

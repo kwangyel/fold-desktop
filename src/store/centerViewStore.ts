@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { readFile } from "../lib/git";
 import { ghPrView, type PrInfo } from "../lib/github";
 
-export type CenterTabType = "chat" | "editor" | "diff" | "pr";
+export type CenterTabType = "chat" | "editor" | "diff" | "pr" | "plan";
 
 export type CenterTab = {
   id: string;
@@ -18,6 +18,8 @@ export type CenterTab = {
   prInfo?: PrInfo;
   prLoading?: boolean;
   prError?: string;
+  /** Set on `plan` tabs — the PlanRecord id being reviewed. */
+  planId?: string;
 };
 
 function fileName(path: string): string {
@@ -49,6 +51,8 @@ type CenterViewStore = {
   closeDiffTab: () => void;
   openPrTab: (worktreePath: string) => void;
   setPrMerged: (id: string) => void;
+  /** Open (or focus) the review tab for a captured plan. */
+  openPlanTab: (planId: string, label?: string) => void;
   /** Drop editor/diff tabs when switching projects or worktrees. */
   closeWorkspaceTabs: () => void;
   pinTab: (id: string) => void;
@@ -273,6 +277,26 @@ export const useCenterViewStore = create<CenterViewStore>((set, get) => ({
           };
         });
       });
+  },
+
+  openPlanTab: (planId, label) => {
+    const state = get();
+    const existing = state.tabs.find(
+      (tab) => tab.type === "plan" && tab.planId === planId,
+    );
+    if (existing) {
+      set({ activeTabId: existing.id });
+      return;
+    }
+
+    const id = `plan-${planId}`;
+    const tab: CenterTab = {
+      id,
+      type: "plan",
+      label: label ?? "Plan",
+      planId,
+    };
+    set({ tabs: [...state.tabs, tab], activeTabId: id });
   },
 
   setPrMerged: (id) => {

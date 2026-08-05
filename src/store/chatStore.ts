@@ -2,8 +2,10 @@ import { create } from 'zustand';
 import {
   ClaudeOutput,
   claudeAgentCancel,
+  claudeAgentRespond,
   claudeAgentRun,
   claudeReleaseChannel,
+  type ClaudePermissionRequest,
 } from '../lib/claude';
 import {
   CodexOutput,
@@ -23,7 +25,8 @@ import {
   opencodeAgentRun,
   opencodeReleaseChannel,
 } from '../lib/opencode';
-import type { EffortLevel, HarnessId } from '../lib/harnesses';
+import { harnessSupportsPlanMode, type EffortLevel, type HarnessId } from '../lib/harnesses';
+import { writeFile } from '../lib/git';
 import type { SDKMessage } from '../lib/claudeStreamTypes';
 import {
   cursorToolPayload,
@@ -33,6 +36,23 @@ import {
 } from '../lib/chatActivity';
 import { useProjectStore } from './projectStore';
 import { useChangesStore } from './changesStore';
+import { usePlanStore } from './planStore';
+import {
+  newPlanId,
+  planTitle,
+  writePlanMarkdown,
+  loadPlanMarkdownFromDisk,
+  findUnindexedPlanMarkdown,
+  isPlanFilePath,
+  toRepoRelativePath,
+  planIdFromPath,
+  buildCursorPlanPrompt,
+  PLANS_DIR,
+  type PlanRecord,
+} from '../lib/plans';
+import { useCenterViewStore } from './centerViewStore';
+import { useQuestionStore } from './questionStore';
+import type { Question } from '../lib/questions';
 import { findHarnessModel, useHarnessStore } from './harnessStore';
 import { useCodexStore } from './codexStore';
 import { useCursorStore } from './cursorStore';
@@ -69,8 +89,61 @@ export type ChatTabState = {
   selectedHarness: string;
   modelEffort: EffortLevel;
   mode: 'normal' | 'fast';
+  /** Run the next prompt in the harness's read-only planning mode. */
+  planMode: boolean;
   attachments: Attachment[];
   loading: boolean;
+};
+
+/**
+ * Claude `canUseTool` requests awaiting an answer, keyed by plan id. The agent
+ * turn stays paused until we respond, which is what lets a plan sit in the Plan
+ * tab waiting for the user.
+ */
+const pendingPlanApprovals = new Map<
+  string,
+  { tabId: string; requestId: string }
+>();
+
+/** Whether the agent that produced this plan is still waiting on approval. */
+export function hasPendingPlanApproval(planId: string): boolean {
+  return pendingPlanApprovals.has(planId);
+}
+
+/**
+ * Answer the paused `ExitPlanMode` request for a plan. Approving lets the same
+ * session continue straight into implementation; rejecting returns the agent to
+ * planning with the user's reason.
+ */
+export async function resolvePlanApproval(
+  planId: string,
+  approve: boolean,
+  reason?: string,
+): Promise<boolean> {
+  const pending = pendingPlanApprovals.get(planId);
+  if (!pending) return false;
+  pendingPlanApprovals.delete(planId);
+  await claudeAgentRespond(
+    pending.tabId,
+    approve
+      ? {
+          type: 'fold_permission_response',
+          requestId: pending.requestId,
+          behavior: 'allow',
+        }
+      : {
+          type: 'fold_permission_response',
+          requestId: pending.requestId,
+          behavior: 'deny',
+          message: reason || 'User rejected the plan.',
+        },
+  );
+  return true;
+}
+
+export type SendPromptOptions = {
+  /** Set when this run is implementing a plan, so its status can be settled. */
+  planId?: string;
 };
 
 type ChatStore = {
@@ -86,13 +159,18 @@ type ChatStore = {
   setModel: (tabId: string, model: string, harnessId?: string) => void;
   setEffort: (tabId: string, effort: EffortLevel) => void;
   setMode: (tabId: string, mode: 'normal' | 'fast') => void;
+  setPlanMode: (tabId: string, planMode: boolean) => void;
   setLoading: (tabId: string, loading: boolean) => void;
   addAttachment: (tabId: string, attachment: Attachment) => void;
   removeAttachment: (tabId: string, attachmentId: string) => void;
   clearChat: (tabId: string) => void;
   deleteTab: (tabId: string) => void;
   /** Send a prompt to the selected harness agent in the active worktree. */
-  sendPrompt: (tabId: string, prompt: string) => Promise<void>;
+  sendPrompt: (
+    tabId: string,
+    prompt: string,
+    options?: SendPromptOptions,
+  ) => Promise<void>;
   /** Cancel an in-flight agent for this tab. */
   cancelAgent: (tabId: string) => Promise<void>;
 };
@@ -305,6 +383,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             selectedHarness: 'claudecode',
             modelEffort: 'medium',
             mode: 'normal',
+            planMode: false,
             attachments: [],
             loading: false,
           },
@@ -390,6 +469,21 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       };
     }),
 
+  setPlanMode: (tabId, planMode) =>
+    set((state) => {
+      const tab = state.tabs[tabId];
+      if (!tab) return state;
+      return {
+        tabs: {
+          ...state.tabs,
+          [tabId]: {
+            ...tab,
+            planMode,
+          },
+        },
+      };
+    }),
+
   setLoading: (tabId, loading) =>
     set((state) => {
       const tab = state.tabs[tabId];
@@ -457,7 +551,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       return { tabs: remainingTabs };
     }),
 
-  sendPrompt: async (tabId, prompt) => {
+  sendPrompt: async (tabId, prompt, options) => {
     const tab = get().tabs[tabId];
     if (!tab || tab.loading || !prompt.trim()) return;
 
@@ -473,6 +567,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }
 
     const harnessId = (tab.selectedHarness || 'claudecode') as HarnessId;
+    // Codex has no planning mode, so the toggle is hidden for it; guard here too
+    // in case a stale tab kept planMode set across a harness switch.
+    const planningRun = tab.planMode && harnessSupportsPlanMode(harnessId);
+    const implementingPlanId = options?.planId;
+
     if (harnessId !== 'claudecode' && !isHarnessConnected(harnessId)) {
       get().addMessage(tabId, {
         id: `err-${Date.now()}`,
@@ -507,6 +606,181 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     let assistantId: string | null = null;
     let finished = false;
     let lastAssistantSegment = '';
+    // Set once a plan has been captured for this run, so the fallback capture
+    // on exit doesn't produce a second record.
+    let capturedPlan = false;
+    /** Plan file Claude Code wrote during this planning run (under `.fold/plans/`). */
+    let trackedPlanPath: string | null = null;
+    let cursorPlanPollTimer: number | undefined;
+
+    const stopCursorPlanPoll = () => {
+      if (cursorPlanPollTimer !== undefined) {
+        window.clearInterval(cursorPlanPollTimer);
+        cursorPlanPollTimer = undefined;
+      }
+    };
+
+    const trackPlanFile = (toolName: string, input?: unknown) => {
+      if (!planningRun) return;
+      const name = toolName.toLowerCase().replace(/\s+/g, '');
+      if (!/(write|edit|createplan|create_plan)/.test(name)) return;
+
+      const paths = filePathsFromInput(input);
+      for (const p of paths) {
+        if (isPlanFilePath(p)) {
+          trackedPlanPath = toRepoRelativePath(p, worktree);
+        }
+      }
+
+      // Cursor soft plan: any write outside the plan file means the agent is
+      // implementing — stop it and keep whatever plan we already have.
+      if (
+        harnessId === 'cursor' &&
+        /(write|edit|delete)/.test(name) &&
+        paths.some((p) => !isPlanFilePath(p))
+      ) {
+        const blocked = paths.filter((p) => !isPlanFilePath(p));
+        appendAssistant(
+          `\n\nPlan mode blocked edits outside the plan file (${blocked.join(', ')}). Stopping so the plan can be reviewed first.`,
+        );
+        // If the dedicated plan file already exists, capture it before cancel.
+        if (trackedPlanPath) {
+          void loadPlanMarkdownFromDisk(trackedPlanPath, worktree).then(
+            (found) => {
+              if (found) void capturePlan(found.markdown, undefined, found.path);
+              void get().cancelAgent(tabId);
+            },
+          );
+        } else {
+          void get().cancelAgent(tabId);
+        }
+        return;
+      }
+
+      // Cursor CreatePlan may put the body in `plan` / `content` without a path.
+      if (
+        harnessId === 'cursor' &&
+        /createplan|create_plan/.test(name) &&
+        !capturedPlan
+      ) {
+        const obj =
+          input && typeof input === 'object'
+            ? (input as Record<string, unknown>)
+            : null;
+        const body = String(obj?.plan ?? obj?.content ?? obj?.markdown ?? '');
+        if (body.trim().length > 200) {
+          void capturePlan(body).then((ok) => {
+            if (ok) void get().cancelAgent(tabId);
+          });
+        }
+      }
+    };
+
+    /** Poll only the soft-plan target path — never other plans in the folder. */
+    const startCursorPlanPoll = (path: string) => {
+      stopCursorPlanPoll();
+      cursorPlanPollTimer = window.setInterval(() => {
+        if (capturedPlan || finished) {
+          stopCursorPlanPoll();
+          return;
+        }
+        void loadPlanMarkdownFromDisk(path, worktree).then((found) => {
+          if (!found || found.markdown.trim().length < 80) return;
+          stopCursorPlanPoll();
+          void capturePlan(found.markdown, undefined, found.path).then((ok) => {
+            if (ok) void get().cancelAgent(tabId);
+          });
+        });
+      }, 1500);
+    };
+
+    /**
+     * Persist a plan and open it for review. Always bind to this run's plan
+     * path when we have one — never substitute a different file from the dir.
+     */
+    const capturePlan = async (
+      markdown: string,
+      requestId?: string,
+      existingPath?: string,
+      planFilePathHint?: string,
+    ): Promise<boolean> => {
+      if (capturedPlan) return false;
+
+      const preferred =
+        existingPath ||
+        planFilePathHint ||
+        trackedPlanPath ||
+        undefined;
+
+      // Strict read of the intended path only (no "longest plan in folder").
+      const fromDisk = preferred
+        ? await loadPlanMarkdownFromDisk(preferred, worktree)
+        : null;
+      const fromInput = markdown.trim();
+
+      let body = '';
+      let path: string | undefined = preferred
+        ? toRepoRelativePath(preferred, worktree)
+        : undefined;
+
+      if (fromDisk?.markdown.trim()) {
+        body = fromDisk.markdown.trim();
+        path = fromDisk.path;
+      } else if (fromInput) {
+        body = fromInput;
+      } else if (!preferred) {
+        // Claude ExitPlanMode with no path: only accept unindexed plan files.
+        const unindexed = await findUnindexedPlanMarkdown();
+        if (unindexed) {
+          body = unindexed.markdown.trim();
+          path = unindexed.path;
+        }
+      }
+
+      if (!body) return false;
+      capturedPlan = true;
+
+      // Keep id aligned with the pre-assigned Cursor soft-plan filename.
+      const id = (path && planIdFromPath(path)) || newPlanId();
+      try {
+        if (!path) {
+          path = await writePlanMarkdown(id, body);
+        } else {
+          path = toRepoRelativePath(path, worktree);
+          // Ensure the dedicated file has the body we captured.
+          if (!fromDisk || fromInput.length > fromDisk.markdown.trim().length) {
+            await writeFile(path, body.endsWith('\n') ? body : `${body}\n`);
+          }
+        }
+        const record: PlanRecord = {
+          id,
+          title: planTitle(body, prompt),
+          path,
+          worktreePath: worktree,
+          createdByHarness: harnessId,
+          createdByModel: tab.selectedModel,
+          createdAt: Date.now(),
+          sourceChatTabId: tabId,
+          status: 'draft',
+        };
+        if (requestId) {
+          pendingPlanApprovals.set(id, { tabId, requestId });
+        }
+        await usePlanStore.getState().add(record);
+        useCenterViewStore.getState().openPlanTab(id, record.title);
+        return true;
+      } catch (e) {
+        capturedPlan = false;
+        pendingPlanApprovals.delete(id);
+        get().addMessage(tabId, {
+          id: `plan-err-${Date.now()}`,
+          role: 'assistant',
+          content: `Failed to save the plan: ${String(e)}`,
+          timestamp: Date.now(),
+        });
+        return false;
+      }
+    };
 
     const ensureAssistant = (): string => {
       if (assistantId) return assistantId;
@@ -543,6 +817,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const finish = (errorText?: string) => {
       if (finished) return;
       finished = true;
+      stopCursorPlanPoll();
       if (errorText) {
         const id = ensureAssistant();
         const current = get().tabs[tabId]?.messages.find((m) => m.id === id);
@@ -559,7 +834,46 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       }
       get().setLoading(tabId, false);
       releaseChannelFor(harnessId, tabId);
+      // The agent is gone, so nothing is listening for an answer any more.
+      useQuestionStore.getState().clear(tabId);
       void useChangesStore.getState().refresh();
+
+      // Prefer THIS run's plan file only. Never scan for "some other" plan —
+      // that was returning unrelated older plans from `.fold/plans/`.
+      if (planningRun && !errorText && !capturedPlan) {
+        void (async () => {
+          if (trackedPlanPath) {
+            const fromDisk = await loadPlanMarkdownFromDisk(
+              trackedPlanPath,
+              worktree,
+            );
+            if (fromDisk) {
+              await capturePlan(fromDisk.markdown, undefined, fromDisk.path);
+              return;
+            }
+          }
+          if (harnessId === 'claudecode') {
+            const unindexed = await findUnindexedPlanMarkdown();
+            if (unindexed) {
+              await capturePlan(unindexed.markdown, undefined, unindexed.path);
+              return;
+            }
+          }
+          if (assistantId) {
+            const body = get().tabs[tabId]?.messages.find(
+              (m) => m.id === assistantId,
+            )?.content;
+            if (body) await capturePlan(body);
+          }
+        })();
+      }
+
+      // An implementation run just ended — settle the plan's status from it.
+      if (implementingPlanId) {
+        void usePlanStore
+          .getState()
+          .finishImplementation(implementingPlanId, !errorText);
+      }
     };
 
     const upsertTool = (
@@ -600,7 +914,97 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       });
     };
 
+    /**
+     * Route a paused `canUseTool` request. `ExitPlanMode` captures the plan and
+     * stays pending until the user reviews it; anything else is auto-allowed so
+     * the run doesn't stall on a prompt with no UI behind it.
+     */
+    const handlePermissionRequest = (request: ClaudePermissionRequest) => {
+      if (request.toolName === 'ExitPlanMode') {
+        void (async () => {
+          const markdown = String(request.input?.plan ?? '');
+          const planFilePath =
+            typeof request.input?.planFilePath === 'string'
+              ? request.input.planFilePath
+              : undefined;
+          const captured = await capturePlan(
+            markdown,
+            request.requestId,
+            trackedPlanPath ?? undefined,
+            planFilePath,
+          );
+          // Nothing was captured — don't leave the agent hanging on a request
+          // no UI will ever answer.
+          if (!captured) {
+            void claudeAgentRespond(tabId, {
+              type: 'fold_permission_response',
+              requestId: request.requestId,
+              behavior: 'deny',
+              message: 'Fold could not save the plan for review.',
+            });
+          }
+        })();
+        return;
+      }
+
+      if (request.toolName === 'AskUserQuestion') {
+        const questions = (request.input?.questions ?? []) as Question[];
+        if (questions.length > 0) {
+          useQuestionStore
+            .getState()
+            .ask({ kind: 'claude', tabId, requestId: request.requestId }, questions);
+          // Bring the chat forward so the question dialog is visible.
+          useCenterViewStore.getState().setActiveTab(tabId);
+          return;
+        }
+        // Malformed request — decline rather than pausing the run forever.
+        void claudeAgentRespond(tabId, {
+          type: 'fold_permission_response',
+          requestId: request.requestId,
+          behavior: 'deny',
+          message: 'No questions were provided.',
+        });
+        return;
+      }
+
+      // Auto-allow plan-file writes; deny other mutating tools in plan mode so
+      // the agent can't sneak edits past the review step.
+      if (planningRun) {
+        const name = request.toolName.toLowerCase();
+        const paths = filePathsFromInput(request.input);
+        const planWrite =
+          /(write|edit)/.test(name) &&
+          paths.length > 0 &&
+          paths.every((p) => isPlanFilePath(p));
+        if (planWrite) {
+          for (const p of paths) {
+            if (isPlanFilePath(p)) {
+              trackedPlanPath = toRepoRelativePath(p, worktree);
+            }
+          }
+          void claudeAgentRespond(tabId, {
+            type: 'fold_permission_response',
+            requestId: request.requestId,
+            behavior: 'allow',
+          });
+          return;
+        }
+      }
+
+      void claudeAgentRespond(tabId, {
+        type: 'fold_permission_response',
+        requestId: request.requestId,
+        behavior: 'allow',
+      });
+    };
+
     const handleEvent = (event: StreamEvent) => {
+      // Permission requests from the Claude Agent SDK sidecar's canUseTool.
+      if ((event as { type?: string }).type === 'fold_permission_request') {
+        handlePermissionRequest(event as unknown as ClaudePermissionRequest);
+        return;
+      }
+
       // OpenCode JSON format: { type: "text"|"tool_use"|..., part: {...} }
       if (harnessId === 'opencode') {
         const oc = event as GenericStreamEvent;
@@ -706,6 +1110,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         }
 
         for (const tool of toolUsesFromBlocks(blocks)) {
+          trackPlanFile(tool.name, tool.input);
           const id = `tool-${tool.id}`;
           const existing = get().tabs[tabId]?.messages.find((m) => m.id === id);
           if (existing) continue;
@@ -732,6 +1137,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         const id = `tool-${callId}`;
         const name = cursorToolName(cursorEvent.tool_call);
         const { args, result } = cursorToolPayload(cursorEvent.tool_call);
+        trackPlanFile(name, args);
         const excerpt = toolExcerpt(name, args);
         const detail = stringifyPayload(args);
         const filePaths = filePathsFromInput(args);
@@ -811,7 +1217,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           }
         }
         if (code === -1) {
-          finish('Agent cancelled.');
+          // Soft-plan capture cancels the Cursor process on purpose once the
+          // plan file is written — don't surface that as a user-facing error.
+          finish(capturedPlan ? undefined : 'Agent cancelled.');
         } else if (code !== 0) {
           finish(`${exitLabelFor(harnessId)} exited with code ${code}.`);
         } else {
@@ -841,11 +1249,22 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       );
 
       if (harnessId === 'cursor') {
+        // Soft plan mode: Cursor's native `--mode plan` hangs in `-p` after
+        // create_plan. We pre-assign a plan path, instruct the agent to write
+        // there and stop, and poll until the file appears.
+        let cursorPrompt = prompt.trim();
+        if (planningRun) {
+          const planPath = `${PLANS_DIR}/${newPlanId()}.md`;
+          trackedPlanPath = planPath;
+          cursorPrompt = buildCursorPlanPrompt(cursorPrompt, planPath);
+          startCursorPlanPoll(planPath);
+        }
         await cursorAgentRun(
           tabId,
-          prompt.trim(),
+          cursorPrompt,
           worktree,
           tab.selectedModel || null,
+          planningRun,
           onEvent,
         );
       } else if (harnessId === 'codex') {
@@ -862,6 +1281,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           prompt.trim(),
           worktree,
           tab.selectedModel || null,
+          planningRun,
           onEvent,
         );
       } else {
@@ -880,6 +1300,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           tab.selectedModel || null,
           effort,
           fastMode,
+          planningRun ? 'plan' : null,
           onEvent,
         );
       }

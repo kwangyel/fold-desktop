@@ -25,6 +25,12 @@ export type HarnessAdapter = {
   meta: HarnessMeta;
   /** Whether this harness is installed + authenticated. */
   isConnected: () => boolean;
+  /**
+   * Whether this harness has a read-only planning mode. Codex has none — its
+   * `exec` subcommand only offers `--sandbox read-only` — so the plan toggle is
+   * hidden for it.
+   */
+  supportsPlanMode: boolean;
   /** Fetch models from the harness SDK/API (or docs fallback). */
   listModels: () => Promise<ModelInfo[]>;
 };

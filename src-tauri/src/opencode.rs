@@ -359,6 +359,7 @@ pub fn opencode_agent_run(
     prompt: String,
     worktree: String,
     model: Option<String>,
+    plan_mode: Option<bool>,
     on_output: Channel,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
@@ -384,21 +385,42 @@ pub fn opencode_agent_run(
         return Err(format!("worktree path does not exist: {worktree}"));
     }
 
+    let planning = plan_mode.unwrap_or(false);
     let mut args: Vec<String> = vec![
         "run".into(),
         "--format".into(),
         "json".into(),
         "--dir".into(),
         worktree.clone(),
-        "--auto".into(),
     ];
+    if planning {
+        // OpenCode's built-in `plan` agent is read-only: writes and bash are set
+        // to `ask`. Auto-approving them would defeat that, so `--auto` is
+        // deliberately omitted here.
+        args.push("--agent".into());
+        args.push("plan".into());
+    } else {
+        args.push("--auto".into());
+    }
     if let Some(m) = model.filter(|s| !s.is_empty()) {
         args.push("-m".into());
         args.push(m);
     }
-    args.push(prompt);
 
-    let mut child = Command::new(&bin)
+    let fold_mcp = crate::claude::resolve_fold_mcp_server().is_some();
+    let run_prompt = if fold_mcp {
+        crate::claude::with_fold_ask_hint(&prompt)
+    } else {
+        prompt.clone()
+    };
+    args.push(run_prompt);
+
+    let mut cmd = Command::new(&bin);
+    if let Some(config) = crate::claude::opencode_mcp_config_json(&worktree) {
+        cmd.env("OPENCODE_CONFIG_CONTENT", config);
+    }
+
+    let mut child = cmd
         .args(&args)
         .current_dir(&worktree_path)
         .stdin(Stdio::null())

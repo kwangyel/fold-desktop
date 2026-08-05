@@ -1,4 +1,4 @@
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -372,7 +372,110 @@ pub fn claude_list_models() -> Result<Vec<ClaudeModelInfo>, String> {
     })
 }
 
-/// Run a Claude Code agent in a worktree via `claude -p … --output-format stream-json`.
+/// Short system hint prepended to harness prompts when Fold's MCP server is
+/// registered, so agents know to ask structured questions instead of guessing.
+pub const FOLD_ASK_USER_HINT: &str =
+    "When you need the user to choose among several valid approaches or clarify \
+     an ambiguous requirement, use the fold_ask_user MCP tool with multiple-choice \
+     options. Do not guess — ask first.";
+
+/// Prepend the fold_ask_user hint to a user prompt.
+pub fn with_fold_ask_hint(prompt: &str) -> String {
+    format!("{}\n\n{}", FOLD_ASK_USER_HINT, prompt.trim())
+}
+
+/// Inline OpenCode config JSON registering Fold's stdio MCP server for one run.
+pub fn opencode_mcp_config_json(worktree: &str) -> Option<String> {
+    let (node, script) = resolve_fold_mcp_server()?;
+    serde_json::to_string(&serde_json::json!({
+        "mcp": {
+            "fold": {
+                "type": "local",
+                "command": [node, script, worktree],
+                "enabled": true
+            }
+        }
+    }))
+    .ok()
+}
+
+/// Merge Fold's stdio MCP server into `<worktree>/.cursor/mcp.json`. Returns
+/// `true` when the server was registered (Node + script are available).
+pub fn ensure_cursor_fold_mcp(worktree: &str) -> bool {
+    let (node, script) = match resolve_fold_mcp_server() {
+        Some(v) => v,
+        None => return false,
+    };
+
+    let cursor_dir = PathBuf::from(worktree).join(".cursor");
+    if std::fs::create_dir_all(&cursor_dir).is_err() {
+        return false;
+    }
+    let mcp_path = cursor_dir.join("mcp.json");
+
+    let mut config: serde_json::Value = if mcp_path.is_file() {
+        std::fs::read_to_string(&mcp_path)
+            .ok()
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_else(|| serde_json::json!({ "mcpServers": {} }))
+    } else {
+        serde_json::json!({ "mcpServers": {} })
+    };
+
+    if !config.get("mcpServers").is_some() {
+        config["mcpServers"] = serde_json::json!({});
+    }
+    if let Some(servers) = config.get_mut("mcpServers").and_then(|s| s.as_object_mut()) {
+        servers.insert(
+            "fold".to_string(),
+            serde_json::json!({
+                "command": node,
+                "args": [script, worktree]
+            }),
+        );
+    }
+
+    if std::fs::write(
+        &mcp_path,
+        format!("{}\n", serde_json::to_string_pretty(&config).unwrap_or_default()),
+    )
+    .is_err()
+    {
+        return false;
+    }
+    true
+}
+
+/// Resolve `(node, fold-mcp-server.mjs)` for harnesses that need Fold's
+/// `fold_ask_user` MCP tool to ask the user clarifying questions. Returns
+/// `None` when Node or the script is unavailable, in which case the harness
+/// simply runs without the tool.
+pub fn resolve_fold_mcp_server() -> Option<(String, String)> {
+    let root = project_root()?;
+    let script = root.join("scripts").join("fold-mcp-server.mjs");
+    if !script.is_file() {
+        return None;
+    }
+    let node = resolve_node_bin()?;
+    Some((
+        node.to_str()?.to_string(),
+        script.to_str()?.to_string(),
+    ))
+}
+
+/// Directory (relative to the worktree) where Claude Code writes plan files.
+/// Set via the Agent SDK's `plansDirectory` setting so plans land inside the
+/// worktree instead of the global `~/.claude/plans/`, which makes them readable
+/// by whichever harness later implements them.
+pub const PLANS_DIR: &str = ".fold/plans";
+
+/// Run a Claude Code agent in a worktree via the Agent SDK sidecar
+/// (`scripts/claude-agent.mjs`).
+///
+/// The SDK is used rather than `claude -p` because `ExitPlanMode` and
+/// `AskUserQuestion` are only enabled when a `canUseTool` callback is present;
+/// in the CLI's headless mode they are absent from the session tool list.
+///
 /// Streams NDJSON events to the channel; emits `__CLAUDE_EXIT__:<code>` on exit.
 #[tauri::command]
 pub fn claude_agent_run(
@@ -382,6 +485,8 @@ pub fn claude_agent_run(
     model: Option<String>,
     effort: Option<String>,
     fast_mode: Option<bool>,
+    permission_mode: Option<String>,
+    resume_session_id: Option<String>,
     on_output: Channel,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
@@ -394,45 +499,57 @@ pub fn claude_agent_run(
     {
         prev.store(true, Ordering::SeqCst);
     }
-
-    let bin = resolve_claude_bin().ok_or_else(|| "Claude Code CLI not found".to_string())?;
+    state
+        .claude_agent_stdin
+        .lock()
+        .map_err(|e| e.to_string())?
+        .remove(&session_id);
 
     let worktree_path = PathBuf::from(&worktree);
     if !worktree_path.is_dir() {
         return Err(format!("worktree path does not exist: {worktree}"));
     }
 
-    let mut args: Vec<String> = vec![
-        "-p".into(),
-        prompt,
-        "--output-format".into(),
-        "stream-json".into(),
-        "--verbose".into(),
-        "--permission-mode".into(),
-        "acceptEdits".into(),
-    ];
-    if let Some(m) = model.filter(|s| !s.is_empty()) {
-        args.push("--model".into());
-        args.push(m);
+    let root = project_root().ok_or_else(|| {
+        "Fold project root not found (need package.json + scripts/claude-agent.mjs)".to_string()
+    })?;
+    let script = root.join("scripts").join("claude-agent.mjs");
+    if !script.is_file() {
+        return Err(format!("claude-agent sidecar missing: {}", script.display()));
     }
-    if let Some(e) = effort.filter(|s| !s.is_empty()) {
-        args.push("--effort".into());
-        args.push(e);
-    }
-    // Non-interactive (`-p`) fast mode requires settings JSON (CLI docs).
-    if fast_mode.unwrap_or(false) {
-        args.push("--settings".into());
-        args.push(r#"{"fastMode":true}"#.into());
-    }
+    let node = resolve_node_bin()
+        .ok_or_else(|| "Node.js not found (required to run the Claude Agent SDK)".to_string())?;
 
-    let mut child = Command::new(&bin)
-        .args(&args)
-        .current_dir(&worktree_path)
-        .stdin(Stdio::null())
+    let config = serde_json::json!({
+        "prompt": prompt,
+        "cwd": worktree,
+        "model": model.filter(|s| !s.is_empty()),
+        "effort": effort.filter(|s| !s.is_empty()),
+        "fastMode": fast_mode.unwrap_or(false),
+        "permissionMode": permission_mode.filter(|s| !s.is_empty()),
+        "resumeSessionId": resume_session_id.filter(|s| !s.is_empty()),
+        "plansDirectory": PLANS_DIR,
+    });
+
+    let mut child = Command::new(&node)
+        .arg(&script)
+        // Run the sidecar from the Fold project root so it resolves the SDK from
+        // node_modules; the agent's own working directory is `cwd` in the config.
+        .current_dir(&root)
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("failed to start claude agent: {e}"))?;
+        .map_err(|e| format!("failed to start claude agent sidecar: {e}"))?;
+
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "failed to open claude agent stdin".to_string())?;
+    writeln!(stdin, "{config}").map_err(|e| format!("failed to send agent config: {e}"))?;
+    stdin
+        .flush()
+        .map_err(|e| format!("failed to flush agent config: {e}"))?;
 
     if let Some(out) = child.stdout.take() {
         stream_pipe(out, on_output.clone());
@@ -466,7 +583,31 @@ pub fn claude_agent_run(
         .claude_agents
         .lock()
         .map_err(|e| e.to_string())?
-        .insert(session_id, cancel);
+        .insert(session_id.clone(), cancel);
+    state
+        .claude_agent_stdin
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(session_id, stdin);
+    Ok(())
+}
+
+/// Answer a pending `canUseTool` request (plan approval, clarifying questions,
+/// edit approval) for a running Claude Code agent.
+#[tauri::command]
+pub fn claude_agent_respond(
+    session_id: String,
+    response: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut slot = state.claude_agent_stdin.lock().map_err(|e| e.to_string())?;
+    let stdin = slot
+        .get_mut(&session_id)
+        .ok_or_else(|| format!("no running Claude agent for session {session_id}"))?;
+    writeln!(stdin, "{response}").map_err(|e| format!("failed to send agent response: {e}"))?;
+    stdin
+        .flush()
+        .map_err(|e| format!("failed to flush agent response: {e}"))?;
     Ok(())
 }
 
@@ -481,5 +622,10 @@ pub fn claude_agent_cancel(session_id: String, state: State<'_, AppState>) -> Re
     {
         cancel.store(true, Ordering::SeqCst);
     }
+    state
+        .claude_agent_stdin
+        .lock()
+        .map_err(|e| e.to_string())?
+        .remove(&session_id);
     Ok(())
 }

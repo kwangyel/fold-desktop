@@ -3,7 +3,10 @@ import ChatInterface from "./ChatInterface";
 import CodeEditor from "./CodeEditor";
 import DiffPane from "./DiffPane";
 import PrView from "./PrView";
+import PlanView from "./PlanView";
 import CreatePrButton from "./CreatePrButton";
+import GlobalQuestionOverlay from "./GlobalQuestionOverlay";
+import BackgroundAskWatchers from "./BackgroundAskWatchers";
 import { closeActiveTab } from "../lib/closeActiveTab";
 import { useCenterViewStore } from "../store/centerViewStore";
 import { useChatStore } from "../store/chatStore";
@@ -147,6 +150,8 @@ export default function CenterPane() {
         );
       case "pr":
         return <PrView key={activeTab.id} tabId={activeTab.id} />;
+      case "plan":
+        return <PlanView key={activeTab.id} tabId={activeTab.id} />;
       default:
         return null;
     }
@@ -187,7 +192,11 @@ export default function CenterPane() {
         </div>
         <CreatePrButton />
       </div>
-      <div className="center-content">{renderTabContent()}</div>
+      <div className="center-content">
+        {renderTabContent()}
+        <GlobalQuestionOverlay />
+        <BackgroundAskWatchers />
+      </div>
     </section>
   );
 }

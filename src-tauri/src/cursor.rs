@@ -383,6 +383,7 @@ pub fn cursor_agent_run(
     prompt: String,
     worktree: String,
     model: Option<String>,
+    plan_mode: Option<bool>,
     on_output: Channel,
     app: AppHandle,
     state: State<'_, AppState>,
@@ -411,10 +412,17 @@ pub fn cursor_agent_run(
         return Err(format!("worktree path does not exist: {worktree}"));
     }
 
+    let fold_mcp = crate::claude::ensure_cursor_fold_mcp(&worktree);
+    let run_prompt = if fold_mcp {
+        crate::claude::with_fold_ask_hint(&prompt)
+    } else {
+        prompt.clone()
+    };
+
     // Mirror Claude: non-interactive print mode with stream-json + auto-approve tools.
     let mut args: Vec<String> = vec![
         "-p".into(),
-        prompt,
+        run_prompt,
         "--output-format".into(),
         "stream-json".into(),
         "--stream-partial-output".into(),
@@ -428,6 +436,15 @@ pub fn cursor_agent_run(
     if let Some(m) = model.filter(|s| !s.is_empty()) {
         args.push("--model".into());
         args.push(m);
+    }
+    // Intentionally do NOT pass `--mode plan`. In non-interactive `-p` mode,
+    // Cursor's native plan mode calls `create_plan` and then hangs waiting for
+    // a UI client that never responds (confirmed Cursor CLI bug). Fold instead
+    // uses a soft plan prompt (see `buildCursorPlanPrompt`) so the agent writes
+    // the plan to `.fold/plans/` and exits normally.
+    let _planning = plan_mode.unwrap_or(false);
+    if fold_mcp {
+        args.push("--approve-mcps".into());
     }
 
     let mut child = Command::new(&bin)

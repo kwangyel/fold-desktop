@@ -85,6 +85,7 @@ export async function opencodeAgentRun(
   prompt: string,
   worktree: string,
   model: string | null,
+  planMode: boolean,
   onEvent: (chunk: OpenCodeOutput) => void,
 ): Promise<void> {
   if (!isTauri()) {
@@ -99,6 +100,7 @@ export async function opencodeAgentRun(
       prompt,
       worktree,
       model,
+      planMode,
       onOutput: output,
     });
   } catch (e) {

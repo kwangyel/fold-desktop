@@ -376,7 +376,56 @@ pub fn write_file(
 ) -> Result<(), String> {
     let root = repo_root(&state)?;
     let abs = safe_join(&root, &path)?;
+    // Create parent directories so callers can write into new subtrees such as
+    // `.fold/plans/` without a separate mkdir step.
+    if let Some(parent) = abs.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create directory: {e}"))?;
+    }
     std::fs::write(&abs, content).map_err(|e| format!("failed to write file: {e}"))
+}
+
+/// Current HEAD commit SHA for the repo at `path`. Empty on a repo with no
+/// commits yet.
+#[tauri::command]
+pub fn git_head_commit(path: String) -> Result<String, String> {
+    let output = git_in_root(Path::new(&path), &["rev-parse", "HEAD"])?;
+    if !output.status.success() {
+        // A fresh repo with no commits is not an error for our purposes.
+        return Ok(String::new());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Number of files that differ between `base` and the current working tree.
+/// Used to tell whether an implementation run actually changed anything.
+#[tauri::command]
+pub fn git_changed_since(path: String, base: String) -> Result<u32, String> {
+    let root = Path::new(&path);
+    let mut changed: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    if !base.is_empty() {
+        let output = git_in_root(root, &["diff", "--name-only", &base])?;
+        if output.status.success() {
+            for line in String::from_utf8_lossy(&output.stdout).lines() {
+                if !line.trim().is_empty() {
+                    changed.insert(line.trim().to_string());
+                }
+            }
+        }
+    }
+
+    // Untracked files never show up in `git diff`, so count them separately.
+    let untracked = git_in_root(root, &["ls-files", "--others", "--exclude-standard"])?;
+    if untracked.status.success() {
+        for line in String::from_utf8_lossy(&untracked.stdout).lines() {
+            if !line.trim().is_empty() {
+                changed.insert(line.trim().to_string());
+            }
+        }
+    }
+
+    Ok(changed.len() as u32)
 }
 
 /// List local branch names for the repo at `path`.

@@ -28,6 +28,9 @@ pub struct AppState {
     pub claude_login: Mutex<Option<pty::PtySession>>,
     /// Per-session cancel flags for concurrent Claude Code agent runs.
     pub claude_agents: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    /// Stdin handles for running Claude Code agent sidecars, so the frontend can
+    /// answer `canUseTool` requests (plan approval, clarifying questions).
+    pub claude_agent_stdin: Mutex<HashMap<String, std::process::ChildStdin>>,
     /// Per-session cancel flags for concurrent Cursor agent runs.
     pub cursor_agents: Mutex<HashMap<String, Arc<AtomicBool>>>,
     /// Interactive Codex login PTY (dropped to cancel / kill).
@@ -48,6 +51,7 @@ impl Default for AppState {
             gh_login: Mutex::new(None),
             claude_login: Mutex::new(None),
             claude_agents: Mutex::new(HashMap::new()),
+            claude_agent_stdin: Mutex::new(HashMap::new()),
             cursor_agents: Mutex::new(HashMap::new()),
             codex_login: Mutex::new(None),
             codex_agents: Mutex::new(HashMap::new()),
@@ -203,6 +207,8 @@ pub fn run() {
             git::list_dir,
             git::read_file,
             git::write_file,
+            git::git_head_commit,
+            git::git_changed_since,
             projects::list_projects,
             projects::create_project,
             projects::open_project,
@@ -230,6 +236,7 @@ pub fn run() {
             claude::claude_login_cancel,
             claude::claude_list_models,
             claude::claude_agent_run,
+            claude::claude_agent_respond,
             claude::claude_agent_cancel,
             cursor::cursor_status,
             cursor::cursor_connect,

@@ -139,6 +139,7 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+  position: relative;
 }
 
 .center-content .chat-interface {
