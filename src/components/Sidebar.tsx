@@ -15,8 +15,8 @@ import { confirm } from "@tauri-apps/plugin-dialog";
 import { useProjectStore } from "../store/projectStore";
 import { useCenterViewStore } from "../store/centerViewStore";
 import { isTauri } from "../lib/git";
-import { pickWorktreeName } from "../lib/worktreeNames";
 import ProjectDialog from "./ProjectDialog";
+import CreateWorktreeDialog from "./CreateWorktreeDialog";
 import ConnectAppDialog from "./ConnectAppDialog";
 import UserMenu from "./UserMenu";
 import ResizeHandle from "./ResizeHandle";
@@ -58,13 +58,12 @@ export default function Sidebar({ width, topRatio = 0.38, onSplitDrag }: Props) 
   const load = useProjectStore((s) => s.load);
   const select = useProjectStore((s) => s.select);
   const selectWorktree = useProjectStore((s) => s.selectWorktree);
-  const addWorktree = useProjectStore((s) => s.addWorktree);
   const remove = useProjectStore((s) => s.remove);
   const removeWorktree = useProjectStore((s) => s.removeWorktree);
   const archiveWorktree = useProjectStore((s) => s.archiveWorktree);
 
   const [dialog, setDialog] = useState<DialogMode>(null);
-  const [creatingId, setCreatingId] = useState<string | null>(null);
+  const [worktreeProjectId, setWorktreeProjectId] = useState<string | null>(null);
   const [menu, setMenu] = useState<ContextMenu | null>(null);
 
   useEffect(() => {
@@ -87,22 +86,6 @@ export default function Sidebar({ width, topRatio = 0.38, onSplitDrag }: Props) 
       window.removeEventListener("keydown", onKey);
     };
   }, [menu]);
-
-  async function createWorktree(projectId: string) {
-    if (creatingId) return;
-    const project = useProjectStore.getState().projects.find((p) => p.id === projectId);
-    if (!project) return;
-
-    const name = pickWorktreeName(project.worktrees.map((w) => w.name));
-    setCreatingId(projectId);
-    try {
-      await addWorktree(projectId, name);
-    } catch {
-      // Error is stored on the project store for display.
-    } finally {
-      setCreatingId(null);
-    }
-  }
 
   const handleSplitDrag = useCallback(
     (dy: number) => {
@@ -152,7 +135,6 @@ export default function Sidebar({ width, topRatio = 0.38, onSplitDrag }: Props) 
           projects.map((p) => {
             const isActiveProject = activeId === p.id;
             const activeWtId = isActiveProject ? p.activeWorktreeId : null;
-            const isCreating = creatingId === p.id;
             // Archived worktrees are hidden here (shown in a separate section).
             const activeWorktrees = p.worktrees.filter((w) => !w.archived);
             return (
@@ -194,10 +176,9 @@ export default function Sidebar({ width, topRatio = 0.38, onSplitDrag }: Props) 
                     className="icon-btn project-plus"
                     type="button"
                     title="New worktree"
-                    disabled={isCreating}
                     onClick={(e) => {
                       e.stopPropagation();
-                      void createWorktree(p.id);
+                      setWorktreeProjectId(p.id);
                     }}
                   >
                     <IconPlus size={14} stroke={2} />
@@ -332,6 +313,13 @@ export default function Sidebar({ width, topRatio = 0.38, onSplitDrag }: Props) 
         dialog && (
           <ProjectDialog mode={dialog} onClose={() => setDialog(null)} />
         )
+      )}
+
+      {worktreeProjectId && (
+        <CreateWorktreeDialog
+          projectId={worktreeProjectId}
+          onClose={() => setWorktreeProjectId(null)}
+        />
       )}
     </aside>
   );

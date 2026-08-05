@@ -19,6 +19,39 @@ pub struct Worktree {
     archived: bool,
 }
 
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TransferMode {
+    Symlink,
+    Copy,
+}
+
+/// Relative path under the main checkout to symlink or copy into a new worktree.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvTransfer {
+    path: String,
+    mode: TransferMode,
+}
+
+/// Last create-dialog selections remembered for the next worktree in this project.
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeEnvDefaults {
+    #[serde(default)]
+    symlink_envs: bool,
+    #[serde(default)]
+    transfers: Vec<EnvTransfer>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeEnvScan {
+    dirs: Vec<String>,
+    files: Vec<String>,
+    defaults: Option<WorktreeEnvDefaults>,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Project {
@@ -33,6 +66,8 @@ pub struct Project {
     worktrees: Vec<Worktree>,
     #[serde(default)]
     active_worktree_id: Option<String>,
+    #[serde(default)]
+    worktree_env_defaults: Option<WorktreeEnvDefaults>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -282,6 +317,153 @@ fn workspaces_root(project_name: &str) -> Result<PathBuf, String> {
     Ok(root)
 }
 
+/// Known environment directories that are usually gitignored and expensive to recreate.
+const ENV_DIRS: &[&str] = &[
+    "node_modules",
+    ".venv",
+    "venv",
+    "env",
+    "target",
+    "vendor",
+    ".next",
+    "dist",
+    "build",
+    ".turbo",
+    ".pnpm-store",
+    "Pods",
+    ".gradle",
+    "__pycache__",
+    ".dart_tool",
+    ".nuxt",
+    ".output",
+    ".svelte-kit",
+    "bower_components",
+    ".parcel-cache",
+    ".cache",
+];
+
+/// Known env / secrets files that are usually gitignored.
+const ENV_FILES: &[&str] = &[
+    ".env",
+    ".env.local",
+    ".env.development",
+    ".env.development.local",
+    ".env.production",
+    ".env.production.local",
+    ".env.test",
+    ".env.test.local",
+];
+
+/// Reject absolute paths and `..` so transfers stay under the main checkout.
+fn validate_relative_path(rel: &str) -> Result<PathBuf, String> {
+    let trimmed = rel.trim();
+    if trimmed.is_empty() {
+        return Err("transfer path is empty".to_string());
+    }
+    let path = Path::new(trimmed);
+    if path.is_absolute() {
+        return Err(format!("transfer path must be relative: {trimmed}"));
+    }
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(_) => {}
+            std::path::Component::CurDir => {}
+            _ => {
+                return Err(format!("invalid transfer path: {trimmed}"));
+            }
+        }
+    }
+    Ok(path.to_path_buf())
+}
+
+/// Ensure `candidate` resolves inside `root` (after joining).
+fn resolve_under(root: &Path, rel: &Path) -> Result<PathBuf, String> {
+    let joined = root.join(rel);
+    let root_canon = root
+        .canonicalize()
+        .map_err(|e| format!("failed to resolve {}: {e}", root.display()))?;
+    // Source may not exist yet for dest; canonicalize parent + append when needed.
+    let resolved = if joined.exists() {
+        joined
+            .canonicalize()
+            .map_err(|e| format!("failed to resolve {}: {e}", joined.display()))?
+    } else {
+        let parent = joined.parent().unwrap_or(root);
+        let parent_canon = if parent.exists() {
+            parent
+                .canonicalize()
+                .map_err(|e| format!("failed to resolve {}: {e}", parent.display()))?
+        } else {
+            return Err(format!("{} does not exist", joined.display()));
+        };
+        let name = joined
+            .file_name()
+            .ok_or_else(|| format!("invalid path: {}", joined.display()))?;
+        parent_canon.join(name)
+    };
+    if !resolved.starts_with(&root_canon) {
+        return Err(format!(
+            "transfer path escapes project root: {}",
+            rel.display()
+        ));
+    }
+    Ok(resolved)
+}
+
+fn apply_env_transfers(main: &Path, dest: &Path, transfers: &[EnvTransfer]) -> Result<(), String> {
+    for transfer in transfers {
+        let rel = validate_relative_path(&transfer.path)?;
+        let src = resolve_under(main, &rel)?;
+        if !src.exists() {
+            return Err(format!("{} does not exist in main checkout", rel.display()));
+        }
+
+        let dest_path = dest.join(&rel);
+        if let Some(parent) = dest_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+        }
+        if dest_path.exists() || dest_path.symlink_metadata().is_ok() {
+            return Err(format!(
+                "{} already exists in worktree",
+                dest_path.display()
+            ));
+        }
+
+        match transfer.mode {
+            TransferMode::Symlink => {
+                std::os::unix::fs::symlink(&src, &dest_path).map_err(|e| {
+                    format!(
+                        "failed to symlink {} → {}: {e}",
+                        src.display(),
+                        dest_path.display()
+                    )
+                })?;
+            }
+            TransferMode::Copy => {
+                if src.is_dir() {
+                    return Err(format!(
+                        "cannot copy directory {} (use symlink for env folders)",
+                        rel.display()
+                    ));
+                }
+                std::fs::copy(&src, &dest_path).map_err(|e| {
+                    format!(
+                        "failed to copy {} → {}: {e}",
+                        src.display(),
+                        dest_path.display()
+                    )
+                })?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn remove_worktree_dir(path: &Path) {
+    let _ = std::fs::remove_dir_all(path);
+}
+
 /// Create an isolated git worktree under the common project folder, starting
 /// from the project's main branch so all committed files are checked out.
 fn add_worktree(repo: &Path, dest: &Path, branch: &str) -> Result<(), String> {
@@ -345,6 +527,7 @@ pub fn create_project(
         has_github_remote: false,
         worktrees: Vec::new(),
         active_worktree_id: None,
+        worktree_env_defaults: None,
     };
 
     let mut data = read_file(&app)?;
@@ -411,6 +594,7 @@ pub fn open_project(
         created_on_github: create_github,
         worktrees: Vec::new(),
         active_worktree_id: None,
+        worktree_env_defaults: None,
     };
     data.projects.push(project.clone());
     data.active_id = Some(project.id.clone());
@@ -434,6 +618,40 @@ pub fn set_active_project(
     set_active_path(&state, workspace_path(&project))
 }
 
+/// Detect known env dirs/files in the main checkout and return saved defaults.
+#[tauri::command]
+pub fn scan_worktree_env(app: AppHandle, project_id: String) -> Result<WorktreeEnvScan, String> {
+    let data = read_file(&app)?;
+    let project = find_project(&data, &project_id)
+        .ok_or_else(|| "project not found".to_string())?;
+    let root = PathBuf::from(&project.path);
+    if !root.is_dir() {
+        return Err("project path is not a folder".to_string());
+    }
+
+    let mut dirs = Vec::new();
+    for name in ENV_DIRS {
+        let candidate = root.join(name);
+        if candidate.is_dir() {
+            dirs.push((*name).to_string());
+        }
+    }
+
+    let mut files = Vec::new();
+    for name in ENV_FILES {
+        let candidate = root.join(name);
+        if candidate.is_file() {
+            files.push((*name).to_string());
+        }
+    }
+
+    Ok(WorktreeEnvScan {
+        dirs,
+        files,
+        defaults: project.worktree_env_defaults.clone(),
+    })
+}
+
 /// Create a new branch + worktree under the common project folder and activate it.
 #[tauri::command]
 pub fn create_worktree(
@@ -441,6 +659,9 @@ pub fn create_worktree(
     project_id: String,
     name: String,
     branch: Option<String>,
+    transfers: Option<Vec<EnvTransfer>>,
+    symlink_envs: Option<bool>,
+    save_defaults: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<Project, String> {
     let name = name.trim();
@@ -454,6 +675,9 @@ pub fn create_worktree(
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .unwrap_or_else(|| format!("ws/{slug}"));
+    let transfers = transfers.unwrap_or_default();
+    let save_defaults = save_defaults.unwrap_or(false);
+    let symlink_envs = symlink_envs.unwrap_or(false);
 
     let mut data = read_file(&app)?;
     let project = find_project_mut(&mut data, &project_id)
@@ -472,6 +696,13 @@ pub fn create_worktree(
 
     add_worktree(&repo, &dest, &branch_name)?;
 
+    if let Err(e) = apply_env_transfers(&repo, &dest, &transfers) {
+        // Roll back the half-created worktree so the user can retry cleanly.
+        let _ = git_in(&repo, &["worktree", "remove", "--force", &dest.to_string_lossy()]);
+        remove_worktree_dir(&dest);
+        return Err(e);
+    }
+
     let worktree = Worktree {
         id: new_id("w"),
         name: name.to_string(),
@@ -483,6 +714,12 @@ pub fn create_worktree(
 
     project.worktrees.push(worktree.clone());
     project.active_worktree_id = Some(worktree.id.clone());
+    if save_defaults {
+        project.worktree_env_defaults = Some(WorktreeEnvDefaults {
+            symlink_envs,
+            transfers: transfers.clone(),
+        });
+    }
     let updated = project.clone();
 
     data.active_id = Some(project_id);

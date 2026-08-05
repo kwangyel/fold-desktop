@@ -7,6 +7,7 @@ commands.allow = [
   "open_project",
   "is_git_repo",
   "set_active_project",
+  "scan_worktree_env",
   "create_worktree",
   "set_active_worktree",
   "remove_project",

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import {
   Project,
+  CreateWorktreeOptions,
   archiveWorktree,
   createProject,
   createWorktree,
@@ -32,7 +33,11 @@ type ProjectStore = {
   ) => Promise<void>;
   select: (id: string) => Promise<void>;
   selectWorktree: (projectId: string, worktreeId: string) => Promise<void>;
-  addWorktree: (projectId: string, name: string, branch?: string) => Promise<void>;
+  addWorktree: (
+    projectId: string,
+    name: string,
+    options?: CreateWorktreeOptions,
+  ) => Promise<void>;
   remove: (id: string) => Promise<void>;
   removeWorktree: (projectId: string, worktreeId: string) => Promise<void>;
   archiveWorktree: (projectId: string, worktreeId: string) => Promise<void>;
@@ -159,10 +164,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }
   },
 
-  addWorktree: async (projectId, name, branch) => {
+  addWorktree: async (projectId, name, options) => {
     set({ error: null });
     try {
-      const updated = await createWorktree(projectId, name, branch);
+      const updated = await createWorktree(projectId, name, options);
       set((s) => ({
         projects: replaceProject(s.projects, updated),
         activeId: projectId,

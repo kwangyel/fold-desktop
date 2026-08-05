@@ -208,6 +208,7 @@ pub fn run() {
             projects::open_project,
             projects::is_git_repo,
             projects::set_active_project,
+            projects::scan_worktree_env,
             projects::create_worktree,
             projects::set_active_worktree,
             projects::remove_project,
