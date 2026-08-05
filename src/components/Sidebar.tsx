@@ -113,14 +113,16 @@ export default function Sidebar({ width, topRatio = 0.38, onSplitDrag }: Props) 
               <IconFolderOpen size={15} stroke={2} />
               Open Existing
             </button>
-            <button className="ghost-btn full" onClick={() => setDialog("connect")}>
-              <IconPlug size={15} stroke={2} />
-              Connect App
-            </button>
-            <button className="ghost-btn full" onClick={() => setDialog("harness")}>
-              <IconRobot size={15} stroke={2} />
-              Connect Harness
-            </button>
+            <div className="project-actions-row">
+              <button className="ghost-btn" onClick={() => setDialog("connect")}>
+                <IconPlug size={15} stroke={2} />
+                Apps
+              </button>
+              <button className="ghost-btn" onClick={() => setDialog("harness")}>
+                <IconRobot size={15} stroke={2} />
+                Harnesses
+              </button>
+            </div>
           </div>
         </div>
 
