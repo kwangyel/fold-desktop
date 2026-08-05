@@ -34,9 +34,11 @@ import {
   stringifyPayload,
   toolExcerpt,
 } from '../lib/chatActivity';
+import { contextUsageFromClaudeEvent, sessionUsageFromFoldEvent } from '../lib/contextUsage';
 import { useProjectStore } from './projectStore';
 import { useChangesStore } from './changesStore';
 import { usePlanStore } from './planStore';
+import { useContextUsageStore } from './contextUsageStore';
 import {
   newPlanId,
   planTitle,
@@ -1019,6 +1021,20 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     };
 
     const handleEvent = (event: StreamEvent) => {
+      // Fold sidecar emits Claude `/context` occupancy for the status bar.
+      if ((event as { type?: string }).type === 'fold_context_usage') {
+        const usage = contextUsageFromClaudeEvent(event);
+        if (usage) useContextUsageStore.getState().setUsage(usage);
+        return;
+      }
+
+      // Fold sidecar emits Claude.ai 5h / weekly plan utilization (`/usage`).
+      if ((event as { type?: string }).type === 'fold_session_usage') {
+        const usage = sessionUsageFromFoldEvent(event);
+        if (usage) useContextUsageStore.getState().setSessionUsage(usage);
+        return;
+      }
+
       // Permission requests from the Claude Agent SDK sidecar's canUseTool.
       if ((event as { type?: string }).type === 'fold_permission_request') {
         handlePermissionRequest(event as unknown as ClaudePermissionRequest);
@@ -1101,6 +1117,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       if (event.type === 'assistant') {
         const cursorEvent = event as GenericStreamEvent;
         if (cursorEvent.model_call_id) return;
+
+        if (harnessId === 'claudecode') {
+          const usage = contextUsageFromClaudeEvent(event);
+          if (usage) useContextUsageStore.getState().setUsage(usage);
+        }
 
         const blocks = contentBlocks(
           'message' in event ? event.message : undefined,
@@ -1203,6 +1224,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       }
 
       if (event.type === 'result') {
+        if (harnessId === 'claudecode') {
+          const usage = contextUsageFromClaudeEvent(event);
+          if (usage) useContextUsageStore.getState().setUsage(usage);
+        }
         const resultText = 'result' in event ? event.result : undefined;
         const isError = 'is_error' in event ? Boolean(event.is_error) : false;
         if (isError && resultText) {

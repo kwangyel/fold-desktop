@@ -333,6 +333,60 @@ fn resolve_node_bin() -> Option<PathBuf> {
     None
 }
 
+/// Context-window + plan session usage from the Agent SDK (`getContextUsage` /
+/// `getUsage`). Same data the status bar shows after an agent turn.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeUsageStatus {
+    context: Option<serde_json::Value>,
+    session: Option<serde_json::Value>,
+}
+
+/// Fetch Claude Code context + session usage without running an agent turn.
+#[tauri::command]
+pub fn claude_usage_status(worktree: Option<String>) -> Result<ClaudeUsageStatus, String> {
+    let root = project_root().ok_or_else(|| {
+        "Fold project root not found (need package.json + scripts/claude-usage.mjs)".to_string()
+    })?;
+    let script = root.join("scripts").join("claude-usage.mjs");
+    if !script.is_file() {
+        return Err(format!("claude-usage script missing: {}", script.display()));
+    }
+    let node = resolve_node_bin().ok_or_else(|| {
+        "Node.js not found (required to query Claude Agent SDK)".to_string()
+    })?;
+
+    let mut cmd = Command::new(&node);
+    cmd.arg(&script).current_dir(&root).stdout(Stdio::piped()).stderr(Stdio::piped());
+    if let Some(wt) = worktree.filter(|s| !s.is_empty()) {
+        let worktree_path = PathBuf::from(&wt);
+        if worktree_path.is_dir() {
+            cmd.arg(wt);
+        }
+    }
+
+    let output = cmd
+        .output()
+        .map_err(|e| format!("failed to run claude-usage: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "claude-usage failed ({}): {}",
+            output.status,
+            stderr.trim()
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    serde_json::from_str(stdout.trim()).map_err(|e| {
+        format!(
+            "failed to parse usage status: {e}; stdout={}",
+            stdout.chars().take(200).collect::<String>()
+        )
+    })
+}
+
 /// List Claude Code models via the Agent SDK (`supportedModels()`).
 #[tauri::command]
 pub fn claude_list_models() -> Result<Vec<ClaudeModelInfo>, String> {

@@ -1,0 +1,202 @@
+.status-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 26px;
+  padding: 0 12px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+  user-select: none;
+}
+
+.status-bar-left,
+.status-bar-right {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.status-bar-right {
+  gap: 6px;
+  margin-left: auto;
+}
+
+.status-bar-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text);
+}
+
+.status-bar-branch.muted {
+  color: var(--muted);
+}
+
+.status-bar-branch-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 42vw;
+}
+
+.status-bar-context,
+.status-bar-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.status-bar-meter-kind {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.status-bar-context-label {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  min-width: 2.5em;
+  text-align: right;
+}
+
+.status-bar-context-tokens {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.status-bar-progress {
+  width: 56px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.status-bar-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.2s ease;
+}
+
+.status-bar-harness-picker {
+  position: relative;
+  display: inline-flex;
+}
+
+.status-bar-up-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.status-bar-up-btn:hover,
+.status-bar-up-btn[aria-expanded="true"] {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.status-bar-picker-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  min-width: 260px;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.status-bar-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.status-bar-picker-item:hover {
+  background: rgba(124, 92, 255, 0.1);
+}
+
+.status-bar-picker-item.active {
+  background: rgba(124, 92, 255, 0.16);
+}
+
+.status-bar-picker-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.status-bar-picker-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.status-bar-picker-pct {
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--text);
+}
+
+.status-bar-picker-pct.muted,
+.status-bar .muted {
+  color: var(--muted);
+}
+
+/* Compact harness badges in the status bar / picker */
+.status-bar .harness-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  flex-shrink: 0;
+  font-weight: 700;
+  font-size: 8px;
+  color: #fff;
+}
+
+.status-bar .harness-icon.claudecode,
+.status-bar .harness-icon.codex,
+.status-bar .harness-icon.cursor {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.status-bar .harness-icon.opencode {
+  background: #2563eb;
+}

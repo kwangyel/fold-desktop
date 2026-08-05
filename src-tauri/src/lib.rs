@@ -243,6 +243,7 @@ pub fn run() {
             claude::claude_login_write,
             claude::claude_login_cancel,
             claude::claude_list_models,
+            claude::claude_usage_status,
             claude::claude_agent_run,
             claude::claude_agent_respond,
             claude::claude_agent_cancel,

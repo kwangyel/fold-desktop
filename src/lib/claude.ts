@@ -52,6 +52,24 @@ export async function claudeListModels(): Promise<ModelInfo[]> {
   return invoke<ModelInfo[]>("claude_list_models");
 }
 
+/** Context-window + plan session usage from the Agent SDK. */
+export type ClaudeUsageStatus = {
+  context: Record<string, unknown> | null;
+  session: Record<string, unknown> | null;
+};
+
+/** Fetch Claude context + session usage without running an agent turn. */
+export async function claudeUsageStatus(
+  worktree?: string | null,
+): Promise<ClaudeUsageStatus> {
+  if (!isTauri()) {
+    return { context: null, session: null };
+  }
+  return invoke<ClaudeUsageStatus>("claude_usage_status", {
+    worktree: worktree ?? null,
+  });
+}
+
 /**
  * Start interactive Claude Code login in a PTY. Output streams to `onOutput`.
  * Caller should write `/login\r` shortly after this resolves.
