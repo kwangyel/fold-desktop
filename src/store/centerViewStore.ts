@@ -69,7 +69,7 @@ type CenterViewStore = {
   /** Open (or focus) the review tab for a captured plan. */
   openPlanTab: (planId: string, label?: string) => void;
   /** Drop editor/diff tabs when switching projects or worktrees. */
-  closeWorkspaceTabs: () => void;
+  closeWorkspaceTabs: (activePath: string | null) => void;
   pinTab: (id: string) => void;
   closeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
@@ -116,8 +116,8 @@ function loadFileContent(
 }
 
 export const useCenterViewStore = create<CenterViewStore>((set, get) => ({
-  tabs: [INITIAL_CHAT_TAB],
-  activeTabId: INITIAL_CHAT_TAB.id,
+  tabs: [],
+  activeTabId: "",
 
   addChatTab: () => {
     const id = `chat-${Date.now()}`;
@@ -327,8 +327,11 @@ export const useCenterViewStore = create<CenterViewStore>((set, get) => ({
     }));
   },
 
-  closeWorkspaceTabs: () => {
+  closeWorkspaceTabs: (activePath) => {
     set((state) => {
+      if (!activePath) {
+        return { tabs: [], activeTabId: "" };
+      }
       const tabs = state.tabs.filter((tab) => tab.type === "chat");
       const nextTabs = tabs.length > 0 ? tabs : [INITIAL_CHAT_TAB];
       const activeStillOpen = nextTabs.some((t) => t.id === state.activeTabId);
