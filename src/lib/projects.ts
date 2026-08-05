@@ -11,6 +11,31 @@ export interface Worktree {
   archived: boolean;
 }
 
+export type TransferMode = "symlink" | "copy";
+
+export interface EnvTransfer {
+  path: string;
+  mode: TransferMode;
+}
+
+export interface WorktreeEnvDefaults {
+  symlinkEnvs: boolean;
+  transfers: EnvTransfer[];
+}
+
+export interface WorktreeEnvScan {
+  dirs: string[];
+  files: string[];
+  defaults: WorktreeEnvDefaults | null;
+}
+
+export interface CreateWorktreeOptions {
+  branch?: string;
+  transfers?: EnvTransfer[];
+  symlinkEnvs?: boolean;
+  saveDefaults?: boolean;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -19,6 +44,7 @@ export interface Project {
   hasGithubRemote: boolean;
   worktrees: Worktree[];
   activeWorktreeId: string | null;
+  worktreeEnvDefaults?: WorktreeEnvDefaults | null;
 }
 
 export interface ProjectsState {
@@ -42,6 +68,7 @@ function normalizeProject(p: Project): Project {
     ...p,
     worktrees: p.worktrees ?? [],
     activeWorktreeId: p.activeWorktreeId ?? null,
+    worktreeEnvDefaults: p.worktreeEnvDefaults ?? null,
   };
 }
 
@@ -141,11 +168,62 @@ export async function setActiveProject(id: string): Promise<void> {
   await invoke("set_active_project", { id });
 }
 
+/** Open a native multi-file picker rooted at `defaultPath`. */
+export async function pickFiles(
+  title?: string,
+  defaultPath?: string,
+): Promise<string[]> {
+  if (!isTauri()) {
+    const entered = window.prompt(title ?? "File path");
+    return entered && entered.trim() ? [entered.trim()] : [];
+  }
+  const selected = await open({
+    directory: false,
+    multiple: true,
+    title,
+    defaultPath,
+  });
+  if (selected == null) return [];
+  return Array.isArray(selected) ? selected : [selected];
+}
+
+/** Make `absPath` relative to `root` if it is under root; otherwise null. */
+export function relativeToRoot(root: string, absPath: string): string | null {
+  const normRoot = root.replace(/[\\/]+$/, "");
+  const normPath = absPath.replace(/[\\/]+$/, "");
+  const rootPrefix = normRoot.endsWith("/") ? normRoot : `${normRoot}/`;
+  // Case-sensitive compare is fine on macOS APFS default; paths come from the OS.
+  if (normPath === normRoot) return null;
+  if (!normPath.startsWith(rootPrefix) && !normPath.startsWith(normRoot + "\\")) {
+    return null;
+  }
+  const rel = normPath.slice(normRoot.length).replace(/^[\\/]+/, "");
+  if (!rel || rel.split(/[\\/]/).includes("..")) return null;
+  return rel.replace(/\\/g, "/");
+}
+
+export async function scanWorktreeEnv(projectId: string): Promise<WorktreeEnvScan> {
+  if (!isTauri()) {
+    const project = mockState.projects.find((p) => p.id === projectId);
+    return {
+      dirs: [],
+      files: [],
+      defaults: project?.worktreeEnvDefaults ?? null,
+    };
+  }
+  return invoke<WorktreeEnvScan>("scan_worktree_env", { projectId });
+}
+
 export async function createWorktree(
   projectId: string,
   name: string,
-  branch?: string,
+  options?: CreateWorktreeOptions,
 ): Promise<Project> {
+  const branch = options?.branch;
+  const transfers = options?.transfers ?? [];
+  const symlinkEnvs = options?.symlinkEnvs ?? false;
+  const saveDefaults = options?.saveDefaults ?? false;
+
   if (!isTauri()) {
     const project = mockState.projects.find((p) => p.id === projectId);
     if (!project) throw new Error("project not found");
@@ -161,6 +239,9 @@ export async function createWorktree(
       ...project,
       worktrees: [...project.worktrees, worktree],
       activeWorktreeId: worktree.id,
+      worktreeEnvDefaults: saveDefaults
+        ? { symlinkEnvs, transfers }
+        : project.worktreeEnvDefaults ?? null,
     };
     mockState = {
       projects: mockState.projects.map((p) => (p.id === projectId ? updated : p)),
@@ -173,6 +254,9 @@ export async function createWorktree(
       projectId,
       name,
       branch: branch || null,
+      transfers,
+      symlinkEnvs,
+      saveDefaults,
     }),
   );
 }

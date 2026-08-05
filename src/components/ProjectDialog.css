@@ -20,6 +20,95 @@
   overflow: hidden;
 }
 
+.dialog.dialog-wide {
+  width: 480px;
+}
+
+.dialog-body-scroll {
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+}
+
+.env-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.env-section-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.env-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+
+.env-list.disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.env-empty {
+  font-size: 12px;
+  color: var(--muted);
+  padding-left: 2px;
+}
+
+.env-row {
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.env-file-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.env-file-row .checkbox-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.env-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.env-mode {
+  flex-shrink: 0;
+  font-size: 12px;
+  padding: 3px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+}
+
+.env-add-btn {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+}
+
 .dialog-header {
   padding: 14px 16px;
   font-size: 14px;
