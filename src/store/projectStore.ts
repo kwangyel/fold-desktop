@@ -55,7 +55,8 @@ function refreshChanges() {
 }
 
 function onWorkspaceSwitch() {
-  useCenterViewStore.getState().closeWorkspaceTabs();
+  const activePath = useProjectStore.getState().activePath;
+  useCenterViewStore.getState().closeWorkspaceTabs(activePath);
   refreshChanges();
 }
 
@@ -74,12 +75,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const { projects, activeId } = await listProjects();
+      const activePath = activePathFrom(projects, activeId);
       set({
         projects,
         activeId,
-        activePath: activePathFrom(projects, activeId),
+        activePath,
         loading: false,
       });
+      useCenterViewStore.getState().closeWorkspaceTabs(activePath);
       // Defer git status so the sidebar paints before three git subprocesses run.
       if (activeId) {
         const schedule =

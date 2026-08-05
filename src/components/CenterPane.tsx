@@ -209,6 +209,10 @@ export default function CenterPane() {
 
   const canCloseTab = () => tabs.length > 1;
 
+  if (!activePath) {
+    return <section className="center" />;
+  }
+
   return (
     <section className="center">
       <div className="tabbar">
