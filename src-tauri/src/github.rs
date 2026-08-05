@@ -372,6 +372,179 @@ pub fn gh_pr_merge(worktree_path: String, method: String) -> Result<(), String> 
     Ok(())
 }
 
+/// Result of checking whether a repository name can be created under the
+/// authenticated GitHub account.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhRepoNameCheck {
+    available: bool,
+    /// Human-readable reason when `available` is false, or auth/format issues.
+    message: Option<String>,
+    /// Authenticated GitHub login that would own the new repo.
+    owner: Option<String>,
+}
+
+/// Validate GitHub repository name rules (subset of GitHub's constraints).
+fn validate_github_repo_name(name: &str) -> Option<&'static str> {
+    if name.is_empty() {
+        return Some("Repository name is required");
+    }
+    if name.len() > 100 {
+        return Some("Repository name must be 100 characters or fewer");
+    }
+    if name == "." || name == ".." {
+        return Some("Repository name is invalid");
+    }
+    if name.ends_with(".git") {
+        return Some("Repository name cannot end with .git");
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return Some(
+            "Repository name may only contain letters, numbers, hyphens, underscores, and periods",
+        );
+    }
+    None
+}
+
+/// Whether `name` can be created as a new private repo for the authenticated user.
+#[tauri::command]
+pub fn gh_repo_name_check(name: String) -> Result<GhRepoNameCheck, String> {
+    let name = name.trim();
+    if let Some(msg) = validate_github_repo_name(name) {
+        return Ok(GhRepoNameCheck {
+            available: false,
+            message: Some(msg.to_string()),
+            owner: None,
+        });
+    }
+
+    let status = gh_auth_status()?;
+    let Some(owner) = status.username else {
+        return Ok(GhRepoNameCheck {
+            available: false,
+            message: Some(
+                "Connect GitHub via Connect App before creating a repository".to_string(),
+            ),
+            owner: None,
+        });
+    };
+
+    // 404 / Not Found ⇒ name is free under this owner.
+    let endpoint = format!("repos/{owner}/{name}");
+    let output = gh(&["api", &endpoint])?;
+    if output.status.success() {
+        return Ok(GhRepoNameCheck {
+            available: false,
+            message: Some(format!("@{owner}/{name} already exists on GitHub")),
+            owner: Some(owner),
+        });
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let body = format!("{stderr}\n{stdout}");
+    // gh prints HTTP 404 in stderr for missing repos.
+    if body.contains("404") || body.contains("Not Found") || body.contains("not found") {
+        return Ok(GhRepoNameCheck {
+            available: true,
+            message: None,
+            owner: Some(owner),
+        });
+    }
+    // Invalid names can yield 422 / 400 from the GitHub API.
+    if body.contains("422") || body.contains("400") || body.contains("name already exists") {
+        let detail = stderr.trim();
+        return Ok(GhRepoNameCheck {
+            available: false,
+            message: Some(if detail.is_empty() {
+                format!("'{name}' cannot be used as a GitHub repository name")
+            } else {
+                detail.to_string()
+            }),
+            owner: Some(owner),
+        });
+    }
+
+    Err(if stderr.trim().is_empty() {
+        format!("failed to check repository name availability for {name}")
+    } else {
+        stderr.trim().to_string()
+    })
+}
+
+/// Create a private GitHub repository from an existing local git repo at `path`,
+/// named `name`, with `origin` pointing at the new remote. Pushes when the
+/// local repo already has commits.
+pub fn create_private_github_repo(path: &str, name: &str) -> Result<(), String> {
+    let name = name.trim();
+    let check = gh_repo_name_check(name.to_string())?;
+    if !check.available {
+        return Err(check
+            .message
+            .unwrap_or_else(|| format!("'{name}' is not available on GitHub")));
+    }
+
+    if detect_github_remote(path) {
+        return Err("project already has a GitHub remote".to_string());
+    }
+
+    // `gh repo create --remote origin` fails if any origin remote already exists.
+    let origin_exists = Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .current_dir(path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if origin_exists {
+        return Err(
+            "project already has an origin remote; remove it before creating on GitHub"
+                .to_string(),
+        );
+    }
+
+    let has_commits = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    let mut args = vec![
+        "repo",
+        "create",
+        name,
+        "--private",
+        "--source",
+        path,
+        "--remote",
+        "origin",
+    ];
+    if has_commits {
+        args.push("--push");
+    }
+
+    let output = Command::new(gh_bin())
+        .args(&args)
+        .output()
+        .map_err(|e| format!("failed to run gh repo create: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            "gh repo create failed".to_string()
+        } else {
+            stderr
+        });
+    }
+    Ok(())
+}
+
 /// Open a URL in the user's default web browser.
 #[tauri::command]
 pub fn open_external(url: String) -> Result<(), String> {

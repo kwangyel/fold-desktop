@@ -4,7 +4,7 @@ use std::process::Command;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
-use crate::github::detect_github_remote;
+use crate::github::{create_private_github_repo, detect_github_remote};
 use crate::AppState;
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -517,14 +517,27 @@ pub fn create_project(
         return Err(format!("{} already exists", dir.display()));
     }
     std::fs::create_dir_all(&dir).map_err(|e| format!("failed to create folder: {e}"))?;
-    git_init(&dir)?;
+    if let Err(e) = git_init(&dir) {
+        let _ = std::fs::remove_dir_all(&dir);
+        return Err(e);
+    }
+
+    let path = dir.to_string_lossy().to_string();
+    let mut has_github_remote = false;
+    if create_github {
+        if let Err(e) = create_private_github_repo(&path, name) {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err(e);
+        }
+        has_github_remote = true;
+    }
 
     let project = Project {
         id: new_id("p"),
         name: name.to_string(),
-        path: dir.to_string_lossy().to_string(),
+        path,
         created_on_github: create_github,
-        has_github_remote: false,
+        has_github_remote,
         worktrees: Vec::new(),
         active_worktree_id: None,
         worktree_env_defaults: None,
@@ -586,12 +599,25 @@ pub fn open_project(
     }
 
     let project_path = dir.to_string_lossy().to_string();
+    let mut has_github_remote = detect_github_remote(&project_path);
+    let mut created_on_github = false;
+
+    // Only create a GitHub repo when requested and the project has no remote yet.
+    if create_github && !has_github_remote {
+        create_private_github_repo(&project_path, &name)?;
+        has_github_remote = true;
+        created_on_github = true;
+    } else if create_github && has_github_remote {
+        // Remote already present — treat as success without recreating.
+        created_on_github = false;
+    }
+
     let project = Project {
         id: new_id("p"),
         name,
-        has_github_remote: detect_github_remote(&project_path),
+        has_github_remote,
         path: project_path,
-        created_on_github: create_github,
+        created_on_github,
         worktrees: Vec::new(),
         active_worktree_id: None,
         worktree_env_defaults: None,
