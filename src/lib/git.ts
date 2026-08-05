@@ -140,6 +140,21 @@ export async function gitGithubRemote(path: string): Promise<boolean> {
   return invoke<boolean>("git_github_remote", { path });
 }
 
+/** Current HEAD commit SHA for the repo at `path` ("" if there are no commits). */
+export async function gitHeadCommit(path: string): Promise<string> {
+  if (!isTauri()) return "";
+  return invoke<string>("git_head_commit", { path });
+}
+
+/** How many files differ between `base` and the working tree (untracked included). */
+export async function gitChangedSince(
+  path: string,
+  base: string,
+): Promise<number> {
+  if (!isTauri()) return 0;
+  return invoke<number>("git_changed_since", { path, base });
+}
+
 /** List local branch names for the repo at `path`. */
 export async function gitListBranches(path: string): Promise<string[]> {
   if (!isTauri()) return ["main"];

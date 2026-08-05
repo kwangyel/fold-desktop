@@ -310,13 +310,20 @@ export async function generateCommitMessage(): Promise<string> {
   return collectAssistantText(harnessId, sessionId, async (onEvent) => {
     switch (harnessId) {
       case "cursor":
-        await cursorAgentRun(sessionId, prompt, worktree, model, onEvent);
+        await cursorAgentRun(sessionId, prompt, worktree, model, false, onEvent);
         break;
       case "codex":
         await codexAgentRun(sessionId, prompt, worktree, model, onEvent);
         break;
       case "opencode":
-        await opencodeAgentRun(sessionId, prompt, worktree, model, onEvent);
+        await opencodeAgentRun(
+          sessionId,
+          prompt,
+          worktree,
+          model,
+          false,
+          onEvent,
+        );
         break;
       default:
         await claudeAgentRun(
@@ -326,6 +333,7 @@ export async function generateCommitMessage(): Promise<string> {
           model,
           effort,
           fastMode,
+          null,
           onEvent,
         );
         break;

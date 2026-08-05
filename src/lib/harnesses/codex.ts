@@ -51,6 +51,8 @@ export const codexAdapter: HarnessAdapter = {
     const { installed, authenticated } = useCodexStore.getState();
     return installed && authenticated;
   },
+  // `codex exec` has no planning mode — only `--sandbox read-only`.
+  supportsPlanMode: false,
   listModels: async () => {
     try {
       return await codexListModels();

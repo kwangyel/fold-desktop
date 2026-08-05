@@ -38,6 +38,8 @@ export const cursorAdapter: HarnessAdapter = {
   id: "cursor",
   meta: harnessMeta("cursor"),
   isConnected: () => useCursorStore.getState().authenticated,
+  // `cursor-agent --mode plan` (read-only: analyze, propose, no edits).
+  supportsPlanMode: true,
   listModels: async () => {
     try {
       return await cursorListModels();

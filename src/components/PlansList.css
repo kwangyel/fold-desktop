@@ -1,0 +1,80 @@
+.plans-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+}
+
+.plans-empty {
+  padding: 16px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.plans-error {
+  color: var(--danger, #e5534b);
+}
+
+.plan-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.plan-row:hover {
+  background: rgba(124, 92, 255, 0.08);
+}
+
+.plan-row-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-row-status {
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: rgba(124, 92, 255, 0.15);
+  color: var(--accent);
+}
+
+/* Status colours are repeated here rather than shared with PlanView.css so
+   this list renders correctly on its own. */
+.plan-row-status.plan-status-implemented {
+  background: rgba(63, 185, 80, 0.15);
+  color: #3fb950;
+}
+
+.plan-row-status.plan-status-failed {
+  background: rgba(229, 83, 75, 0.15);
+  color: var(--danger, #e5534b);
+}
+
+.plan-row-status.plan-status-draft {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--muted);
+}
+
+.plan-row-time {
+  color: var(--muted);
+  font-size: 11px;
+  flex-shrink: 0;
+}

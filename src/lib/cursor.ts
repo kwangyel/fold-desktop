@@ -89,6 +89,7 @@ export async function cursorAgentRun(
   prompt: string,
   worktree: string,
   model: string | null,
+  planMode: boolean,
   onEvent: (chunk: CursorOutput) => void,
 ): Promise<void> {
   if (!isTauri()) {
@@ -103,6 +104,7 @@ export async function cursorAgentRun(
       prompt,
       worktree,
       model,
+      planMode,
       onOutput: output,
     });
   } catch (e) {

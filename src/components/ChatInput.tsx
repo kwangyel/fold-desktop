@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
+import { IconChecklist } from '@tabler/icons-react';
 import { useChatStore } from '../store/chatStore';
 import { findHarnessModel, useHarnessStore } from '../store/harnessStore';
-import type { EffortLevel, HarnessModel } from '../lib/harnesses';
+import {
+  harnessSupportsPlanMode,
+  type EffortLevel,
+  type HarnessModel,
+} from '../lib/harnesses';
 import ModelPicker from './ModelPicker';
 import './ChatInput.css';
 
@@ -42,6 +47,7 @@ export default function ChatInput({ tabId }: ChatInputProps) {
   const removeAttachment = useChatStore((state) => state.removeAttachment);
   const setModel = useChatStore((state) => state.setModel);
   const setMode = useChatStore((state) => state.setMode);
+  const setPlanMode = useChatStore((state) => state.setPlanMode);
   const setEffort = useChatStore((state) => state.setEffort);
   const sendPrompt = useChatStore((state) => state.sendPrompt);
   const cancelAgent = useChatStore((state) => state.cancelAgent);
@@ -100,6 +106,12 @@ export default function ChatInput({ tabId }: ChatInputProps) {
     if (mode === 'fast' && !model.supportsFastMode) {
       setMode(tabId, 'normal');
     }
+
+    // Switching to a harness without a planning mode (Codex) hides the toggle,
+    // so clear the flag rather than leaving it silently set.
+    if (!harnessSupportsPlanMode(model.harnessId)) {
+      setPlanMode(tabId, false);
+    }
   }
 
   if (!tab) return null;
@@ -107,6 +119,10 @@ export default function ChatInput({ tabId }: ChatInputProps) {
   const effortOptions = effortOptionsFor(selectedModel);
   const showEffort = effortOptions.length > 0;
   const showFast = Boolean(selectedModel?.supportsFastMode);
+  // Hidden for harnesses without a planning mode (Codex).
+  const showPlan = Boolean(
+    selectedModel && harnessSupportsPlanMode(selectedModel.harnessId),
+  );
 
   const handleSend = () => {
     if (!message.trim() || tab.loading) return;
@@ -208,6 +224,26 @@ export default function ChatInput({ tabId }: ChatInputProps) {
                 title={`Effort: ${effortOptions.map((e) => EFFORT_LABELS[e]).join(' → ')}`}
               >
                 {EFFORT_LABELS[tab.modelEffort] ?? tab.modelEffort}
+              </button>
+            )}
+
+            {showPlan && (
+              <button
+                type="button"
+                className={`plan-mode-btn ${tab.planMode ? 'active' : ''}`}
+                onClick={() => setPlanMode(tabId, !tab.planMode)}
+                disabled={tab.loading}
+                title={
+                  tab.planMode
+                    ? 'Plan mode on — research and propose, no edits'
+                    : 'Plan mode off'
+                }
+                aria-label={
+                  tab.planMode ? 'Disable plan mode' : 'Enable plan mode'
+                }
+                aria-pressed={tab.planMode}
+              >
+                <IconChecklist size={16} stroke={2} />
               </button>
             )}
 

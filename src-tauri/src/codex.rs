@@ -345,6 +345,11 @@ fn stream_pipe<R: Read + Send + 'static>(mut reader: R, on_output: Channel) {
     });
 }
 
+/// Quote a value as a TOML basic string for `codex -c key=value` overrides.
+fn toml_str(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
 /// Run `codex exec --json` in a worktree. Emits `__CODEX_EXIT__:<code>` on exit.
 #[tauri::command]
 pub fn codex_agent_run(
@@ -390,7 +395,30 @@ pub fn codex_agent_run(
         args.push("-m".into());
         args.push(m);
     }
-    args.push(prompt);
+
+    // Register Fold's `fold_ask_user` MCP tool so Codex can ask the user
+    // clarifying questions. Codex accepts MCP servers as per-run config
+    // overrides, so this needs no config file on disk.
+    let fold_mcp = if let Some((node, script)) = crate::claude::resolve_fold_mcp_server() {
+        args.push("-c".into());
+        args.push(format!("mcp_servers.fold.command={}", toml_str(&node)));
+        args.push("-c".into());
+        args.push(format!(
+            "mcp_servers.fold.args=[{}, {}]",
+            toml_str(&script),
+            toml_str(&worktree)
+        ));
+        true
+    } else {
+        false
+    };
+
+    let run_prompt = if fold_mcp {
+        crate::claude::with_fold_ask_hint(&prompt)
+    } else {
+        prompt.clone()
+    };
+    args.push(run_prompt);
 
     let mut child = Command::new(&bin)
         .args(&args)

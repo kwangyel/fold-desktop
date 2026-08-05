@@ -29,6 +29,11 @@ export function getHarnessAdapters(): HarnessAdapter[] {
   return ADAPTERS;
 }
 
+/** Whether the given harness offers a read-only planning mode. */
+export function harnessSupportsPlanMode(harnessId: string): boolean {
+  return ADAPTERS.some((a) => a.id === harnessId && a.supportsPlanMode);
+}
+
 /** Adapters whose harness is currently connected. */
 export function getConnectedAdapters(): HarnessAdapter[] {
   return ADAPTERS.filter((a) => a.isConnected());

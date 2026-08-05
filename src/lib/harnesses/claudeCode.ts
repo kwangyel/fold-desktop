@@ -70,6 +70,8 @@ export const claudeCodeAdapter: HarnessAdapter = {
     const { installed, authenticated } = useClaudeStore.getState();
     return installed && authenticated;
   },
+  // Agent SDK `permissionMode: 'plan'`.
+  supportsPlanMode: true,
   listModels: async () => {
     try {
       return await claudeListModels();

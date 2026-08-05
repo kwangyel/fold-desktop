@@ -3,6 +3,8 @@
   flex-direction: column;
   height: 100%;
   background: var(--panel);
+  /* Anchors the clarifying-question overlay. */
+  position: relative;
 }
 
 .chat-interface > * {

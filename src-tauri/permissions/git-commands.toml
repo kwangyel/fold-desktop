@@ -13,6 +13,8 @@ commands.allow = [
   "git_push",
   "git_staged_diff",
   "git_list_branches",
+  "git_head_commit",
+  "git_changed_since",
   "list_dir",
   "read_file",
   "write_file",

@@ -86,9 +86,48 @@ export async function claudeLoginCancel(): Promise<void> {
   await invoke("claude_login_cancel");
 }
 
+/** Permission modes accepted by the Claude Agent SDK. */
+export type ClaudePermissionMode =
+  | "default"
+  | "acceptEdits"
+  | "plan"
+  | "dontAsk"
+  | "bypassPermissions";
+
 /**
- * Run a Claude Code agent in a worktree. Streams NDJSON `stream-json` events
- * (plus a final `__CLAUDE_EXIT__:<code>` sentinel) to `onEvent`.
+ * A pending `canUseTool` request from the agent sidecar. Emitted for
+ * `ExitPlanMode`, `AskUserQuestion`, and any tool call the permission mode
+ * routes to a prompt.
+ */
+export type ClaudePermissionRequest = {
+  type: "fold_permission_request";
+  requestId: string;
+  toolName: string;
+  input: Record<string, unknown>;
+  toolUseID?: string;
+  title?: string;
+  description?: string;
+};
+
+/** Our answer to a `ClaudePermissionRequest`. */
+export type ClaudePermissionResponse =
+  | {
+      type: "fold_permission_response";
+      requestId: string;
+      behavior: "allow";
+      updatedInput?: Record<string, unknown>;
+    }
+  | {
+      type: "fold_permission_response";
+      requestId: string;
+      behavior: "deny";
+      message: string;
+    };
+
+/**
+ * Run a Claude Code agent in a worktree via the Agent SDK sidecar. Streams
+ * NDJSON SDK messages (plus a final `__CLAUDE_EXIT__:<code>` sentinel) to
+ * `onEvent`.
  */
 export async function claudeAgentRun(
   sessionId: string,
@@ -97,6 +136,7 @@ export async function claudeAgentRun(
   model: string | null,
   effort: string | null,
   fastMode: boolean,
+  permissionMode: ClaudePermissionMode | null,
   onEvent: (chunk: ClaudeOutput) => void,
 ): Promise<void> {
   if (!isTauri()) {
@@ -113,12 +153,26 @@ export async function claudeAgentRun(
       model,
       effort,
       fastMode,
+      permissionMode,
+      resumeSessionId: null,
       onOutput: output,
     });
   } catch (e) {
     claudeReleaseChannel(sessionId);
     throw e;
   }
+}
+
+/** Answer a pending `canUseTool` request for a running agent. */
+export async function claudeAgentRespond(
+  sessionId: string,
+  response: ClaudePermissionResponse,
+): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("claude_agent_respond", {
+    sessionId,
+    response: JSON.stringify(response),
+  });
 }
 
 /** Cancel a running Claude Code agent for the given session. */

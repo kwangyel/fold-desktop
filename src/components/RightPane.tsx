@@ -1,15 +1,17 @@
 import { useCallback, useRef, useState } from "react";
 import FileExplorer from "./FileExplorer";
 import ChangesList from "./ChangesList";
+import PlansList from "./PlansList";
 import TerminalPanel from "./TerminalPanel";
 import ResizeHandle from "./ResizeHandle";
 import "./RightPane.css";
 
-type TopTab = "explorer" | "changes";
+type TopTab = "explorer" | "changes" | "plans";
 
 const TOP_TABS: { id: TopTab; label: string }[] = [
   { id: "explorer", label: "Explorer" },
   { id: "changes", label: "Changes" },
+  { id: "plans", label: "Plans" },
 ];
 
 type Props = {
@@ -48,6 +50,7 @@ export default function RightPane({ width, topRatio, onSplitDrag }: Props) {
         <div className="right-pane-top-body">
           {activeTab === "explorer" && <FileExplorer />}
           {activeTab === "changes" && <ChangesList />}
+          {activeTab === "plans" && <PlansList />}
         </div>
       </div>
 
