@@ -40,19 +40,19 @@ fn write_file(app: &AppHandle, data: &AuthFile) -> Result<(), String> {
 }
 
 /// Persist the backend session token (JWT).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn auth_save_token(app: AppHandle, token: String) -> Result<(), String> {
     write_file(&app, &AuthFile { token: Some(token) })
 }
 
 /// Read the persisted session token, if any.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn auth_get_token(app: AppHandle) -> Result<Option<String>, String> {
     Ok(read_file(&app)?.token)
 }
 
 /// Clear the persisted session token (sign out).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn auth_clear_token(app: AppHandle) -> Result<(), String> {
     write_file(&app, &AuthFile::default())
 }

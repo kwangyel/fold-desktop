@@ -128,7 +128,7 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => {
       inflightRefresh = (async () => {
         set({ checking: true, error: null });
         try {
-          const status = await claudeStatus();
+          const status = await claudeStatus(force);
           checkedAt = Date.now();
           set({
             installed: status.installed,

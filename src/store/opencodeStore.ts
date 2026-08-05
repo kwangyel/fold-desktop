@@ -114,7 +114,7 @@ export const useOpenCodeStore = create<OpenCodeStore>((set, get) => {
       inflightRefresh = (async () => {
         set({ checking: true, error: null });
         try {
-          const status = await opencodeStatus();
+          const status = await opencodeStatus(force);
           checkedAt = Date.now();
           set({
             installed: status.installed,

@@ -31,7 +31,7 @@ export function cursorReleaseChannel(sessionId?: string): void {
 }
 
 /** Current Cursor API key + CLI install state. */
-export async function cursorStatus(): Promise<CursorStatus> {
+export async function cursorStatus(force = false): Promise<CursorStatus> {
   if (!isTauri()) {
     return {
       authenticated: false,
@@ -41,7 +41,7 @@ export async function cursorStatus(): Promise<CursorStatus> {
       cliInstalled: false,
     };
   }
-  return invoke<CursorStatus>("cursor_status");
+  return invoke<CursorStatus>("cursor_status", { force });
 }
 
 /**

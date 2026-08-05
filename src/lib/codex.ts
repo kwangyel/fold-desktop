@@ -27,11 +27,11 @@ export function codexReleaseChannel(sessionId?: string): void {
   }
 }
 
-export async function codexStatus(): Promise<CodexStatus> {
+export async function codexStatus(force = false): Promise<CodexStatus> {
   if (!isTauri()) {
     return { installed: false, authenticated: false, method: null };
   }
-  return invoke<CodexStatus>("codex_status");
+  return invoke<CodexStatus>("codex_status", { force });
 }
 
 export async function codexListModels(): Promise<ModelInfo[]> {

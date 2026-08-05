@@ -10,8 +10,13 @@ use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::State;
 
+use crate::bin_cache::BinCache;
 use crate::pty::PtySession;
 use crate::AppState;
+
+/// Resolved `claude` / `node` paths, cached so status checks don't re-probe.
+static CLAUDE_BIN: BinCache = BinCache::new();
+static NODE_BIN: BinCache = BinCache::new();
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -66,12 +71,18 @@ fn is_executable(path: &std::path::Path) -> bool {
     }
 }
 
+/// Resolve the `claude` binary, reusing the cached path when it is still fresh.
+fn resolve_claude_bin() -> Option<PathBuf> {
+    CLAUDE_BIN.get(probe_claude_bin)
+}
+
 /// Resolve the `claude` binary to an absolute path when possible.
 ///
 /// macOS GUI / Tauri apps often inherit a stripped PATH that omits shell-only
 /// dirs like `~/.local/bin` (where the Claude Code installer puts the binary).
-/// Search PATH first, then common install locations.
-fn resolve_claude_bin() -> Option<PathBuf> {
+/// Search PATH first, then common install locations. Expensive — always go
+/// through `resolve_claude_bin` so the result is cached.
+fn probe_claude_bin() -> Option<PathBuf> {
     // 1) Plain PATH lookup (works when launched from a configured shell).
     if Command::new("claude")
         .arg("--version")
@@ -184,8 +195,13 @@ fn subscription_authenticated() -> bool {
 }
 
 /// Report whether the Claude Code CLI is installed and authenticated.
-#[tauri::command]
-pub fn claude_status() -> Result<ClaudeStatus, String> {
+/// `force` re-probes for the CLI instead of reusing the cached path — used when
+/// the user explicitly rechecks after installing it.
+#[tauri::command(async)]
+pub fn claude_status(force: Option<bool>) -> Result<ClaudeStatus, String> {
+    if force.unwrap_or(false) {
+        CLAUDE_BIN.clear();
+    }
     let installed = is_installed();
     if !installed {
         return Ok(ClaudeStatus {
@@ -221,7 +237,7 @@ pub fn claude_status() -> Result<ClaudeStatus, String> {
 /// Start an interactive Claude Code login in a PTY (Ink TUI requires a real TTY).
 /// Credentials persist to the machine keychain / credential store — nothing is
 /// saved app-side. The frontend should write `/login\r` shortly after spawn.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn claude_login(on_output: Channel, state: State<'_, AppState>) -> Result<(), String> {
     // Drop any prior login session (Drop kills the child).
     {
@@ -257,7 +273,7 @@ pub fn claude_login_write(data: String, state: State<'_, AppState>) -> Result<()
 }
 
 /// Stop an in-progress login flow by dropping the PTY session.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn claude_login_cancel(state: State<'_, AppState>) -> Result<(), String> {
     let mut slot = state.claude_login.lock().map_err(|e| e.to_string())?;
     let _ = slot.take();
@@ -265,28 +281,19 @@ pub fn claude_login_cancel(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 /// Stream a child pipe's bytes to the frontend channel on a background thread.
-fn stream_pipe<R: Read + Send + 'static>(mut reader: R, on_output: Channel) {
-    thread::spawn(move || {
-        let mut buf = [0u8; 4096];
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    if on_output
-                        .send(InvokeResponseBody::Raw(buf[..n].to_vec()))
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-    });
+fn stream_pipe<R: Read + Send + 'static>(reader: R, on_output: Channel) {
+    crate::stream::pipe_to_channel(reader, on_output);
 }
 
 /// Resolve the Fold project root (directory with `package.json` + `scripts/`).
+/// Cached — the walk hits the filesystem once per directory level and the root
+/// cannot change while the app is running.
 fn project_root() -> Option<PathBuf> {
+    static CACHED: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    CACHED.get_or_init(probe_project_root).clone()
+}
+
+fn probe_project_root() -> Option<PathBuf> {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     if let Some(parent) = manifest.parent() {
         if parent.join("package.json").is_file() {
@@ -309,7 +316,12 @@ fn project_root() -> Option<PathBuf> {
     None
 }
 
-fn resolve_node_bin() -> Option<PathBuf> {
+/// Resolve `node`, reusing the cached path (probing spawns `node --version`).
+pub fn resolve_node_bin() -> Option<PathBuf> {
+    NODE_BIN.get(probe_node_bin)
+}
+
+fn probe_node_bin() -> Option<PathBuf> {
     if Command::new("node")
         .arg("--version")
         .stdout(Stdio::null())
@@ -343,7 +355,7 @@ pub struct ClaudeUsageStatus {
 }
 
 /// Fetch Claude Code context + session usage without running an agent turn.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn claude_usage_status(worktree: Option<String>) -> Result<ClaudeUsageStatus, String> {
     let root = project_root().ok_or_else(|| {
         "Fold project root not found (need package.json + scripts/claude-usage.mjs)".to_string()
@@ -388,7 +400,7 @@ pub fn claude_usage_status(worktree: Option<String>) -> Result<ClaudeUsageStatus
 }
 
 /// List Claude Code models via the Agent SDK (`supportedModels()`).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn claude_list_models() -> Result<Vec<ClaudeModelInfo>, String> {
     let root = project_root().ok_or_else(|| {
         "Fold project root not found (need package.json + scripts/list-claude-models.mjs)"
@@ -525,7 +537,7 @@ pub fn resolve_fold_mcp_server() -> Option<(String, String)> {
 /// in the CLI's headless mode they are absent from the session tool list.
 ///
 /// Streams NDJSON events to the channel; emits `__CLAUDE_EXIT__:<code>` on exit.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn claude_agent_run(
     session_id: String,
     prompt: String,
@@ -547,6 +559,17 @@ pub fn claude_agent_run(
     {
         prev.store(true, Ordering::SeqCst);
     }
+
+    // Register the cancel flag before the child is spawned. Commands run
+    // concurrently, so a cancel issued while the agent is still starting must
+    // find a flag to set — otherwise the run would keep going after the UI has
+    // already returned to idle.
+    let cancel = Arc::new(AtomicBool::new(false));
+    state
+        .claude_agents
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(session_id.clone(), cancel.clone());
     state
         .claude_agent_stdin
         .lock()
@@ -614,7 +637,6 @@ pub fn claude_agent_run(
         stream_pipe(err, on_output.clone());
     }
 
-    let cancel = Arc::new(AtomicBool::new(false));
     let cancel_monitor = cancel.clone();
     let exit_channel = on_output;
     thread::spawn(move || {
@@ -635,11 +657,6 @@ pub fn claude_agent_run(
         let _ = exit_channel.send(InvokeResponseBody::Raw(marker.into_bytes()));
     });
 
-    state
-        .claude_agents
-        .lock()
-        .map_err(|e| e.to_string())?
-        .insert(session_id.clone(), cancel);
     state
         .claude_agent_stdin
         .lock()
@@ -668,7 +685,7 @@ pub fn claude_agent_respond(
 }
 
 /// Cancel a running Claude Code agent for the given session.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn claude_agent_cancel(session_id: String, state: State<'_, AppState>) -> Result<(), String> {
     if let Some(cancel) = state
         .claude_agents

@@ -20,7 +20,11 @@ use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Manager, State};
 
+use crate::bin_cache::BinCache;
 use crate::AppState;
+
+/// Resolved `Cursor Agent` CLI path, cached so status checks don't re-probe PATH.
+static CURSOR_BIN: BinCache = BinCache::new();
 
 const API_BASE: &str = "https://api.cursor.com";
 
@@ -146,8 +150,13 @@ fn home_dir() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-/// Resolve the Cursor Agent CLI (`agent` / `cursor-agent`).
+/// Resolve the Cursor Agent CLI, reusing the cached path when still fresh.
 fn resolve_agent_bin() -> Option<PathBuf> {
+    CURSOR_BIN.get(probe_agent_bin)
+}
+
+/// Resolve the Cursor Agent CLI (`agent` / `cursor-agent`).
+fn probe_agent_bin() -> Option<PathBuf> {
     for name in ["agent", "cursor-agent"] {
         if Command::new(name)
             .arg("--help")
@@ -289,29 +298,16 @@ fn map_model(m: ApiModel) -> CursorModelInfo {
     }
 }
 
-fn stream_pipe<R: Read + Send + 'static>(mut reader: R, on_output: Channel) {
-    thread::spawn(move || {
-        let mut buf = [0u8; 4096];
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    if on_output
-                        .send(InvokeResponseBody::Raw(buf[..n].to_vec()))
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-    });
+fn stream_pipe<R: Read + Send + 'static>(reader: R, on_output: Channel) {
+    crate::stream::pipe_to_channel(reader, on_output);
 }
 
 /// Status uses the **saved** API key only so Disconnect always clears connection.
-#[tauri::command]
-pub fn cursor_status(app: AppHandle) -> Result<CursorStatus, String> {
+#[tauri::command(async)]
+pub fn cursor_status(app: AppHandle, force: Option<bool>) -> Result<CursorStatus, String> {
+    if force.unwrap_or(false) {
+        CURSOR_BIN.clear();
+    }
     let file = read_file(&app)?;
     let cli_installed = resolve_agent_bin().is_some();
     if let Some(key) = file.api_key.as_ref().filter(|s| !s.trim().is_empty()) {
@@ -334,7 +330,7 @@ pub fn cursor_status(app: AppHandle) -> Result<CursorStatus, String> {
 }
 
 /// Validate `api_key` against `GET /v1/me` and persist it on success.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn cursor_connect(app: AppHandle, api_key: String) -> Result<CursorStatus, String> {
     let key = api_key.trim().to_string();
     if key.is_empty() {
@@ -361,14 +357,14 @@ pub fn cursor_connect(app: AppHandle, api_key: String) -> Result<CursorStatus, S
 }
 
 /// Remove the saved Cursor API key so the harness disconnects.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn cursor_disconnect(app: AppHandle) -> Result<CursorStatus, String> {
     write_file(&app, &CursorFile::default())?;
-    cursor_status(app)
+    cursor_status(app, None)
 }
 
 /// List models from `GET /v1/models` using the saved API key.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn cursor_list_models(app: AppHandle) -> Result<Vec<CursorModelInfo>, String> {
     let key = saved_api_key(&app)?.ok_or_else(|| "No Cursor API key configured".to_string())?;
     let response = api_get_json::<ModelsResponse>(&key, "/v1/models")?;
@@ -377,7 +373,7 @@ pub fn cursor_list_models(app: AppHandle) -> Result<Vec<CursorModelInfo>, String
 
 /// Run Cursor Agent CLI in a worktree (`agent -p --output-format stream-json`).
 /// Streams NDJSON events; emits `__CURSOR_EXIT__:<code>` on exit.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn cursor_agent_run(
     session_id: String,
     prompt: String,
@@ -396,6 +392,17 @@ pub fn cursor_agent_run(
     {
         prev.store(true, Ordering::SeqCst);
     }
+
+    // Register the cancel flag before the child is spawned. Commands run
+    // concurrently, so a cancel issued while the agent is still starting must
+    // find a flag to set — otherwise the run would keep going after the UI has
+    // already returned to idle.
+    let cancel = Arc::new(AtomicBool::new(false));
+    state
+        .cursor_agents
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(session_id.clone(), cancel.clone());
 
     let api_key = saved_api_key(&app)?.ok_or_else(|| {
         "Cursor is not connected. Add an API key in Connect Harness.".to_string()
@@ -463,7 +470,6 @@ pub fn cursor_agent_run(
         stream_pipe(err, on_output.clone());
     }
 
-    let cancel = Arc::new(AtomicBool::new(false));
     let cancel_monitor = cancel.clone();
     let exit_channel = on_output;
     thread::spawn(move || {
@@ -484,15 +490,10 @@ pub fn cursor_agent_run(
         let _ = exit_channel.send(InvokeResponseBody::Raw(marker.into_bytes()));
     });
 
-    state
-        .cursor_agents
-        .lock()
-        .map_err(|e| e.to_string())?
-        .insert(session_id, cancel);
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn cursor_agent_cancel(session_id: String, state: State<'_, AppState>) -> Result<(), String> {
     if let Some(cancel) = state
         .cursor_agents

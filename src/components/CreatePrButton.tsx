@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useCenterViewStore } from '../store/centerViewStore';
 import { useChatStore } from '../store/chatStore';
 import { useProjectStore } from '../store/projectStore';
-import { ghPrCreateWeb, ghPrView, type PrInfo } from '../lib/github';
+import { ghPrCreateWeb, ghPrViewCached, type PrInfo } from '../lib/github';
 import { gitGithubRemote, gitListBranches } from '../lib/git';
 import { PR_CREATION_PROMPT, mergeBranchPrompt } from '../lib/prPrompt';
 import './CreatePrButton.css';
@@ -68,7 +68,7 @@ export default function CreatePrButton() {
     let cancelled = false;
 
     const check = () => {
-      ghPrView(path)
+      ghPrViewCached(path)
         .then((info) => {
           if (!cancelled && path === activePath) setExistingPr(info);
         })
@@ -76,7 +76,7 @@ export default function CreatePrButton() {
     };
 
     check();
-    const timer = window.setInterval(check, 15000);
+    const timer = window.setInterval(check, 30000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);

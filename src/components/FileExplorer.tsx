@@ -96,7 +96,7 @@ const FileTreeNode = memo(function FileTreeNode({
   );
 });
 
-export default function FileExplorer() {
+function FileExplorer() {
   const activeId = useProjectStore((s) => s.activeId);
   // Reload when the isolated worktree path changes (not only the project id).
   const activePath = useProjectStore((s) => s.activePath);
@@ -168,3 +168,6 @@ export default function FileExplorer() {
     </div>
   );
 }
+
+/** Panel resizes re-render the parent every frame; this subtree doesn't need to. */
+export default memo(FileExplorer);

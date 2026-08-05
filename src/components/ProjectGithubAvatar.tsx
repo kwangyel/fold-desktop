@@ -1,14 +1,48 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { IconBrandGithub } from "@tabler/icons-react";
 import { fetch } from "@tauri-apps/plugin-http";
-import { gitGithubRepoOwner, isTauri } from "../lib/git";
+import { gitGithubRepoOwnerCached, isTauri } from "../lib/git";
 
 type Props = {
   path: string;
   active?: boolean;
 };
 
-export default function ProjectGithubAvatar({ path, active = false }: Props) {
+/**
+ * Avatar bitmaps keyed by URL. Owners repeat across projects and rows remount
+ * whenever the sidebar list changes, so without this every remount re-downloads
+ * the same image (and leaks a fresh object URL).
+ */
+const avatarCache = new Map<string, string>();
+const avatarInflight = new Map<string, Promise<string>>();
+
+async function loadAvatar(url: string): Promise<string> {
+  const cached = avatarCache.get(url);
+  if (cached) return cached;
+  const pending = avatarInflight.get(url);
+  if (pending) return pending;
+
+  const request = (async () => {
+    try {
+      const res = await fetch(url, { method: "GET" });
+      if (!res.ok) throw new Error(String(res.status));
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      avatarCache.set(url, objectUrl);
+      return objectUrl;
+    } catch {
+      // Fall back to the plain URL; the <img> may still be able to load it.
+      return url;
+    } finally {
+      avatarInflight.delete(url);
+    }
+  })();
+
+  avatarInflight.set(url, request);
+  return request;
+}
+
+function ProjectGithubAvatar({ path, active = false }: Props) {
   const [owner, setOwner] = useState<{ login: string; avatarUrl: string } | null>(
     null,
   );
@@ -18,13 +52,9 @@ export default function ProjectGithubAvatar({ path, active = false }: Props) {
   useEffect(() => {
     setImgError(false);
     let cancelled = false;
-    void gitGithubRepoOwner(path)
-      .then((info) => {
-        if (!cancelled) setOwner(info);
-      })
-      .catch(() => {
-        if (!cancelled) setOwner(null);
-      });
+    void gitGithubRepoOwnerCached(path).then((info) => {
+      if (!cancelled) setOwner(info);
+    });
     return () => {
       cancelled = true;
     };
@@ -44,22 +74,12 @@ export default function ProjectGithubAvatar({ path, active = false }: Props) {
     }
 
     let cancelled = false;
-    let objectUrl: string | null = null;
-    void (async () => {
-      try {
-        const res = await fetch(url, { method: "GET" });
-        if (!res.ok) throw new Error(String(res.status));
-        const blob = await res.blob();
-        objectUrl = URL.createObjectURL(blob);
-        if (!cancelled) setAvatarSrc(objectUrl);
-      } catch {
-        if (!cancelled) setAvatarSrc(url);
-      }
-    })();
+    void loadAvatar(url).then((src) => {
+      if (!cancelled) setAvatarSrc(src);
+    });
 
     return () => {
       cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [owner?.avatarUrl]);
 
@@ -86,3 +106,5 @@ export default function ProjectGithubAvatar({ path, active = false }: Props) {
     </span>
   );
 }
+
+export default memo(ProjectGithubAvatar);

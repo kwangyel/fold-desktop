@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   IconBrain,
   IconCheck,
@@ -284,26 +284,150 @@ function assistantCopyText(assistants: Message[]): string {
     .join("\n\n");
 }
 
+/** Same messages in the same order? Message objects are only replaced when
+ *  their content changes, so reference equality is enough. */
+function sameMessages(a: Message[], b: Message[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+/**
+ * One user prompt and everything the agent did in response.
+ *
+ * Memoized on message identity: streaming appends to the *last* turn only, so
+ * earlier turns skip re-rendering entirely instead of re-reconciling (and
+ * re-rendering their markdown) on every token.
+ */
+const ChatTurn = memo(
+  function ChatTurn({
+    turn,
+    streaming,
+  }: {
+    turn: Turn;
+    streaming: boolean;
+  }) {
+    const files = collectTurnFiles(turn.activities);
+    const copyText = assistantCopyText(turn.assistants);
+    const showAssistantCopy = !streaming && Boolean(copyText.trim());
+
+    return (
+      <div className="chat-turn">
+        {turn.user ? (
+          <div className="message user">
+            <div className="message-content">
+              {turn.user.content ? (
+                <p className="message-text">{turn.user.content}</p>
+              ) : (
+                <p className="message-text text-muted">…</p>
+              )}
+              {turn.user.attachments && turn.user.attachments.length > 0 ? (
+                <div className="attachments">
+                  {turn.user.attachments.map((att) => (
+                    <div key={att.id} className="attachment-item">
+                      {att.name}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <div className="message-actions">
+                <CopyButton text={turn.user.content} />
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {streaming && turn.activities.length > 0 ? (
+          <div className="activity-stream">
+            {turn.activities.map((msg) => (
+              <ActivityAccordion key={msg.id} msg={msg} />
+            ))}
+          </div>
+        ) : null}
+
+        {!streaming && turn.activities.length > 0 ? (
+          <SummaryAccordion activities={turn.activities} />
+        ) : null}
+
+        {turn.assistants.map((msg) =>
+          msg.content ? (
+            <div key={msg.id} className="message assistant">
+              <div className="message-content">
+                <AssistantMarkdown content={msg.content} />
+              </div>
+            </div>
+          ) : null,
+        )}
+
+        {files.length > 0 && !streaming ? (
+          <ChangedFilesLine paths={files} />
+        ) : null}
+
+        {showAssistantCopy ? (
+          <div className="turn-actions assistant">
+            <CopyButton text={copyText} />
+          </div>
+        ) : null}
+      </div>
+    );
+  },
+  (prev, next) =>
+    prev.streaming === next.streaming &&
+    prev.turn.user === next.turn.user &&
+    sameMessages(prev.turn.activities, next.turn.activities) &&
+    sameMessages(prev.turn.assistants, next.turn.assistants),
+);
+
+/** Treat the view as "following" the stream while within this many px of the end. */
+const FOLLOW_THRESHOLD_PX = 80;
+
 export default function ChatMessages({ tabId }: ChatMessagesProps) {
   const tab = useChatStore((state) => state.tabs[tabId]);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  // Stop yanking the view back down once the user scrolls up to read.
+  const followRef = useRef(true);
+  const scrollRafRef = useRef<number | null>(null);
 
-  const scrollToBottom = (smooth: boolean) => {
-    messagesEndRef.current?.scrollIntoView({
-      behavior: smooth ? "smooth" : "instant",
-    });
-  };
+  const onScroll = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    followRef.current = distance <= FOLLOW_THRESHOLD_PX;
+  }, []);
+
+  const messages = tab?.messages;
+  const loading = tab?.loading;
 
   useEffect(() => {
-    // Smooth scroll only when idle — during streaming, smooth queues layout work
-    // on every token and feels laggy.
-    scrollToBottom(!tab?.loading);
-  }, [tab?.messages, tab?.loading]);
+    // Sending a prompt always brings the view back down, even if the user had
+    // scrolled up to read earlier output.
+    const last = messages?.[messages.length - 1];
+    if (last?.role === "user") followRef.current = true;
 
-  const turns = useMemo(
-    () => groupTurns(tab?.messages ?? []),
-    [tab?.messages],
+    if (!followRef.current) return;
+    // Coalesce to one scroll write per frame: assigning scrollTop (rather than
+    // scrollIntoView) avoids a forced synchronous layout per streamed token.
+    if (scrollRafRef.current !== null) return;
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null;
+      const el = containerRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+  }, [messages, loading]);
+
+  useEffect(
+    () => () => {
+      if (scrollRafRef.current !== null) {
+        cancelAnimationFrame(scrollRafRef.current);
+      }
+    },
+    [],
   );
+
+  const turns = useMemo(() => groupTurns(messages ?? []), [messages]);
 
   if (!tab) {
     return <div className="chat-messages">Loading...</div>;
@@ -312,81 +436,20 @@ export default function ChatMessages({ tabId }: ChatMessagesProps) {
   const lastTurnIndex = turns.length - 1;
 
   return (
-    <div className="chat-messages">
+    <div className="chat-messages" ref={containerRef} onScroll={onScroll}>
       {tab.messages.length === 0 ? (
         <div className="chat-empty">
           <p>Start a conversation</p>
           <p className="text-muted">Type a message below to begin</p>
         </div>
       ) : (
-        turns.map((turn, turnIndex) => {
-          const streamingThisTurn =
-            Boolean(tab.loading) && turnIndex === lastTurnIndex;
-          const files = collectTurnFiles(turn.activities);
-          const copyText = assistantCopyText(turn.assistants);
-          const showAssistantCopy =
-            !streamingThisTurn && Boolean(copyText.trim());
-
-          return (
-            <div key={turn.user?.id ?? `turn-${turnIndex}`} className="chat-turn">
-              {turn.user ? (
-                <div className="message user">
-                  <div className="message-content">
-                    {turn.user.content ? (
-                      <p className="message-text">{turn.user.content}</p>
-                    ) : (
-                      <p className="message-text text-muted">…</p>
-                    )}
-                    {turn.user.attachments && turn.user.attachments.length > 0 ? (
-                      <div className="attachments">
-                        {turn.user.attachments.map((att) => (
-                          <div key={att.id} className="attachment-item">
-                            {att.name}
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
-                    <div className="message-actions">
-                      <CopyButton text={turn.user.content} />
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-
-              {streamingThisTurn && turn.activities.length > 0 ? (
-                <div className="activity-stream">
-                  {turn.activities.map((msg) => (
-                    <ActivityAccordion key={msg.id} msg={msg} />
-                  ))}
-                </div>
-              ) : null}
-
-              {!streamingThisTurn && turn.activities.length > 0 ? (
-                <SummaryAccordion activities={turn.activities} />
-              ) : null}
-
-              {turn.assistants.map((msg) =>
-                msg.content ? (
-                  <div key={msg.id} className="message assistant">
-                    <div className="message-content">
-                      <AssistantMarkdown content={msg.content} />
-                    </div>
-                  </div>
-                ) : null,
-              )}
-
-              {files.length > 0 && !streamingThisTurn ? (
-                <ChangedFilesLine paths={files} />
-              ) : null}
-
-              {showAssistantCopy ? (
-                <div className="turn-actions assistant">
-                  <CopyButton text={copyText} />
-                </div>
-              ) : null}
-            </div>
-          );
-        })
+        turns.map((turn, turnIndex) => (
+          <ChatTurn
+            key={turn.user?.id ?? `turn-${turnIndex}`}
+            turn={turn}
+            streaming={Boolean(tab.loading) && turnIndex === lastTurnIndex}
+          />
+        ))
       )}
       {tab.loading && (
         <div className="message assistant">
@@ -399,7 +462,6 @@ export default function ChatMessages({ tabId }: ChatMessagesProps) {
           </div>
         </div>
       )}
-      <div ref={messagesEndRef} />
     </div>
   );
 }

@@ -187,6 +187,51 @@ export async function ghPrView(worktreePath: string): Promise<PrInfo | null> {
   }
 }
 
+/**
+ * Shared PR lookup for the pollers (`CreatePrButton`, `CenterPane`).
+ *
+ * Every call shells out to `gh pr view` — a network round-trip — so results are
+ * reused for a short window and concurrent callers share one request instead of
+ * each spawning their own `gh` process on their own timer.
+ */
+const PR_CACHE_TTL_MS = 20_000;
+
+type PrCacheEntry = { at: number; value: PrInfo | null };
+
+const prCache = new Map<string, PrCacheEntry>();
+const prInflight = new Map<string, Promise<PrInfo | null>>();
+
+export async function ghPrViewCached(
+  worktreePath: string,
+  opts?: { force?: boolean },
+): Promise<PrInfo | null> {
+  if (!opts?.force) {
+    const cached = prCache.get(worktreePath);
+    if (cached && Date.now() - cached.at < PR_CACHE_TTL_MS) return cached.value;
+  }
+
+  const pending = prInflight.get(worktreePath);
+  if (pending) return pending;
+
+  const request = ghPrView(worktreePath)
+    .then((value) => {
+      prCache.set(worktreePath, { at: Date.now(), value });
+      return value;
+    })
+    .finally(() => {
+      prInflight.delete(worktreePath);
+    });
+
+  prInflight.set(worktreePath, request);
+  return request;
+}
+
+/** Drop the cached PR for a worktree (after creating or merging one). */
+export function invalidatePrCache(worktreePath?: string): void {
+  if (worktreePath) prCache.delete(worktreePath);
+  else prCache.clear();
+}
+
 /** Resolve the repository's preferred merge method. */
 export async function ghPrMergeMethod(worktreePath: string): Promise<PrMergeMethod> {
   if (!isTauri()) return "squash";

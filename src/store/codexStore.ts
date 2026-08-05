@@ -112,7 +112,7 @@ export const useCodexStore = create<CodexStore>((set, get) => {
       inflightRefresh = (async () => {
         set({ checking: true, error: null });
         try {
-          const status = await codexStatus();
+          const status = await codexStatus(force);
           checkedAt = Date.now();
           set({
             installed: status.installed,

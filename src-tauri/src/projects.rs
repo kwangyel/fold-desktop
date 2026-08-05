@@ -245,7 +245,23 @@ fn resolve_base_ref(repo: &Path) -> String {
         return base;
     }
     if git_ok(repo, &["remote", "get-url", "origin"]) {
-        let _ = git_in(repo, &["fetch", "origin", &base]);
+        // Creating a worktree waits on this fetch, so keep it as small as
+        // possible (no tags) and give up on a stalled connection instead of
+        // hanging the dialog — a stale base is better than never finishing.
+        let _ = git_in(
+            repo,
+            &[
+                "-c",
+                "http.lowSpeedLimit=1000",
+                "-c",
+                "http.lowSpeedTime=15",
+                "fetch",
+                "--no-tags",
+                "--quiet",
+                "origin",
+                &base,
+            ],
+        );
         let remote_ref = format!("origin/{base}");
         if git_ok(repo, &["rev-parse", "--verify", &remote_ref]) {
             return remote_ref;
@@ -495,12 +511,12 @@ fn add_worktree(repo: &Path, dest: &Path, branch: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_projects(app: AppHandle) -> Result<ProjectsFile, String> {
     read_file(&app)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_project(
     app: AppHandle,
     parent: String,
@@ -553,12 +569,12 @@ pub fn create_project(
 }
 
 /// Whether `path` is (or is inside) a git working tree.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn is_git_repo(path: String) -> bool {
     PathBuf::from(&path).join(".git").exists()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_project(
     app: AppHandle,
     path: String,
@@ -630,7 +646,7 @@ pub fn open_project(
 }
 
 /// Clone a GitHub repository into `parent/<repo>` and register it as a project.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn clone_github_project(
     app: AppHandle,
     full_name: String,
@@ -653,7 +669,7 @@ pub fn clone_github_project(
     open_project(app, path, display_name, false, false, state)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_active_project(
     app: AppHandle,
     id: String,
@@ -669,7 +685,7 @@ pub fn set_active_project(
 }
 
 /// Detect known env dirs/files in the main checkout and return saved defaults.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn scan_worktree_env(app: AppHandle, project_id: String) -> Result<WorktreeEnvScan, String> {
     let data = read_file(&app)?;
     let project = find_project(&data, &project_id)
@@ -703,7 +719,7 @@ pub fn scan_worktree_env(app: AppHandle, project_id: String) -> Result<WorktreeE
 }
 
 /// Create a new branch + worktree under the common project folder and activate it.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_worktree(
     app: AppHandle,
     project_id: String,
@@ -781,7 +797,7 @@ pub fn create_worktree(
 }
 
 /// Select a worktree within a project; explorer + terminal follow its path.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_active_worktree(
     app: AppHandle,
     project_id: String,
@@ -807,7 +823,7 @@ pub fn set_active_worktree(
     Ok(updated)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_project(
     app: AppHandle,
     id: String,
@@ -829,7 +845,7 @@ pub fn remove_project(
 }
 
 /// Remove a worktree from the project list (and from git's worktree registry).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_worktree(
     app: AppHandle,
     project_id: String,
@@ -880,7 +896,7 @@ pub fn remove_worktree(
 
 /// Archive a worktree: keep the entry and its git branch, but delete the
 /// isolated folder and unregister it from git. One-way (no restore in the UI).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn archive_worktree(
     app: AppHandle,
     project_id: String,

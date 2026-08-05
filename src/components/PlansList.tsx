@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { memo, useEffect } from "react";
 import HarnessIcon from "./icons/HarnessIcon";
 import { usePlanStore } from "../store/planStore";
 import { useCenterViewStore } from "../store/centerViewStore";
@@ -17,7 +17,7 @@ function relativeTime(ms: number): string {
   return `${Math.round(hours / 24)}d`;
 }
 
-export default function PlansList() {
+function PlansList() {
   const plans = usePlanStore((s) => s.plans);
   const loading = usePlanStore((s) => s.loading);
   const error = usePlanStore((s) => s.error);
@@ -66,3 +66,6 @@ export default function PlansList() {
     </div>
   );
 }
+
+/** Panel resizes re-render the parent every frame; this subtree doesn't need to. */
+export default memo(PlansList);

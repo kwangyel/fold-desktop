@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export const MIN_SIDEBAR = 180;
 export const MIN_RIGHT = 220;
@@ -63,16 +63,41 @@ function load(): PanelSizes {
   }
 }
 
+/** Delay before persisting, so a drag doesn't write to disk on every frame. */
+const PERSIST_DEBOUNCE_MS = 400;
+
+function persist(sizes: PanelSizes) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(sizes));
+  } catch {
+    // Ignore quota / private-mode failures.
+  }
+}
+
 export function usePanelSizes() {
   const [sizes, setSizes] = useState<PanelSizes>(load);
+  const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latest = useRef(sizes);
+  latest.current = sizes;
 
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(sizes));
-    } catch {
-      // Ignore quota / private-mode failures.
-    }
+    if (persistTimer.current) clearTimeout(persistTimer.current);
+    persistTimer.current = setTimeout(() => {
+      persistTimer.current = null;
+      persist(latest.current);
+    }, PERSIST_DEBOUNCE_MS);
+    return () => {
+      if (persistTimer.current) clearTimeout(persistTimer.current);
+    };
   }, [sizes]);
+
+  // Flush a pending write on unmount so the last drag isn't lost.
+  useEffect(
+    () => () => {
+      if (persistTimer.current) persist(latest.current);
+    },
+    [],
+  );
 
   /** Apply an incremental sidebar width change, clamped against workspace mins. */
   const adjustSidebarWidth = useCallback((dx: number, workspaceWidth: number) => {

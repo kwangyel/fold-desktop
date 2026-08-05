@@ -5,6 +5,7 @@ import { useProjectStore } from "../store/projectStore";
 import {
   ghPrMerge,
   ghPrMergeMethod,
+  invalidatePrCache,
   openExternal,
   type PrInfo,
   type PrMergeMethod,
@@ -63,6 +64,8 @@ export default function PrView({ tabId }: { tabId: string }) {
     setActionError(null);
     try {
       await ghPrMerge(worktreePath, method);
+      // The cached "open PR for this branch" answer is now stale.
+      invalidatePrCache(worktreePath);
       setPrMerged(tabId);
     } catch (e) {
       setActionError(String(e));
