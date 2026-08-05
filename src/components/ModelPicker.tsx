@@ -26,13 +26,12 @@ export default function ModelPicker({
   const loading = useHarnessStore((s) => s.loading);
   const refresh = useHarnessStore((s) => s.refresh);
 
+  // Only probe harness CLIs / list models when the user opens the picker —
+  // not on every chat mount (which previously stalled app startup).
   useEffect(() => {
-    // Defer so first paint isn't competing with CLI status / model listing.
-    const id = window.setTimeout(() => {
-      void refresh();
-    }, 0);
-    return () => window.clearTimeout(id);
-  }, [refresh]);
+    if (!open) return;
+    void refresh();
+  }, [open, refresh]);
 
   useEffect(() => {
     if (!open) return;

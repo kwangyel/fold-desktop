@@ -16,8 +16,6 @@ export default function CreatePrButton() {
   // remote added after project creation still shows the PR button.
   const [hasGithubRemote, setHasGithubRemote] = useState(false);
 
-  const tabs = useCenterViewStore((s) => s.tabs);
-  const activeTabId = useCenterViewStore((s) => s.activeTabId);
   const addChatTab = useCenterViewStore((s) => s.addChatTab);
   const setActiveTab = useCenterViewStore((s) => s.setActiveTab);
   const openPrTab = useCenterViewStore((s) => s.openPrTab);
@@ -95,14 +93,16 @@ export default function CreatePrButton() {
   if (!activePath) return null;
 
   const getOrCreateChatTabId = (): string | null => {
-    const activeTab = tabs.find((t) => t.id === activeTabId);
-    if (activeTab?.type === 'chat') return activeTabId;
+    const { tabs, activeTabId: currentId } = useCenterViewStore.getState();
+    const activeTab = tabs.find((t) => t.id === currentId);
+    if (activeTab?.type === 'chat') return currentId;
     const firstChat = tabs.find((t) => t.type === 'chat');
     if (firstChat) {
       setActiveTab(firstChat.id);
       return firstChat.id;
     }
-    return null;
+    addChatTab();
+    return null; // caller will pick up the new tab after a tick
   };
 
   const sendToChat = (prompt: string) => {

@@ -1,19 +1,20 @@
-import { useEffect, useRef } from "react";
+import { lazy, Suspense, useEffect, useRef } from "react";
 import ChatInterface from "./ChatInterface";
-import CodeEditor from "./CodeEditor";
-import DiffPane from "./DiffPane";
-import PrView from "./PrView";
-import PlanView from "./PlanView";
 import CreatePrButton from "./CreatePrButton";
 import GlobalQuestionOverlay from "./GlobalQuestionOverlay";
 import BackgroundAskWatchers from "./BackgroundAskWatchers";
 import { closeActiveTab } from "../lib/closeActiveTab";
-import { useCenterViewStore } from "../store/centerViewStore";
+import { useCenterViewStore, getLiveEditorContent, setLiveEditorContent } from "../store/centerViewStore";
 import { useChatStore } from "../store/chatStore";
 import { useProjectStore } from "../store/projectStore";
 import { ghPrView } from "../lib/github";
 import { gitGithubRemote } from "../lib/git";
 import "./CodeEditor.css";
+
+const CodeEditor = lazy(() => import("./CodeEditor"));
+const DiffPane = lazy(() => import("./DiffPane"));
+const PrView = lazy(() => import("./PrView"));
+const PlanView = lazy(() => import("./PlanView"));
 
 export default function CenterPane() {
   const tabs = useCenterViewStore((state) => state.tabs);
@@ -30,11 +31,16 @@ export default function CenterPane() {
   // Worktree paths whose PR tab has already been auto-opened, so closing the
   // tab doesn't cause it to pop back up.
   const autoOpened = useRef<Set<string>>(new Set());
+  const contentDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId);
 
   const handleCloseTab = (tabId: string, tabType: string) => {
     if (tabs.length <= 1) return;
+    if (contentDebounceRef.current) {
+      clearTimeout(contentDebounceRef.current);
+      contentDebounceRef.current = null;
+    }
     if (tabType === "chat") {
       deleteChatTab(tabId);
     }
@@ -46,6 +52,35 @@ export default function CenterPane() {
       pinTab(tabId);
     }
   };
+
+  const handleEditorChange = (tabId: string, content: string) => {
+    // Keep keystrokes in the live buffer immediately; debounce the Zustand write
+    // so CenterPane / explorers aren't re-rendered on every character.
+    setLiveEditorContent(tabId, content);
+    if (contentDebounceRef.current) clearTimeout(contentDebounceRef.current);
+    contentDebounceRef.current = setTimeout(() => {
+      contentDebounceRef.current = null;
+      updateTabContent(tabId, content);
+    }, 200);
+  };
+
+  // Flush pending editor writes when leaving an editor tab.
+  useEffect(() => {
+    return () => {
+      if (contentDebounceRef.current) {
+        clearTimeout(contentDebounceRef.current);
+        contentDebounceRef.current = null;
+      }
+      if (activeTab?.type === "editor") {
+        const live = getLiveEditorContent(activeTab.id);
+        if (live !== undefined) {
+          updateTabContent(activeTab.id, live);
+        }
+      }
+    };
+    // Only flush when the active tab identity changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTabId]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -87,7 +122,8 @@ export default function CenterPane() {
 
     void gitGithubRemote(path).then((hasRemote) => {
       if (cancelled || !hasRemote) return;
-      timer = window.setInterval(check, 5000);
+      // Slow poll — CreatePrButton also checks; avoid competing every 5s.
+      timer = window.setInterval(check, 30000);
       void check();
     });
 
@@ -117,18 +153,22 @@ export default function CenterPane() {
           );
         }
         if (activeTab.fileContent === undefined) return null;
+        const editorContent =
+          getLiveEditorContent(activeTab.id) ?? activeTab.fileContent;
         return (
           <>
             <div className="center-editor-header">
               <span className="file-path">{activeTab.filePath}</span>
               <span className="view-badge">Editor</span>
             </div>
-            <CodeEditor
-              key={activeTab.id}
-              filePath={activeTab.filePath}
-              content={activeTab.fileContent}
-              onChange={(content) => updateTabContent(activeTab.id, content)}
-            />
+            <Suspense fallback={<div className="center-editor-loading">Loading editor…</div>}>
+              <CodeEditor
+                key={activeTab.id}
+                filePath={activeTab.filePath}
+                content={editorContent}
+                onChange={(content) => handleEditorChange(activeTab.id, content)}
+              />
+            </Suspense>
           </>
         );
       case "diff":
@@ -140,18 +180,28 @@ export default function CenterPane() {
           return null;
         }
         return (
-          <DiffPane
-            key={activeTab.id}
-            tabId={activeTab.id}
-            filePath={activeTab.filePath}
-            original={activeTab.diffOriginal}
-            modified={activeTab.diffModified}
-          />
+          <Suspense fallback={<div className="center-editor-loading">Loading diff…</div>}>
+            <DiffPane
+              key={activeTab.id}
+              tabId={activeTab.id}
+              filePath={activeTab.filePath}
+              original={activeTab.diffOriginal}
+              modified={activeTab.diffModified}
+            />
+          </Suspense>
         );
       case "pr":
-        return <PrView key={activeTab.id} tabId={activeTab.id} />;
+        return (
+          <Suspense fallback={<div className="center-editor-loading">Loading…</div>}>
+            <PrView key={activeTab.id} tabId={activeTab.id} />
+          </Suspense>
+        );
       case "plan":
-        return <PlanView key={activeTab.id} tabId={activeTab.id} />;
+        return (
+          <Suspense fallback={<div className="center-editor-loading">Loading…</div>}>
+            <PlanView key={activeTab.id} tabId={activeTab.id} />
+          </Suspense>
+        );
       default:
         return null;
     }

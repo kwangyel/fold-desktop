@@ -36,12 +36,11 @@ export default function ChangesList() {
   const [menuOpen, setMenuOpen] = useState(false);
   const messageRef = useRef<HTMLTextAreaElement>(null);
 
-  const activeTabId = useCenterViewStore((state) => state.activeTabId);
-  const tabs = useCenterViewStore((state) => state.tabs);
+  const activeDiffPath = useCenterViewStore((state) => {
+    const tab = state.tabs.find((t) => t.id === state.activeTabId);
+    return tab?.type === "diff" ? tab.filePath : undefined;
+  });
   const closeDiffTab = useCenterViewStore((state) => state.closeDiffTab);
-  const activeDiffPath = tabs.find(
-    (tab) => tab.id === activeTabId && tab.type === "diff",
-  )?.filePath;
 
   const staged = changes.filter((c) => c.staged);
   const unstaged = changes.filter((c) => !c.staged);

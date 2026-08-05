@@ -41,6 +41,21 @@ const INITIAL_CHAT_TAB: CenterTab = {
   label: "Chat",
 };
 
+/** In-memory editor buffer so UI can debounce store writes without losing keystrokes. */
+const liveEditorContent = new Map<string, string>();
+
+export function setLiveEditorContent(id: string, content: string) {
+  liveEditorContent.set(id, content);
+}
+
+export function getLiveEditorContent(id: string): string | undefined {
+  return liveEditorContent.get(id);
+}
+
+export function clearLiveEditorContent(id: string) {
+  liveEditorContent.delete(id);
+}
+
 type CenterViewStore = {
   tabs: CenterTab[];
   activeTabId: string;
@@ -68,6 +83,7 @@ function loadFileContent(
 ) {
   void readFile(path)
     .then((content) => {
+      liveEditorContent.set(tabId, content);
       set((state) => {
         const tab = state.tabs.find((t) => t.id === tabId);
         if (!tab || tab.filePath !== path) return state;
@@ -79,6 +95,8 @@ function loadFileContent(
       });
     })
     .catch((err) => {
+      const fallback = `// Failed to read file\n// ${String(err)}\n`;
+      liveEditorContent.set(tabId, fallback);
       set((state) => {
         const tab = state.tabs.find((t) => t.id === tabId);
         if (!tab || tab.filePath !== path) return state;
@@ -87,7 +105,7 @@ function loadFileContent(
             t.id === tabId
               ? {
                   ...t,
-                  fileContent: `// Failed to read file\n// ${String(err)}\n`,
+                  fileContent: fallback,
                   fileLoading: false,
                 }
               : t,
@@ -330,6 +348,7 @@ export const useCenterViewStore = create<CenterViewStore>((set, get) => ({
   },
 
   closeTab: (id) => {
+    clearLiveEditorContent(id);
     set((state) => {
       const tab = state.tabs.find((t) => t.id === id);
       if (!tab || state.tabs.length <= 1) return state;
@@ -352,6 +371,7 @@ export const useCenterViewStore = create<CenterViewStore>((set, get) => ({
   setActiveTab: (id) => set({ activeTabId: id }),
 
   updateTabContent: (id, content) => {
+    liveEditorContent.set(id, content);
     set((state) => ({
       tabs: state.tabs.map((tab) =>
         tab.id === id ? { ...tab, fileContent: content } : tab,

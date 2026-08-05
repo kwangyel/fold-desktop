@@ -1,32 +1,28 @@
 import { useAskWatcher } from "../hooks/useAskWatcher";
 import { useCenterViewStore } from "../store/centerViewStore";
-import { useChatStore } from "../store/chatStore";
 
-/** Keep the MCP ask watcher alive for every in-flight chat, even when that
- *  chat tab is not the active center view (e.g. the Plan tab is open). */
+/** Keep the MCP ask watcher alive for every chat tab. Each host no-ops unless
+ *  that tab is actively loading a non-Claude harness — so we intentionally do
+ *  NOT subscribe to chatStore here (streaming would re-render this every chunk). */
 function AskWatcherHost({ tabId }: { tabId: string }) {
   useAskWatcher(tabId);
   return null;
 }
 
 export default function BackgroundAskWatchers() {
-  // Select primitive/stable values only — returning a fresh array from a
-  // Zustand selector every render causes an infinite update loop.
-  const tabs = useCenterViewStore((s) => s.tabs);
-  const chatTabs = useChatStore((s) => s.tabs);
-
-  const loadingIds: string[] = [];
-  for (const tab of tabs) {
-    if (tab.type !== "chat") continue;
-    const state = chatTabs[tab.id];
-    if (state?.loading && state.selectedHarness !== "claudecode") {
-      loadingIds.push(tab.id);
-    }
-  }
+  // Primitive string — only changes when chat tabs are added/removed, not when
+  // editor content or other tab metadata updates.
+  const chatTabIdsKey = useCenterViewStore((s) =>
+    s.tabs
+      .filter((t) => t.type === "chat")
+      .map((t) => t.id)
+      .join("\0"),
+  );
+  const chatTabIds = chatTabIdsKey ? chatTabIdsKey.split("\0") : [];
 
   return (
     <>
-      {loadingIds.map((id) => (
+      {chatTabIds.map((id) => (
         <AskWatcherHost key={id} tabId={id} />
       ))}
     </>

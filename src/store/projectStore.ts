@@ -80,7 +80,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         activePath: activePathFrom(projects, activeId),
         loading: false,
       });
-      if (activeId) refreshChanges();
+      // Defer git status so the sidebar paints before three git subprocesses run.
+      if (activeId) {
+        const schedule =
+          typeof window !== "undefined" && "requestIdleCallback" in window
+            ? (cb: () => void) => window.requestIdleCallback(cb, { timeout: 2000 })
+            : (cb: () => void) => window.setTimeout(cb, 300);
+        schedule(() => refreshChanges());
+      }
     } catch (e) {
       set({ error: String(e), loading: false });
     }

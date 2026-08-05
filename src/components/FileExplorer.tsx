@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import MonotoneFileIcon from "./fileIcons/MonotoneFileIcon";
 import { resolveFileIconKind } from "./fileIcons/fileIconMap";
 import { useCenterViewStore } from "../store/centerViewStore";
@@ -9,22 +9,22 @@ import "./FileExplorer.css";
 interface FileTreeNodeProps {
   entry: DirEntry;
   depth: number;
+  activeEditorPath: string | undefined;
+  openPathsKey: string;
 }
 
-function FileTreeNode({ entry, depth }: FileTreeNodeProps) {
+const FileTreeNode = memo(function FileTreeNode({
+  entry,
+  depth,
+  activeEditorPath,
+  openPathsKey,
+}: FileTreeNodeProps) {
   const [expanded, setExpanded] = useState(false);
   const [children, setChildren] = useState<DirEntry[] | null>(null);
   const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const openFileTab = useCenterViewStore((state) => state.openFileTab);
-  const activeTabId = useCenterViewStore((state) => state.activeTabId);
-  const tabs = useCenterViewStore((state) => state.tabs);
-  const activeEditorPath = tabs.find(
-    (tab) => tab.id === activeTabId && tab.type === "editor",
-  )?.filePath;
-  const isOpen = tabs.some(
-    (tab) => tab.type === "editor" && tab.filePath === entry.path,
-  );
+  const isOpen = openPathsKey.includes(`\0${entry.path}\0`);
 
   const handleFileClick = () => {
     if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
@@ -84,11 +84,17 @@ function FileTreeNode({ entry, depth }: FileTreeNodeProps) {
       </div>
       {expanded &&
         children?.map((child) => (
-          <FileTreeNode key={child.path} entry={child} depth={depth + 1} />
+          <FileTreeNode
+            key={child.path}
+            entry={child}
+            depth={depth + 1}
+            activeEditorPath={activeEditorPath}
+            openPathsKey={openPathsKey}
+          />
         ))}
     </div>
   );
-}
+});
 
 export default function FileExplorer() {
   const activeId = useProjectStore((s) => s.activeId);
@@ -96,6 +102,19 @@ export default function FileExplorer() {
   const activePath = useProjectStore((s) => s.activePath);
   const [roots, setRoots] = useState<DirEntry[]>([]);
   const [loading, setLoading] = useState(false);
+
+  // Stable primitives — editor keystrokes that only change fileContent won't
+  // invalidate these, so tree nodes don't re-render while typing.
+  const activeEditorPath = useCenterViewStore((s) => {
+    const tab = s.tabs.find((t) => t.id === s.activeTabId);
+    return tab?.type === "editor" ? tab.filePath : undefined;
+  });
+  const openPathsKey = useCenterViewStore((s) => {
+    const paths = s.tabs
+      .filter((t) => t.type === "editor" && t.filePath)
+      .map((t) => t.filePath);
+    return paths.length ? `\0${paths.join("\0")}\0` : "";
+  });
 
   useEffect(() => {
     if (!activeId || !activePath) {
@@ -137,7 +156,13 @@ export default function FileExplorer() {
         <div className="file-explorer-empty">Empty worktree</div>
       ) : (
         roots.map((entry) => (
-          <FileTreeNode key={entry.path} entry={entry} depth={0} />
+          <FileTreeNode
+            key={entry.path}
+            entry={entry}
+            depth={0}
+            activeEditorPath={activeEditorPath}
+            openPathsKey={openPathsKey}
+          />
         ))
       )}
     </div>

@@ -794,13 +794,29 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       return assistantId;
     };
 
-    const appendAssistant = (text: string) => {
-      if (!text) return;
+    // Batch token updates to one store write per animation frame so React isn't
+    // re-parsing markdown on every tiny stream chunk.
+    let pendingAssistantText = '';
+    let flushRaf: number | null = null;
+
+    const flushAssistant = () => {
+      flushRaf = null;
+      if (!pendingAssistantText) return;
+      const text = pendingAssistantText;
+      pendingAssistantText = '';
       const id = ensureAssistant();
       const current = get().tabs[tabId]?.messages.find((m) => m.id === id);
       get().updateMessage(tabId, id, {
         content: (current?.content ?? '') + text,
       });
+    };
+
+    const appendAssistant = (text: string) => {
+      if (!text) return;
+      pendingAssistantText += text;
+      if (flushRaf === null) {
+        flushRaf = requestAnimationFrame(flushAssistant);
+      }
     };
 
     const setAssistantSegment = (text: string) => {
@@ -817,6 +833,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const finish = (errorText?: string) => {
       if (finished) return;
       finished = true;
+      if (flushRaf !== null) {
+        cancelAnimationFrame(flushRaf);
+        flushAssistant();
+      }
       stopCursorPlanPoll();
       if (errorText) {
         const id = ensureAssistant();
