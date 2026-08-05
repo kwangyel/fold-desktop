@@ -1,6 +1,5 @@
 import { useEffect } from 'react';
 import { useChatStore } from '../store/chatStore';
-import ChatHeader from './ChatHeader';
 import ChatMessages from './ChatMessages';
 import ChatInput from './ChatInput';
 import './ChatInterface.css';
@@ -19,7 +18,6 @@ export default function ChatInterface({ tabId }: ChatInterfaceProps) {
 
   return (
     <div className="chat-interface">
-      <ChatHeader tabId={tabId} />
       <ChatMessages tabId={tabId} />
       <ChatInput tabId={tabId} />
     </div>

@@ -5,8 +5,11 @@ import CenterPane from "./components/CenterPane";
 import RightPane from "./components/RightPane";
 import LoginScreen from "./components/LoginScreen";
 import ResizeHandle from "./components/ResizeHandle";
+import StatusBar from "./components/StatusBar";
 import { setupAppMenu } from "./lib/appMenu";
 import { useAuthStore } from "./store/authStore";
+import { useHarnessStore } from "./store/harnessStore";
+import { useContextUsageStore } from "./store/contextUsageStore";
 import { usePanelSizes } from "./hooks/usePanelSizes";
 import "./App.css";
 
@@ -15,6 +18,7 @@ const appWindow = getCurrentWindow();
 export default function App() {
   const authStatus = useAuthStore((s) => s.status);
   const initAuth = useAuthStore((s) => s.init);
+  const refreshHarnesses = useHarnessStore((s) => s.refresh);
   const {
     sizes,
     adjustSidebarWidth,
@@ -28,6 +32,14 @@ export default function App() {
     void setupAppMenu();
     void initAuth();
   }, [initAuth]);
+
+  // Detect already-connected harnesses on sign-in — don't wait for ModelPicker.
+  useEffect(() => {
+    if (authStatus !== "signedIn") return;
+    void refreshHarnesses().then(() => {
+      useContextUsageStore.getState().refresh();
+    });
+  }, [authStatus, refreshHarnesses]);
 
   const handleTitlebarMouseDown = useCallback(
     async (e: React.MouseEvent<HTMLDivElement>) => {
@@ -69,21 +81,24 @@ export default function App() {
         />
       </div>
       {authStatus === "signedIn" ? (
-        <div className="workspace" ref={workspaceRef}>
-          <Sidebar
-            width={sizes.sidebarWidth}
-            topRatio={sizes.sidebarTopRatio}
-            onSplitDrag={adjustSidebarTopRatio}
-          />
-          <ResizeHandle orientation="vertical" onDrag={onSidebarDrag} />
-          <CenterPane />
-          <ResizeHandle orientation="vertical" onDrag={onRightDrag} />
-          <RightPane
-            width={sizes.rightWidth}
-            topRatio={sizes.rightTopRatio}
-            onSplitDrag={adjustRightTopRatio}
-          />
-        </div>
+        <>
+          <div className="workspace" ref={workspaceRef}>
+            <Sidebar
+              width={sizes.sidebarWidth}
+              topRatio={sizes.sidebarTopRatio}
+              onSplitDrag={adjustSidebarTopRatio}
+            />
+            <ResizeHandle orientation="vertical" onDrag={onSidebarDrag} />
+            <CenterPane />
+            <ResizeHandle orientation="vertical" onDrag={onRightDrag} />
+            <RightPane
+              width={sizes.rightWidth}
+              topRatio={sizes.rightTopRatio}
+              onSplitDrag={adjustRightTopRatio}
+            />
+          </div>
+          <StatusBar />
+        </>
       ) : authStatus === "loading" ? (
         <div className="workspace app-loading" />
       ) : (

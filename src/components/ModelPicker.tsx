@@ -26,11 +26,12 @@ export default function ModelPicker({
   const loading = useHarnessStore((s) => s.loading);
   const refresh = useHarnessStore((s) => s.refresh);
 
-  // Only probe harness CLIs / list models when the user opens the picker —
-  // not on every chat mount (which previously stalled app startup).
+  // Soft-refresh when opened: reuse the cached catalog immediately; only block
+  // the UI when we have nothing to show yet.
   useEffect(() => {
     if (!open) return;
-    void refresh();
+    void refresh({ silent: models.length > 0 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-run on open
   }, [open, refresh]);
 
   useEffect(() => {
@@ -72,7 +73,7 @@ export default function ModelPicker({
       <button
         type="button"
         className="model-picker-trigger"
-        disabled={disabled || loading}
+        disabled={disabled}
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
@@ -80,7 +81,7 @@ export default function ModelPicker({
       >
         {selected ? <HarnessIcon harness={selected.harnessId} size={16} /> : null}
         <span className="model-picker-label">{label}</span>
-        {loading ? (
+        {loading && models.length === 0 ? (
           <IconLoader2 size={12} className="spin" />
         ) : (
           <IconChevronDown size={12} stroke={2} />

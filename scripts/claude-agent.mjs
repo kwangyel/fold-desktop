@@ -140,9 +140,137 @@ async function main() {
   if (fastMode) options.settings = { ...settings, fastMode: true };
 
   const q = query({ prompt, options });
+
+  /** Race a promise against a short timeout so the stream never stalls. */
+  function withTimeout(promise, ms, label) {
+    return Promise.race([
+      promise,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`${label} timeout`)), ms),
+      ),
+    ]);
+  }
+
+  /** Push Claude Code's `/context` occupancy to the app for the status bar. */
+  async function emitContextUsage() {
+    if (typeof q.getContextUsage !== "function") return;
+    try {
+      const usage = await withTimeout(q.getContextUsage(), 10000, "getContextUsage");
+      if (!usage || typeof usage.totalTokens !== "number") return;
+      emit({
+        type: "fold_context_usage",
+        harnessId: "claudecode",
+        totalTokens: usage.totalTokens,
+        maxTokens: usage.maxTokens,
+        percentage: usage.percentage,
+        model: usage.model,
+      });
+    } catch {
+      // Control channel may already be closed — ignore.
+    }
+  }
+
+  /**
+   * Push Claude.ai plan session / weekly rate-limit utilization (same data as
+   * `/usage`). Method name is experimental in the SDK — call defensively.
+   */
+  async function emitSessionUsage() {
+    const usageFn =
+      typeof q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET ===
+      "function"
+        ? q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET.bind(q)
+        : typeof q.getUsage === "function"
+          ? q.getUsage.bind(q)
+          : null;
+    if (!usageFn) return;
+    try {
+      const usage = await withTimeout(usageFn(), 10000, "getUsage");
+      if (!usage) return;
+      const five = usage.rate_limits?.five_hour;
+      const seven = usage.rate_limits?.seven_day;
+      emit({
+        type: "fold_session_usage",
+        harnessId: "claudecode",
+        rateLimitsAvailable: Boolean(usage.rate_limits_available),
+        subscriptionType: usage.subscription_type ?? null,
+        fiveHour:
+          five && typeof five.utilization === "number"
+            ? { percent: five.utilization, resetsAt: five.resets_at ?? null }
+            : null,
+        sevenDay:
+          seven && typeof seven.utilization === "number"
+            ? { percent: seven.utilization, resetsAt: seven.resets_at ?? null }
+            : null,
+        sessionCostUsd:
+          typeof usage.session?.total_cost_usd === "number"
+            ? usage.session.total_cost_usd
+            : null,
+      });
+    } catch {
+      // Experimental API / closed channel — ignore.
+    }
+  }
+
+  // Control-channel usage APIs need initialization first (same as supportedModels).
+  async function emitUsageAfterInit() {
+    try {
+      if (typeof q.supportedModels === "function") {
+        await withTimeout(q.supportedModels(), 20000, "supportedModels");
+      }
+      await emitContextUsage();
+      await emitSessionUsage();
+    } catch {
+      // Init / control channel not ready — mid-turn refresh will retry.
+    }
+  }
+
+  // Fetch status as soon as the SDK session is live — don't wait for a turn.
+  void emitUsageAfterInit();
+
   try {
     for await (const message of q) {
       emit(message);
+      // Refresh after assistant turns while the control channel is still alive.
+      if (message?.type === "assistant") {
+        await emitContextUsage();
+        await emitSessionUsage();
+      }
+      // Capture utilization when the SDK surfaces a rate-limit snapshot.
+      if (message?.type === "rate_limit_event") {
+        const info = message.rate_limit_info;
+        if (info && typeof info.utilization === "number") {
+          const pct =
+            info.utilization <= 1
+              ? Math.round(info.utilization * 100)
+              : Math.round(info.utilization);
+          emit({
+            type: "fold_session_usage",
+            harnessId: "claudecode",
+            rateLimitsAvailable: true,
+            fiveHour:
+              !info.rateLimitType || info.rateLimitType === "five_hour"
+                ? {
+                    percent: pct,
+                    resetsAt:
+                      typeof info.resetsAt === "number"
+                        ? new Date(info.resetsAt * 1000).toISOString()
+                        : null,
+                  }
+                : null,
+            sevenDay:
+              info.rateLimitType === "seven_day"
+                ? {
+                    percent: pct,
+                    resetsAt:
+                      typeof info.resetsAt === "number"
+                        ? new Date(info.resetsAt * 1000).toISOString()
+                        : null,
+                  }
+                : null,
+            sessionCostUsd: null,
+          });
+        }
+      }
     }
   } finally {
     for (const resolve of pending.values()) {

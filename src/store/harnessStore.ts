@@ -10,6 +10,7 @@ import { useClaudeStore } from "./claudeStore";
 import { useCodexStore } from "./codexStore";
 import { useCursorStore } from "./cursorStore";
 import { useOpenCodeStore } from "./opencodeStore";
+import { useContextUsageStore } from "./contextUsageStore";
 
 /** Skip full refresh if a successful fetch landed within this window. */
 const HARNESS_CACHE_TTL_MS = 30_000;
@@ -17,6 +18,11 @@ const HARNESS_CACHE_TTL_MS = 30_000;
 type RefreshOpts = {
   /** Bypass TTL and re-check status + models. */
   force?: boolean;
+  /**
+   * Revalidate in the background without flipping `loading` — keeps the model
+   * picker interactive when a catalog is already on screen.
+   */
+  silent?: boolean;
 };
 
 type HarnessStore = {
@@ -38,7 +44,7 @@ type HarnessStore = {
    * Reload models from current connection state without re-checking CLI
    * status (use after connect / disconnect / login).
    */
-  refreshModels: () => Promise<void>;
+  refreshModels: (opts?: { silent?: boolean }) => Promise<void>;
 };
 
 let inflightRefresh: Promise<void> | null = null;
@@ -67,6 +73,9 @@ async function loadModelsInto(
     fetchedAt: Date.now(),
     error: null,
   });
+  if (connected.some((h) => h.id === "claudecode")) {
+    void useContextUsageStore.getState().refresh();
+  }
 }
 
 export const useHarnessStore = create<HarnessStore>((set, get) => ({
@@ -78,7 +87,8 @@ export const useHarnessStore = create<HarnessStore>((set, get) => ({
 
   refresh: async (opts) => {
     const force = opts?.force ?? false;
-    const { fetchedAt } = get();
+    const silent = opts?.silent ?? false;
+    const { fetchedAt, models } = get();
     if (
       !force &&
       fetchedAt != null &&
@@ -89,7 +99,10 @@ export const useHarnessStore = create<HarnessStore>((set, get) => ({
     if (inflightRefresh) return inflightRefresh;
 
     inflightRefresh = (async () => {
-      set({ loading: true, error: null });
+      // Keep the picker usable when we already have a catalog to show.
+      const blockUi = !silent && models.length === 0;
+      if (blockUi) set({ loading: true, error: null });
+      else set({ error: null });
       try {
         // Ensure connection state is current before filtering adapters.
         await Promise.all([
@@ -103,8 +116,9 @@ export const useHarnessStore = create<HarnessStore>((set, get) => ({
         set({
           error: String(e),
           loading: false,
-          models: [],
-          connectedHarnesses: [],
+          ...(models.length === 0
+            ? { models: [], connectedHarnesses: [] }
+            : {}),
         });
       } finally {
         inflightRefresh = null;
@@ -114,21 +128,27 @@ export const useHarnessStore = create<HarnessStore>((set, get) => ({
     return inflightRefresh;
   },
 
-  refreshModels: async () => {
+  refreshModels: async (opts) => {
     if (inflightModels) return inflightModels;
     // Prefer joining a full refresh if one is already running.
     if (inflightRefresh) return inflightRefresh;
 
+    const silent = opts?.silent ?? false;
+    const { models } = get();
+
     inflightModels = (async () => {
-      set({ loading: true, error: null });
+      const blockUi = !silent && models.length === 0;
+      if (blockUi) set({ loading: true, error: null });
+      else set({ error: null });
       try {
         await loadModelsInto(set);
       } catch (e) {
         set({
           error: String(e),
           loading: false,
-          models: [],
-          connectedHarnesses: [],
+          ...(models.length === 0
+            ? { models: [], connectedHarnesses: [] }
+            : {}),
         });
       } finally {
         inflightModels = null;

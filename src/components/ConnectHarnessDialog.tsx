@@ -496,14 +496,19 @@ export default function ConnectHarnessDialog({
   const anyConnecting =
     claudeConnecting || codexConnecting || opencodeConnecting;
 
-  // One parallel status pass for the whole dialog (rows no longer each refresh).
+  // One parallel status pass for the whole dialog (rows no longer each refresh),
+  // then sync harnessStore so the model picker / status bar see connections
+  // without needing the user to open ModelPicker first.
   useEffect(() => {
-    void Promise.all([
-      useClaudeStore.getState().refresh(),
-      useCodexStore.getState().refresh(),
-      useCursorStore.getState().refresh(),
-      useOpenCodeStore.getState().refresh(),
-    ]);
+    void (async () => {
+      await Promise.all([
+        useClaudeStore.getState().refresh(),
+        useCodexStore.getState().refresh(),
+        useCursorStore.getState().refresh(),
+        useOpenCodeStore.getState().refresh(),
+      ]);
+      await useHarnessStore.getState().refreshModels();
+    })();
   }, []);
 
   useEffect(() => {
