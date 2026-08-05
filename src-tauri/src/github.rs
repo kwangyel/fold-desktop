@@ -641,6 +641,344 @@ pub fn create_private_github_repo(path: &str, name: &str) -> Result<(), String> 
     Ok(())
 }
 
+/// A GitHub user or organization the authenticated account can access.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct GhOwner {
+    login: String,
+    avatar_url: String,
+    /// `"user"` for the signed-in account, `"org"` for organizations.
+    kind: String,
+}
+
+/// A repository returned by list / search.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct GhRepo {
+    name: String,
+    full_name: String,
+    description: Option<String>,
+    private: bool,
+    updated_at: Option<String>,
+}
+
+/// List the authenticated user plus every organization they belong to.
+#[tauri::command]
+pub fn gh_list_owners() -> Result<Vec<GhOwner>, String> {
+    let status = gh_auth_status()?;
+    let Some(login) = status.username else {
+        return Err("Connect GitHub via Connect App first".to_string());
+    };
+
+    let mut owners = vec![GhOwner {
+        login: login.clone(),
+        avatar_url: format!("https://avatars.githubusercontent.com/{login}?s=64"),
+        kind: "user".to_string(),
+    }];
+
+    // Paginate through memberships (default page size is 30).
+    let output = gh(&[
+        "api",
+        "--paginate",
+        "user/orgs",
+        "--jq",
+        ".[] | [.login, (.avatar_url // \"\")] | @tsv",
+    ])?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            "failed to list GitHub organizations".to_string()
+        } else {
+            stderr
+        });
+    }
+
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let mut parts = line.split('\t');
+        let Some(org_login) = parts.next().map(str::trim).filter(|s| !s.is_empty()) else {
+            continue;
+        };
+        let avatar = parts
+            .next()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                format!("https://avatars.githubusercontent.com/{org_login}?s=64")
+            });
+        owners.push(GhOwner {
+            login: org_login.to_string(),
+            avatar_url: avatar,
+            kind: "org".to_string(),
+        });
+    }
+
+    Ok(owners)
+}
+
+fn parse_repo_list_json(raw: &str) -> Result<Vec<GhRepo>, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(raw).map_err(|e| format!("failed to parse repo list: {e}"))?;
+    let arr = value
+        .as_array()
+        .ok_or_else(|| "unexpected repo list shape".to_string())?;
+    let mut repos = Vec::with_capacity(arr.len());
+    for item in arr {
+        let name = item
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let full_name = item
+            .get("nameWithOwner")
+            .or_else(|| item.get("fullName"))
+            .or_else(|| item.get("full_name"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| name.clone());
+        let description = item
+            .get("description")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        let private = item
+            .get("isPrivate")
+            .or_else(|| item.get("private"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let updated_at = item
+            .get("updatedAt")
+            .or_else(|| item.get("updated_at"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        repos.push(GhRepo {
+            name,
+            full_name,
+            description,
+            private,
+            updated_at,
+        });
+    }
+    Ok(repos)
+}
+
+fn repo_matches_query(repo: &GhRepo, query: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    let q = query.to_ascii_lowercase();
+    repo.name.to_ascii_lowercase().contains(&q)
+        || repo.full_name.to_ascii_lowercase().contains(&q)
+        || repo
+            .description
+            .as_ref()
+            .map(|d| d.to_ascii_lowercase().contains(&q))
+            .unwrap_or(false)
+}
+
+/// Repos the signed-in user owns **or** collaborates on (other people's repos).
+///
+/// `gh repo list <user>` only returns owned repos, so the personal account view
+/// uses `/user/repos?affiliation=owner,collaborator` instead.
+fn list_personal_accessible_repos(query: &str, limit: u32) -> Result<Vec<GhRepo>, String> {
+    let mut matched: Vec<GhRepo> = Vec::new();
+    // When filtering, scan a few pages; otherwise one page of `limit` is enough.
+    let max_pages = if query.is_empty() { 1 } else { 5 };
+    let per_page = if query.is_empty() {
+        limit.clamp(1, 100)
+    } else {
+        100
+    };
+
+    for page in 1..=max_pages {
+        let endpoint = format!(
+            "user/repos?per_page={per_page}&page={page}&sort=updated&affiliation=owner,collaborator"
+        );
+        let output = gh(&["api", &endpoint])?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if stderr.is_empty() {
+                "failed to list accessible repositories".to_string()
+            } else {
+                stderr
+            });
+        }
+        let page_repos = parse_repo_list_json(&String::from_utf8_lossy(&output.stdout))?;
+        if page_repos.is_empty() {
+            break;
+        }
+        for repo in page_repos {
+            if repo_matches_query(&repo, query) {
+                matched.push(repo);
+                if matched.len() >= limit as usize {
+                    return Ok(matched);
+                }
+            }
+        }
+        if query.is_empty() {
+            break;
+        }
+    }
+    Ok(matched)
+}
+
+/// List or search repositories for `owner` (user or org login).
+///
+/// For the authenticated personal account (`owner_kind` = `"user"`), includes
+/// repositories owned by others where the user is a collaborator.
+/// Org views list that organization's repos only.
+///
+/// Empty `query` returns the most recently updated repos (capped at `limit`,
+/// default 5). With a query, filters by name / full name / description.
+#[tauri::command]
+pub fn gh_list_repos(
+    owner: String,
+    query: Option<String>,
+    limit: Option<u32>,
+    owner_kind: Option<String>,
+) -> Result<Vec<GhRepo>, String> {
+    let owner = owner.trim();
+    if owner.is_empty() {
+        return Err("owner is required".to_string());
+    }
+    let limit = limit.unwrap_or(5).clamp(1, 30);
+    let q = query.as_deref().map(str::trim).unwrap_or("");
+    let is_personal = owner_kind.as_deref() != Some("org");
+
+    // Personal account: include collaborator repos owned by other users.
+    if is_personal {
+        let status = gh_auth_status()?;
+        if status.username.as_deref() == Some(owner) {
+            return list_personal_accessible_repos(q, limit);
+        }
+    }
+
+    if q.is_empty() {
+        let limit_str = limit.to_string();
+        let output = Command::new(gh_bin())
+            .args([
+                "repo",
+                "list",
+                owner,
+                "--limit",
+                &limit_str,
+                "--json",
+                "name,nameWithOwner,description,isPrivate,updatedAt",
+            ])
+            .output()
+            .map_err(|e| format!("failed to run gh repo list: {e}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if stderr.is_empty() {
+                format!("failed to list repositories for @{owner}")
+            } else {
+                stderr
+            });
+        }
+        return parse_repo_list_json(&String::from_utf8_lossy(&output.stdout));
+    }
+
+    let scope = if owner_kind.as_deref() == Some("org") {
+        format!("org:{owner}")
+    } else {
+        format!("user:{owner}")
+    };
+    let search_q = format!("{q} {scope}");
+    let limit_str = limit.to_string();
+    let output = Command::new(gh_bin())
+        .args([
+            "search",
+            "repos",
+            &search_q,
+            "--limit",
+            &limit_str,
+            "--json",
+            "name,fullName,description,isPrivate,updatedAt",
+        ])
+        .output()
+        .map_err(|e| format!("failed to run gh search repos: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            format!("failed to search repositories for @{owner}")
+        } else {
+            stderr
+        });
+    }
+    parse_repo_list_json(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Default parent folder for cloning GitHub projects: `~/fold/projects`.
+#[tauri::command]
+pub fn default_clone_parent() -> Result<String, String> {
+    let home = home_dir().ok_or_else(|| "could not resolve home directory".to_string())?;
+    let root = home.join("fold").join("projects");
+    std::fs::create_dir_all(&root)
+        .map_err(|e| format!("failed to create default projects folder: {e}"))?;
+    Ok(root.to_string_lossy().to_string())
+}
+
+/// Clone `owner/name` into `parent/<repo>` via `gh repo clone`.
+/// Returns the absolute path of the cloned repository.
+pub fn clone_github_repo(full_name: &str, parent: &str) -> Result<String, String> {
+    let full_name = full_name.trim().trim_start_matches('/');
+    if full_name.is_empty() || !full_name.contains('/') {
+        return Err("repository must be owner/name".to_string());
+    }
+    let repo_name = full_name
+        .rsplit('/')
+        .next()
+        .unwrap_or(full_name)
+        .trim_end_matches(".git");
+    if repo_name.is_empty() {
+        return Err("invalid repository name".to_string());
+    }
+
+    let parent_dir = PathBuf::from(parent);
+    if !parent_dir.is_dir() {
+        std::fs::create_dir_all(&parent_dir)
+            .map_err(|e| format!("failed to create clone folder: {e}"))?;
+    }
+
+    let dest = parent_dir.join(repo_name);
+    if dest.exists() {
+        // Reuse an already-cloned checkout rather than failing.
+        if dest.join(".git").exists() {
+            return Ok(dest.to_string_lossy().to_string());
+        }
+        return Err(format!(
+            "{} already exists and is not a git repository",
+            dest.display()
+        ));
+    }
+
+    let dest_str = dest.to_string_lossy().to_string();
+    let output = Command::new(gh_bin())
+        .args(["repo", "clone", full_name, &dest_str])
+        .output()
+        .map_err(|e| format!("failed to run gh repo clone: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        // Clean up a partial clone if gh left an empty/incomplete dir.
+        if dest.exists() && !dest.join(".git").exists() {
+            let _ = std::fs::remove_dir_all(&dest);
+        }
+        return Err(if stderr.is_empty() {
+            format!("failed to clone {full_name}")
+        } else {
+            stderr
+        });
+    }
+    Ok(dest_str)
+}
+
 /// Open a URL in the user's default web browser.
 #[tauri::command]
 pub fn open_external(url: String) -> Result<(), String> {

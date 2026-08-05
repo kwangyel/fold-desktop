@@ -93,6 +93,53 @@ export async function ghRepoNameCheck(name: string): Promise<GhRepoNameCheck> {
   return invoke<GhRepoNameCheck>("gh_repo_name_check", { name });
 }
 
+/** Linked GitHub account or organization. */
+export interface GhOwner {
+  login: string;
+  avatarUrl: string;
+  kind: "user" | "org" | string;
+}
+
+/** Repository from list / search. */
+export interface GhRepo {
+  name: string;
+  fullName: string;
+  description: string | null;
+  private: boolean;
+  updatedAt: string | null;
+}
+
+/** Authenticated user plus organizations they can access. */
+export async function ghListOwners(): Promise<GhOwner[]> {
+  if (!isTauri()) return [];
+  return invoke<GhOwner[]>("gh_list_owners");
+}
+
+/**
+ * List or search repos for an owner. Empty `query` returns recent repos
+ * (default limit 5). With a query, searches that owner's repositories.
+ */
+export async function ghListRepos(
+  owner: string,
+  query?: string,
+  limit = 5,
+  ownerKind?: string,
+): Promise<GhRepo[]> {
+  if (!isTauri()) return [];
+  return invoke<GhRepo[]>("gh_list_repos", {
+    owner,
+    query: query?.trim() ? query.trim() : null,
+    limit,
+    ownerKind: ownerKind ?? null,
+  });
+}
+
+/** Default parent folder for cloning: `~/fold/projects`. */
+export async function defaultCloneParent(): Promise<string> {
+  if (!isTauri()) return "~/fold/projects";
+  return invoke<string>("default_clone_parent");
+}
+
 /** Open the GitHub PR creation page in the browser via `gh pr create --web`. */
 export async function ghPrCreateWeb(worktreePath: string): Promise<void> {
   if (!isTauri()) return;

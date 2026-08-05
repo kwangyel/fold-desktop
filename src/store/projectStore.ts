@@ -3,6 +3,7 @@ import {
   Project,
   CreateWorktreeOptions,
   archiveWorktree,
+  cloneGithubProject,
   createProject,
   createWorktree,
   listProjects,
@@ -30,6 +31,11 @@ type ProjectStore = {
     name: string,
     createGithub: boolean,
     initGit: boolean,
+  ) => Promise<void>;
+  cloneFromGithub: (
+    fullName: string,
+    parent: string,
+    name?: string,
   ) => Promise<void>;
   select: (id: string) => Promise<void>;
   selectWorktree: (projectId: string, worktreeId: string) => Promise<void>;
@@ -119,6 +125,27 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set({ error: null });
     try {
       const project = await openProject(path, name, createGithub, initGit);
+      set((s) => {
+        const projects = s.projects.some((p) => p.id === project.id)
+          ? replaceProject(s.projects, project)
+          : [...s.projects, project];
+        return {
+          projects,
+          activeId: project.id,
+          activePath: workspacePath(project),
+        };
+      });
+      onWorkspaceSwitch();
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
+
+  cloneFromGithub: async (fullName, parent, name) => {
+    set({ error: null });
+    try {
+      const project = await cloneGithubProject(fullName, parent, name);
       set((s) => {
         const projects = s.projects.some((p) => p.id === project.id)
           ? replaceProject(s.projects, project)
