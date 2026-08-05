@@ -140,6 +140,25 @@ export async function gitGithubRemote(path: string): Promise<boolean> {
   return invoke<boolean>("git_github_remote", { path });
 }
 
+/** GitHub owner (user or org) from `origin`, or null if not a GitHub remote. */
+export async function gitGithubOwner(path: string): Promise<string | null> {
+  if (!isTauri()) return null;
+  return invoke<string | null>("git_github_owner", { path });
+}
+
+export interface GithubRepoOwner {
+  login: string;
+  avatarUrl: string;
+}
+
+/** GitHub repo owner + avatar URL fetched from GitHub, or null if not a remote repo. */
+export async function gitGithubRepoOwner(
+  path: string,
+): Promise<GithubRepoOwner | null> {
+  if (!isTauri()) return null;
+  return invoke<GithubRepoOwner | null>("git_github_repo_owner", { path });
+}
+
 /** Current HEAD commit SHA for the repo at `path` ("" if there are no commits). */
 export async function gitHeadCommit(path: string): Promise<string> {
   if (!isTauri()) return "";

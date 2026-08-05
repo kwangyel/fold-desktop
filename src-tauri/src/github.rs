@@ -271,10 +271,106 @@ pub fn detect_github_remote(path: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Parse the GitHub owner (user or org) from a remote URL.
+fn parse_github_owner(url: &str) -> Option<String> {
+    let url = url.trim();
+    let path = if let Some(rest) = url.strip_prefix("git@github.com:") {
+        rest
+    } else if let Some(rest) = url.strip_prefix("ssh://git@github.com/") {
+        rest
+    } else if let Some(idx) = url.find("github.com/") {
+        &url[idx + "github.com/".len()..]
+    } else if let Some(idx) = url.find("github.com:") {
+        &url[idx + "github.com:".len()..]
+    } else {
+        return None;
+    };
+
+    let owner = path.split('/').next()?.trim_end_matches(".git");
+    if owner.is_empty() {
+        None
+    } else {
+        Some(owner.to_string())
+    }
+}
+
+/// Return the GitHub owner for `origin`, if the repo has a GitHub remote.
+pub fn github_owner_from_remote(path: &str) -> Option<String> {
+    let output = Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .current_dir(path)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let url = String::from_utf8_lossy(&output.stdout);
+    if !url.contains("github.com") {
+        return None;
+    }
+    parse_github_owner(&url)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubRepoOwner {
+    login: String,
+    avatar_url: String,
+}
+
+fn github_repo_owner_via_gh(path: &str) -> Option<GithubRepoOwner> {
+    let output = Command::new(gh_bin())
+        .args(["repo", "view", "--json", "owner"])
+        .current_dir(path)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).ok()?;
+    let owner = json.get("owner")?;
+    let login = owner.get("login")?.as_str()?.to_string();
+    // `gh` often returns only `{ id, login }` for owner — build the avatar URL ourselves.
+    let avatar_url = owner
+        .get("avatarUrl")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("https://avatars.githubusercontent.com/{login}?s=64"));
+    Some(GithubRepoOwner { login, avatar_url })
+}
+
+/// Resolve the GitHub repo owner and avatar URL for the repo at `path`.
+pub fn github_repo_owner(path: &str) -> Option<GithubRepoOwner> {
+    if !detect_github_remote(path) {
+        return None;
+    }
+    if let Some(owner) = github_repo_owner_via_gh(path) {
+        return Some(owner);
+    }
+    let login = github_owner_from_remote(path)?;
+    Some(GithubRepoOwner {
+        login: login.clone(),
+        avatar_url: format!("https://avatars.githubusercontent.com/{login}?s=64"),
+    })
+}
+
 /// Expose GitHub remote detection to the frontend.
 #[tauri::command]
 pub fn git_github_remote(path: String) -> bool {
     detect_github_remote(&path)
+}
+
+/// Expose GitHub owner lookup for a repo's `origin` remote.
+#[tauri::command]
+pub fn git_github_owner(path: String) -> Option<String> {
+    github_owner_from_remote(&path)
+}
+
+/// Expose GitHub repo owner + avatar for the repo at `path`.
+#[tauri::command]
+pub fn git_github_repo_owner(path: String) -> Option<GithubRepoOwner> {
+    github_repo_owner(&path)
 }
 
 /// Open the GitHub PR creation page in the browser via `gh pr create --web`.

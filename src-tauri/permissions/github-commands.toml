@@ -7,6 +7,8 @@ commands.allow = [
   "gh_auth_cancel",
   "gh_auth_logout",
   "git_github_remote",
+  "git_github_owner",
+  "git_github_repo_owner",
   "gh_repo_name_check",
   "gh_pr_create_web",
   "gh_pr_view",
