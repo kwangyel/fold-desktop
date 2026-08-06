@@ -32,6 +32,9 @@ type CodexStore = {
 
 const STATUS_TTL_MS = 15_000;
 
+/** Absolute ceiling — never leave the UI on "Waiting for authorization…" forever. */
+const LOGIN_HARD_TIMEOUT_MS = 120_000;
+
 function decode(chunk: CodexOutput): Uint8Array {
   return chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
 }
@@ -39,6 +42,7 @@ function decode(chunk: CodexOutput): Uint8Array {
 export const useCodexStore = create<CodexStore>((set, get) => {
   const outputListeners = new Set<(data: Uint8Array) => void>();
   let pollTimer: ReturnType<typeof setInterval> | null = null;
+  let loginHardTimer: ReturnType<typeof setTimeout> | null = null;
   let finishing = false;
   let inflightRefresh: Promise<void> | null = null;
   let checkedAt = 0;
@@ -48,12 +52,27 @@ export const useCodexStore = create<CodexStore>((set, get) => {
       clearInterval(pollTimer);
       pollTimer = null;
     }
+    if (loginHardTimer) {
+      clearTimeout(loginHardTimer);
+      loginHardTimer = null;
+    }
   }
 
   function resetFlow() {
     stopPolling();
     finishing = false;
     codexReleaseLoginChannel();
+  }
+
+  async function failLogin(message: string) {
+    if (!get().connecting || finishing) return;
+    resetFlow();
+    try {
+      await codexLoginCancel();
+    } catch {
+      // Best-effort — the PTY may already be gone.
+    }
+    set({ connecting: false, error: message });
   }
 
   function emitOutput(bytes: Uint8Array) {
@@ -156,6 +175,11 @@ export const useCodexStore = create<CodexStore>((set, get) => {
 
       try {
         await codexLogin(onOutput);
+        loginHardTimer = setTimeout(() => {
+          void failLogin(
+            "Codex login timed out. Try again, or run `codex login` in a terminal.",
+          );
+        }, LOGIN_HARD_TIMEOUT_MS);
         pollTimer = setInterval(() => {
           void (async () => {
             if (!get().connecting || finishing) return;

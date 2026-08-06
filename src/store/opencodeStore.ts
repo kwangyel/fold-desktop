@@ -32,6 +32,13 @@ type OpenCodeStore = {
 
 const STATUS_TTL_MS = 15_000;
 
+/**
+ * Absolute ceiling on the login flow. Generous compared to the OAuth harnesses:
+ * this one is a manual provider-select + API-key paste, so the user may be off
+ * fetching a key. It exists only so the panel can't spin forever.
+ */
+const LOGIN_HARD_TIMEOUT_MS = 600_000;
+
 function decode(chunk: OpenCodeOutput): Uint8Array {
   return chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
 }
@@ -39,6 +46,7 @@ function decode(chunk: OpenCodeOutput): Uint8Array {
 export const useOpenCodeStore = create<OpenCodeStore>((set, get) => {
   const outputListeners = new Set<(data: Uint8Array) => void>();
   let pollTimer: ReturnType<typeof setInterval> | null = null;
+  let loginHardTimer: ReturnType<typeof setTimeout> | null = null;
   let finishing = false;
   let inflightRefresh: Promise<void> | null = null;
   let checkedAt = 0;
@@ -48,12 +56,27 @@ export const useOpenCodeStore = create<OpenCodeStore>((set, get) => {
       clearInterval(pollTimer);
       pollTimer = null;
     }
+    if (loginHardTimer) {
+      clearTimeout(loginHardTimer);
+      loginHardTimer = null;
+    }
   }
 
   function resetFlow() {
     stopPolling();
     finishing = false;
     opencodeReleaseLoginChannel();
+  }
+
+  async function failLogin(message: string) {
+    if (!get().connecting || finishing) return;
+    resetFlow();
+    try {
+      await opencodeLoginCancel();
+    } catch {
+      // Best-effort — the PTY may already be gone.
+    }
+    set({ connecting: false, error: message });
   }
 
   function emitOutput(bytes: Uint8Array) {
@@ -159,6 +182,11 @@ export const useOpenCodeStore = create<OpenCodeStore>((set, get) => {
 
       try {
         await opencodeLogin(onOutput);
+        loginHardTimer = setTimeout(() => {
+          void failLogin(
+            "OpenCode login timed out. Try again, or run `opencode auth login` in a terminal.",
+          );
+        }, LOGIN_HARD_TIMEOUT_MS);
         pollTimer = setInterval(() => {
           void (async () => {
             if (!get().connecting || finishing) return;

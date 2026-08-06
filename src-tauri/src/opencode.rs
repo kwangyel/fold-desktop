@@ -88,23 +88,8 @@ fn resolve_opencode_bin() -> Option<PathBuf> {
 
 /// Resolve the `opencode` binary (PATH + common install dirs).
 fn probe_opencode_bin() -> Option<PathBuf> {
-    if Command::new("opencode")
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-    {
-        if let Ok(which) = Command::new("which").arg("opencode").output() {
-            if which.status.success() {
-                let path = String::from_utf8_lossy(&which.stdout).trim().to_string();
-                if !path.is_empty() {
-                    return Some(PathBuf::from(path));
-                }
-            }
-        }
-        return Some(PathBuf::from("opencode"));
+    if crate::proc::version_ok("opencode") {
+        return Some(crate::proc::which("opencode").unwrap_or_else(|| PathBuf::from("opencode")));
     }
 
     let mut candidates: Vec<PathBuf> = Vec::new();
@@ -127,19 +112,19 @@ fn probe_opencode_bin() -> Option<PathBuf> {
         }
     }
 
+    // PATH entries repeat and symlink onto each other; verifying the same
+    // binary twice means paying another CLI startup for nothing.
+    let mut tried: Vec<PathBuf> = Vec::new();
     for candidate in candidates {
         if !is_executable(&candidate) {
             continue;
         }
         let resolved = std::fs::canonicalize(&candidate).unwrap_or(candidate);
-        let ok = Command::new(&resolved)
-            .arg("--version")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if ok {
+        if tried.contains(&resolved) {
+            continue;
+        }
+        tried.push(resolved.clone());
+        if crate::proc::version_ok(&resolved) {
             return Some(resolved);
         }
     }
@@ -192,14 +177,13 @@ fn count_auth_providers() -> u32 {
 
 /// Fall back to `opencode auth list` when the auth file shape is unknown.
 fn auth_list_has_providers(bin: &std::path::Path) -> bool {
-    let output = Command::new(bin)
-        .args(["auth", "list"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output();
+    let output = crate::proc::output_with_timeout(
+        Command::new(bin).args(["auth", "list"]),
+        Duration::from_secs(10),
+    );
     match output {
-        Ok(out) if out.status.success() => {
-            let text = String::from_utf8_lossy(&out.stdout);
+        Ok(out) if out.success() => {
+            let text = out.stdout;
             let trimmed = text.trim();
             !trimmed.is_empty()
                 && !trimmed.to_lowercase().contains("no providers")
@@ -209,8 +193,14 @@ fn auth_list_has_providers(bin: &std::path::Path) -> bool {
     }
 }
 
-#[tauri::command(async)]
-pub fn opencode_status(force: Option<bool>) -> Result<OpenCodeStatus, String> {
+#[tauri::command]
+pub async fn opencode_status(force: Option<bool>) -> Result<OpenCodeStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || status_blocking(force))
+        .await
+        .map_err(|e| format!("opencode_status failed: {e}"))?
+}
+
+fn status_blocking(force: Option<bool>) -> Result<OpenCodeStatus, String> {
     if force.unwrap_or(false) {
         OPENCODE_BIN.clear();
     }
@@ -292,27 +282,28 @@ pub fn opencode_login_cancel(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+/// Cap `opencode models` so a hung CLI cannot wedge harness refresh.
+const MODELS_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// List models via `opencode models` (`provider/model` lines).
 #[tauri::command(async)]
 pub fn opencode_list_models() -> Result<Vec<OpenCodeModelInfo>, String> {
     let bin = resolve_opencode_bin().ok_or_else(|| "OpenCode CLI not found".to_string())?;
-    let output = Command::new(&bin)
-        .arg("models")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|e| format!("failed to run opencode models: {e}"))?;
+    let output = crate::proc::output_with_timeout(
+        Command::new(&bin).arg("models"),
+        MODELS_TIMEOUT,
+    )
+    .map_err(|e| format!("failed to run opencode models: {e}"))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.success() {
         return Err(format!(
             "opencode models failed ({}): {}",
-            output.status,
-            stderr.trim()
+            output.code,
+            output.stderr.trim()
         ));
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = &output.stdout;
     let mut models = Vec::new();
     for line in stdout.lines() {
         let id = line.trim();
@@ -379,7 +370,7 @@ pub fn opencode_agent_run(
         .map_err(|e| e.to_string())?
         .insert(session_id.clone(), cancel.clone());
 
-    let status = opencode_status(None)?;
+    let status = status_blocking(None)?;
     if !status.authenticated {
         return Err(
             "OpenCode is not authenticated. Open Connect Harness and log in.".to_string(),

@@ -45,4 +45,5 @@ export const opencodeAdapter: HarnessAdapter = {
       return OPENCODE_MODELS_FALLBACK;
     }
   },
+  fallbackModels: () => OPENCODE_MODELS_FALLBACK,
 };

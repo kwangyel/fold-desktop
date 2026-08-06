@@ -78,6 +78,7 @@ struct MeResponse {
 
 #[derive(Deserialize)]
 struct ModelsResponse {
+    #[serde(default)]
     items: Vec<ApiModel>,
 }
 
@@ -85,8 +86,12 @@ struct ModelsResponse {
 #[serde(rename_all = "camelCase")]
 struct ApiModel {
     id: String,
+    /// Some catalog entries omit this; fall back to `id`.
+    #[serde(default)]
     display_name: String,
+    #[serde(default)]
     description: Option<String>,
+    #[serde(default)]
     parameters: Option<Vec<ApiModelParam>>,
 }
 
@@ -94,10 +99,12 @@ struct ApiModel {
 #[serde(rename_all = "camelCase")]
 struct ApiModelParam {
     id: String,
+    #[serde(default)]
     values: Option<Vec<ApiParamValue>>,
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ApiParamValue {
     value: String,
 }
@@ -158,23 +165,8 @@ fn resolve_agent_bin() -> Option<PathBuf> {
 /// Resolve the Cursor Agent CLI (`agent` / `cursor-agent`).
 fn probe_agent_bin() -> Option<PathBuf> {
     for name in ["agent", "cursor-agent"] {
-        if Command::new(name)
-            .arg("--help")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-        {
-            if let Ok(which) = Command::new("which").arg(name).output() {
-                if which.status.success() {
-                    let path = String::from_utf8_lossy(&which.stdout).trim().to_string();
-                    if !path.is_empty() {
-                        return Some(PathBuf::from(path));
-                    }
-                }
-            }
-            return Some(PathBuf::from(name));
+        if crate::proc::probe_ok(name, "--help") {
+            return Some(crate::proc::which(name).unwrap_or_else(|| PathBuf::from(name)));
         }
     }
 
@@ -195,19 +187,19 @@ fn probe_agent_bin() -> Option<PathBuf> {
         }
     }
 
+    // PATH entries repeat and symlink onto each other; verifying the same
+    // binary twice means paying another CLI startup for nothing.
+    let mut tried: Vec<PathBuf> = Vec::new();
     for candidate in candidates {
         if !is_executable(&candidate) {
             continue;
         }
         let resolved = std::fs::canonicalize(&candidate).unwrap_or(candidate);
-        let ok = Command::new(&resolved)
-            .arg("--help")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if ok {
+        if tried.contains(&resolved) {
+            continue;
+        }
+        tried.push(resolved.clone());
+        if crate::proc::probe_ok(&resolved, "--help") {
             return Some(resolved);
         }
     }
@@ -222,15 +214,23 @@ fn saved_api_key(app: &AppHandle) -> Result<Option<String>, String> {
         .filter(|s| !s.is_empty()))
 }
 
-fn http_client() -> Result<reqwest::blocking::Client, String> {
+fn http_client_with_timeout(timeout: Duration) -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(timeout)
         .build()
         .map_err(|e| format!("failed to build HTTP client: {e}"))
 }
 
 fn api_get_json<T: for<'de> Deserialize<'de>>(api_key: &str, path: &str) -> Result<T, String> {
-    let client = http_client()?;
+    api_get_json_with_timeout(api_key, path, Duration::from_secs(30))
+}
+
+fn api_get_json_with_timeout<T: for<'de> Deserialize<'de>>(
+    api_key: &str,
+    path: &str,
+    timeout: Duration,
+) -> Result<T, String> {
+    let client = http_client_with_timeout(timeout)?;
     let url = format!("{API_BASE}{path}");
     let res = client
         .get(&url)
@@ -279,16 +279,21 @@ fn map_model(m: ApiModel) -> CursorModelInfo {
         .as_ref()
         .map(|l| !l.is_empty())
         .unwrap_or(false);
+    let display_name = if m.display_name.trim().is_empty() {
+        m.id.clone()
+    } else {
+        m.display_name
+    };
     let description = m
         .description
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| m.display_name.clone());
+        .unwrap_or_else(|| display_name.clone());
 
     let supports_auto = m.id.contains("auto");
     CursorModelInfo {
         value: m.id.clone(),
         resolved_model: Some(m.id),
-        display_name: m.display_name,
+        display_name,
         description,
         supports_effort: supports_effort.then_some(true),
         supported_effort_levels: effort_levels,
@@ -303,8 +308,14 @@ fn stream_pipe<R: Read + Send + 'static>(reader: R, on_output: Channel) {
 }
 
 /// Status uses the **saved** API key only so Disconnect always clears connection.
-#[tauri::command(async)]
-pub fn cursor_status(app: AppHandle, force: Option<bool>) -> Result<CursorStatus, String> {
+#[tauri::command]
+pub async fn cursor_status(app: AppHandle, force: Option<bool>) -> Result<CursorStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || status_blocking(&app, force))
+        .await
+        .map_err(|e| format!("cursor_status failed: {e}"))?
+}
+
+fn status_blocking(app: &AppHandle, force: Option<bool>) -> Result<CursorStatus, String> {
     if force.unwrap_or(false) {
         CURSOR_BIN.clear();
     }
@@ -330,8 +341,14 @@ pub fn cursor_status(app: AppHandle, force: Option<bool>) -> Result<CursorStatus
 }
 
 /// Validate `api_key` against `GET /v1/me` and persist it on success.
-#[tauri::command(async)]
-pub fn cursor_connect(app: AppHandle, api_key: String) -> Result<CursorStatus, String> {
+#[tauri::command]
+pub async fn cursor_connect(app: AppHandle, api_key: String) -> Result<CursorStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || connect_blocking(&app, api_key))
+        .await
+        .map_err(|e| format!("cursor_connect failed: {e}"))?
+}
+
+fn connect_blocking(app: &AppHandle, api_key: String) -> Result<CursorStatus, String> {
     let key = api_key.trim().to_string();
     if key.is_empty() {
         return Err("API key is required".to_string());
@@ -346,6 +363,10 @@ pub fn cursor_connect(app: AppHandle, api_key: String) -> Result<CursorStatus, S
             user_email: me.user_email.clone(),
         },
     )?;
+    // New key → drop any catalog fetched under a previous account.
+    if let Ok(mut cache) = MODEL_CACHE.lock() {
+        *cache = None;
+    }
 
     Ok(CursorStatus {
         authenticated: true,
@@ -360,15 +381,61 @@ pub fn cursor_connect(app: AppHandle, api_key: String) -> Result<CursorStatus, S
 #[tauri::command(async)]
 pub fn cursor_disconnect(app: AppHandle) -> Result<CursorStatus, String> {
     write_file(&app, &CursorFile::default())?;
-    cursor_status(app, None)
+    if let Ok(mut cache) = MODEL_CACHE.lock() {
+        *cache = None;
+    }
+    status_blocking(&app, None)
 }
 
+/// How long a successful `GET /v1/models` response is reused. The catalog
+/// changes infrequently; re-hitting the network on every picker open is what
+/// pushed us past the frontend timeout into the static fallback.
+const MODEL_CACHE_TTL: Duration = Duration::from_secs(600);
+
+/// Bound the models request so a slow network cannot wedge harness refresh,
+/// but leave enough headroom that a normal API round-trip completes.
+const MODELS_HTTP_TIMEOUT: Duration = Duration::from_secs(15);
+
+static MODEL_CACHE: std::sync::Mutex<Option<(std::time::Instant, Vec<CursorModelInfo>)>> =
+    std::sync::Mutex::new(None);
+
 /// List models from `GET /v1/models` using the saved API key.
-#[tauri::command(async)]
-pub fn cursor_list_models(app: AppHandle) -> Result<Vec<CursorModelInfo>, String> {
-    let key = saved_api_key(&app)?.ok_or_else(|| "No Cursor API key configured".to_string())?;
-    let response = api_get_json::<ModelsResponse>(&key, "/v1/models")?;
-    Ok(response.items.into_iter().map(map_model).collect())
+///
+/// `spawn_blocking`, not `#[tauri::command(async)]`: the body blocks on a
+/// network round-trip, and `(async)` would run it on an async-runtime worker
+/// thread. Those workers are shared with every other blocking command (git,
+/// `gh`, harness CLI probes), so a busy startup can leave this one queued far
+/// longer than the request itself takes.
+#[tauri::command]
+pub async fn cursor_list_models(app: AppHandle) -> Result<Vec<CursorModelInfo>, String> {
+    tauri::async_runtime::spawn_blocking(move || list_models_blocking(&app))
+        .await
+        .map_err(|e| format!("cursor model lookup failed: {e}"))?
+}
+
+fn list_models_blocking(app: &AppHandle) -> Result<Vec<CursorModelInfo>, String> {
+    if let Ok(cache) = MODEL_CACHE.lock() {
+        if let Some((at, models)) = cache.as_ref() {
+            if at.elapsed() < MODEL_CACHE_TTL && !models.is_empty() {
+                return Ok(models.clone());
+            }
+        }
+    }
+
+    let key = saved_api_key(app)?.ok_or_else(|| "No Cursor API key configured".to_string())?;
+    let started = std::time::Instant::now();
+    let response: ModelsResponse =
+        api_get_json_with_timeout(&key, "/v1/models", MODELS_HTTP_TIMEOUT)?;
+    eprintln!("[fold][cursor] GET /v1/models took {:?}", started.elapsed());
+    let models: Vec<CursorModelInfo> = response.items.into_iter().map(map_model).collect();
+    if models.is_empty() {
+        return Err("Cursor API returned an empty model catalog".to_string());
+    }
+
+    if let Ok(mut cache) = MODEL_CACHE.lock() {
+        *cache = Some((std::time::Instant::now(), models.clone()));
+    }
+    Ok(models)
 }
 
 /// Run Cursor Agent CLI in a worktree (`agent -p --output-format stream-json`).
@@ -504,4 +571,62 @@ pub fn cursor_agent_cancel(session_id: String, state: State<'_, AppState>) -> Re
         cancel.store(true, Ordering::SeqCst);
     }
     Ok(())
+}
+
+
+#[cfg(test)]
+mod cursor_models_api_tests {
+    use super::*;
+
+    #[test]
+    fn parses_live_v1_models_fixture() {
+        let raw = std::fs::read_to_string("/tmp/cursor-models.json")
+            .expect("missing /tmp/cursor-models.json — fetch GET /v1/models first");
+        let parsed: ModelsResponse =
+            serde_json::from_str(&raw).expect("ModelsResponse deserialize");
+        assert!(
+            parsed.items.len() >= 30,
+            "expected full Cursor catalog, got {}",
+            parsed.items.len()
+        );
+        let models: Vec<CursorModelInfo> = parsed.items.into_iter().map(map_model).collect();
+        assert!(models.iter().any(|m| m.value == "composer-2.5"));
+        assert!(models.iter().any(|m| m.value == "claude-sonnet-5"));
+        assert!(models.iter().any(|m| m.value == "default"));
+        // Must not look like the 3-item static fallback.
+        assert!(models.len() > 3);
+    }
+}
+
+#[cfg(test)]
+mod cursor_live_api_tests {
+    use super::*;
+
+    /// Diagnostic: exercise the real HTTP path (reqwest build + auth + parse)
+    /// with the saved key. `cargo test -- --ignored live_v1_models`.
+    #[test]
+    #[ignore]
+    fn live_v1_models() {
+        let path = format!(
+            "{}/Library/Application Support/com.fold.dev/cursor.json",
+            std::env::var("HOME").unwrap()
+        );
+        let Ok(raw) = std::fs::read_to_string(&path) else {
+            println!("skipped: no saved key at {path}");
+            return;
+        };
+        let file: CursorFile = serde_json::from_str(&raw).unwrap();
+        let key = file.api_key.expect("cursor.json has no apiKey");
+        let res: Result<ModelsResponse, String> =
+            api_get_json_with_timeout(&key, "/v1/models", MODELS_HTTP_TIMEOUT);
+        match res {
+            Ok(r) => {
+                let models: Vec<CursorModelInfo> =
+                    r.items.into_iter().map(map_model).collect();
+                println!("OK: {} models; first={:?}", models.len(), models.first().map(|m| &m.value));
+                assert!(!models.is_empty());
+            }
+            Err(e) => panic!("cursor /v1/models failed: {e}"),
+        }
+    }
 }

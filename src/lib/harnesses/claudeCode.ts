@@ -80,4 +80,5 @@ export const claudeCodeAdapter: HarnessAdapter = {
       return CLAUDE_CODE_MODELS_FALLBACK;
     }
   },
+  fallbackModels: () => CLAUDE_CODE_MODELS_FALLBACK,
 };
