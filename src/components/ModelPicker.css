@@ -50,8 +50,19 @@
 }
 
 .model-picker-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 10px 12px;
   font-size: 12px;
+  color: var(--muted);
+}
+
+/* Why a connected harness contributed no models. */
+.model-picker-failed {
+  padding: 8px 12px 10px;
+  font-size: 11px;
+  line-height: 1.4;
   color: var(--muted);
 }
 

@@ -24,6 +24,9 @@ pub struct ClaudeStatus {
     installed: bool,
     authenticated: bool,
     method: Option<String>,
+    /// Set when the credential store could not be read at all (as opposed to
+    /// being readable and empty), so the UI can explain why login never lands.
+    credential_error: Option<String>,
 }
 
 /// Model catalog entry from the Claude Agent SDK (`supportedModels()`).
@@ -84,23 +87,8 @@ fn resolve_claude_bin() -> Option<PathBuf> {
 /// through `resolve_claude_bin` so the result is cached.
 fn probe_claude_bin() -> Option<PathBuf> {
     // 1) Plain PATH lookup (works when launched from a configured shell).
-    if Command::new("claude")
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-    {
-        if let Ok(which) = Command::new("which").arg("claude").output() {
-            if which.status.success() {
-                let path = String::from_utf8_lossy(&which.stdout).trim().to_string();
-                if !path.is_empty() {
-                    return Some(PathBuf::from(path));
-                }
-            }
-        }
-        return Some(PathBuf::from("claude"));
+    if crate::proc::version_ok("claude") {
+        return Some(crate::proc::which("claude").unwrap_or_else(|| PathBuf::from("claude")));
     }
 
     // 2) Well-known install locations the CLI installer / package managers use.
@@ -123,19 +111,19 @@ fn probe_claude_bin() -> Option<PathBuf> {
         }
     }
 
+    // PATH entries repeat and symlink onto each other; verifying the same
+    // binary twice means paying another CLI startup for nothing.
+    let mut tried: Vec<PathBuf> = Vec::new();
     for candidate in candidates {
         if !is_executable(&candidate) {
             continue;
         }
         let resolved = std::fs::canonicalize(&candidate).unwrap_or(candidate);
-        let ok = Command::new(&resolved)
-            .arg("--version")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if ok {
+        if tried.contains(&resolved) {
+            continue;
+        }
+        tried.push(resolved.clone());
+        if crate::proc::version_ok(&resolved) {
             return Some(resolved);
         }
     }
@@ -163,42 +151,72 @@ fn env_auth_method() -> Option<&'static str> {
     }
 }
 
+/// Outcome of the non-interactive credential probe.
+enum Credentials {
+    Found,
+    Missing,
+    /// The store exists but we could not read it — typically a macOS keychain
+    /// ACL that excludes `/usr/bin/security`, where the OS prompts (or refuses)
+    /// instead of answering. Reported to the user, because otherwise a machine
+    /// that *is* logged in looks permanently logged out.
+    Unreadable(String),
+}
+
 /// Non-interactive credential probe (no TTY). Mirrors Conductor: reuse the
 /// machine's Claude Code login — keychain on macOS, credentials file elsewhere.
-fn subscription_authenticated() -> bool {
+fn subscription_credentials() -> Credentials {
     #[cfg(target_os = "macos")]
     {
         let user = std::env::var("USER").unwrap_or_default();
-        Command::new("security")
-            .args([
+        let probe = crate::proc::output_with_timeout(
+            Command::new("security").args([
                 "find-generic-password",
                 "-a",
                 &user,
                 "-s",
                 "Claude Code-credentials",
                 "-w",
-            ])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
+            ]),
+            Duration::from_secs(10),
+        );
+        match probe {
+            Ok(out) if out.success() => Credentials::Found,
+            // The tool says so explicitly when there is simply no login yet.
+            Ok(out) if out.stderr.contains("could not be found") => Credentials::Missing,
+            Ok(out) => Credentials::Unreadable(format!(
+                "Could not read the Claude Code keychain item: {}",
+                out.stderr.trim()
+            )),
+            Err(e) => Credentials::Unreadable(format!("Keychain lookup failed: {e}")),
+        }
     }
     #[cfg(not(target_os = "macos"))]
     {
         let home = std::env::var("HOME")
             .or_else(|_| std::env::var("USERPROFILE"))
             .ok();
-        home.map(|h| PathBuf::from(h).join(".claude").join(".credentials.json").is_file())
-            .unwrap_or(false)
+        let found = home
+            .map(|h| PathBuf::from(h).join(".claude").join(".credentials.json").is_file())
+            .unwrap_or(false);
+        if found {
+            Credentials::Found
+        } else {
+            Credentials::Missing
+        }
     }
 }
 
 /// Report whether the Claude Code CLI is installed and authenticated.
 /// `force` re-probes for the CLI instead of reusing the cached path — used when
 /// the user explicitly rechecks after installing it.
-#[tauri::command(async)]
-pub fn claude_status(force: Option<bool>) -> Result<ClaudeStatus, String> {
+#[tauri::command]
+pub async fn claude_status(force: Option<bool>) -> Result<ClaudeStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || status_blocking(force))
+        .await
+        .map_err(|e| format!("claude_status failed: {e}"))?
+}
+
+fn status_blocking(force: Option<bool>) -> Result<ClaudeStatus, String> {
     if force.unwrap_or(false) {
         CLAUDE_BIN.clear();
     }
@@ -208,6 +226,7 @@ pub fn claude_status(force: Option<bool>) -> Result<ClaudeStatus, String> {
             installed: false,
             authenticated: false,
             method: None,
+            credential_error: None,
         });
     }
 
@@ -216,27 +235,36 @@ pub fn claude_status(force: Option<bool>) -> Result<ClaudeStatus, String> {
             installed: true,
             authenticated: true,
             method: Some(method.to_string()),
+            credential_error: None,
         });
     }
 
-    if subscription_authenticated() {
-        return Ok(ClaudeStatus {
+    match subscription_credentials() {
+        Credentials::Found => Ok(ClaudeStatus {
             installed: true,
             authenticated: true,
             method: Some("subscription".to_string()),
-        });
+            credential_error: None,
+        }),
+        Credentials::Missing => Ok(ClaudeStatus {
+            installed: true,
+            authenticated: false,
+            method: None,
+            credential_error: None,
+        }),
+        Credentials::Unreadable(message) => Ok(ClaudeStatus {
+            installed: true,
+            authenticated: false,
+            method: None,
+            credential_error: Some(message),
+        }),
     }
-
-    Ok(ClaudeStatus {
-        installed: true,
-        authenticated: false,
-        method: None,
-    })
 }
 
 /// Start an interactive Claude Code login in a PTY (Ink TUI requires a real TTY).
 /// Credentials persist to the machine keychain / credential store — nothing is
-/// saved app-side. The frontend should write `/login\r` shortly after spawn.
+/// saved app-side. The frontend should wait for TUI readiness before writing
+/// `/login\r` (a fixed delay often lands in a not-yet-ready readline).
 #[tauri::command(async)]
 pub fn claude_login(on_output: Channel, state: State<'_, AppState>) -> Result<(), String> {
     // Drop any prior login session (Drop kills the child).
@@ -322,14 +350,7 @@ pub fn resolve_node_bin() -> Option<PathBuf> {
 }
 
 fn probe_node_bin() -> Option<PathBuf> {
-    if Command::new("node")
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-    {
+    if crate::proc::version_ok("node") {
         return Some(PathBuf::from("node"));
     }
     for candidate in [
@@ -355,8 +376,14 @@ pub struct ClaudeUsageStatus {
 }
 
 /// Fetch Claude Code context + session usage without running an agent turn.
-#[tauri::command(async)]
-pub fn claude_usage_status(worktree: Option<String>) -> Result<ClaudeUsageStatus, String> {
+#[tauri::command]
+pub async fn claude_usage_status(worktree: Option<String>) -> Result<ClaudeUsageStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || usage_status_blocking(worktree))
+        .await
+        .map_err(|e| format!("claude_usage_status failed: {e}"))?
+}
+
+fn usage_status_blocking(worktree: Option<String>) -> Result<ClaudeUsageStatus, String> {
     let root = project_root().ok_or_else(|| {
         "Fold project root not found (need package.json + scripts/claude-usage.mjs)".to_string()
     })?;
@@ -377,31 +404,58 @@ pub fn claude_usage_status(worktree: Option<String>) -> Result<ClaudeUsageStatus
         }
     }
 
-    let output = cmd
-        .output()
+    let output = crate::proc::output_with_timeout(&mut cmd, SDK_SCRIPT_TIMEOUT)
         .map_err(|e| format!("failed to run claude-usage: {e}"))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.success() {
         return Err(format!(
             "claude-usage failed ({}): {}",
-            output.status,
-            stderr.trim()
+            output.code,
+            output.stderr.trim()
         ));
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    serde_json::from_str(stdout.trim()).map_err(|e| {
+    serde_json::from_str(output.stdout.trim()).map_err(|e| {
         format!(
             "failed to parse usage status: {e}; stdout={}",
-            stdout.chars().take(200).collect::<String>()
+            output.stdout.chars().take(200).collect::<String>()
         )
     })
 }
 
+/// How long a successfully fetched model catalog is reused. The SDK query
+/// boots the Claude Code CLI, so re-running it on every picker open is pure
+/// latency for a list that changes at release cadence.
+const MODEL_CACHE_TTL: Duration = Duration::from_secs(600);
+
+/// The SDK scripts talk to the network; cap them so a stall can never wedge the
+/// harness refresh that awaits them.
+const SDK_SCRIPT_TIMEOUT: Duration = Duration::from_secs(10);
+
+static MODEL_CACHE: std::sync::Mutex<Option<(std::time::Instant, Vec<ClaudeModelInfo>)>> =
+    std::sync::Mutex::new(None);
+
 /// List Claude Code models via the Agent SDK (`supportedModels()`).
-#[tauri::command(async)]
-pub fn claude_list_models() -> Result<Vec<ClaudeModelInfo>, String> {
+/// Cached for `MODEL_CACHE_TTL`; the caller falls back to a static catalog on
+/// error, so failing fast here is better than blocking.
+#[tauri::command]
+pub async fn claude_list_models() -> Result<Vec<ClaudeModelInfo>, String> {
+    tauri::async_runtime::spawn_blocking(move || list_models_blocking())
+        .await
+        .map_err(|e| format!("claude_list_models failed: {e}"))?
+}
+
+fn list_models_blocking() -> Result<Vec<ClaudeModelInfo>, String> {
+    if let Ok(cache) = MODEL_CACHE.lock() {
+        if let Some((at, models)) = cache.as_ref() {
+            if at.elapsed() < MODEL_CACHE_TTL {
+                return Ok(models.clone());
+            }
+        }
+    }
+
+    // Packaged builds ship no `scripts/` directory — don't pay a Node lookup
+    // and spawn just to fail; the frontend's static catalog is the answer.
     let root = project_root().ok_or_else(|| {
         "Fold project root not found (need package.json + scripts/list-claude-models.mjs)"
             .to_string()
@@ -412,30 +466,32 @@ pub fn claude_list_models() -> Result<Vec<ClaudeModelInfo>, String> {
     }
     let node = resolve_node_bin().ok_or_else(|| "Node.js not found (required to query Claude Agent SDK)".to_string())?;
 
-    let output = Command::new(&node)
-        .arg(&script)
-        .current_dir(&root)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|e| format!("failed to run list-claude-models: {e}"))?;
+    let output = crate::proc::output_with_timeout(
+        Command::new(&node).arg(&script).current_dir(&root),
+        SDK_SCRIPT_TIMEOUT,
+    )
+    .map_err(|e| format!("failed to run list-claude-models: {e}"))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.success() {
         return Err(format!(
             "list-claude-models failed ({}): {}",
-            output.status,
-            stderr.trim()
+            output.code,
+            output.stderr.trim()
         ));
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    serde_json::from_str(stdout.trim()).map_err(|e| {
-        format!(
-            "failed to parse model catalog: {e}; stdout={}",
-            stdout.chars().take(200).collect::<String>()
-        )
-    })
+    let models: Vec<ClaudeModelInfo> =
+        serde_json::from_str(output.stdout.trim()).map_err(|e| {
+            format!(
+                "failed to parse model catalog: {e}; stdout={}",
+                output.stdout.chars().take(200).collect::<String>()
+            )
+        })?;
+
+    if let Ok(mut cache) = MODEL_CACHE.lock() {
+        *cache = Some((std::time::Instant::now(), models.clone()));
+    }
+    Ok(models)
 }
 
 /// Short system hint prepended to harness prompts when Fold's MCP server is

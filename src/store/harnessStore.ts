@@ -30,6 +30,12 @@ type HarnessStore = {
   models: HarnessModel[];
   /** Connected harness metadata (for icons / section headers). */
   connectedHarnesses: HarnessMeta[];
+  /**
+   * Why a connected harness's catalog failed to load, keyed by harness id.
+   * Surfaced in the picker so a connected-but-empty harness explains itself
+   * instead of silently disappearing.
+   */
+  harnessErrors: Partial<Record<HarnessId, string>>;
   loading: boolean;
   error: string | null;
   /** Last successful fetch timestamp (ms). */
@@ -53,11 +59,13 @@ let inflightModels: Promise<void> | null = null;
 async function loadModelsInto(
   set: (partial: Partial<HarnessStore>) => void,
 ): Promise<void> {
-  const connected = getConnectedAdapters().map((a) => a.meta);
+  const adapters = getConnectedAdapters();
+  const connected = adapters.map((a) => a.meta);
   if (connected.length === 0) {
     set({
       models: [],
       connectedHarnesses: [],
+      harnessErrors: {},
       loading: false,
       fetchedAt: Date.now(),
       error: null,
@@ -65,12 +73,20 @@ async function loadModelsInto(
     return;
   }
 
-  const models = await listConnectedHarnessModels();
+  // Per-adapter timeouts always settle — no outer race that would discard a
+  // successful Cursor /v1/models response and replace it with static stubs.
+  const { models, errors } = await listConnectedHarnessModels();
+  const failed = Object.keys(errors).length > 0;
   set({
     models,
     connectedHarnesses: connected,
+    harnessErrors: errors,
     loading: false,
-    fetchedAt: Date.now(),
+    // A partial result must never satisfy the TTL: leaving `fetchedAt` null
+    // makes the next refresh re-fetch instead of serving a catalog that is
+    // missing a connected harness (Cursor, which has no static fallback,
+    // otherwise just disappears from the picker until the TTL expires).
+    fetchedAt: failed ? null : Date.now(),
     error: null,
   });
   if (connected.some((h) => h.id === "claudecode")) {
@@ -78,9 +94,28 @@ async function loadModelsInto(
   }
 }
 
+/** Docs fallbacks for non-Cursor harnesses when a live fetch fails. */
+function fallbackModelsForConnected(): {
+  models: HarnessModel[];
+  connectedHarnesses: HarnessMeta[];
+} {
+  const adapters = getConnectedAdapters();
+  return {
+    connectedHarnesses: adapters.map((a) => a.meta),
+    models: adapters.flatMap((adapter) => {
+      // Cursor has no static catalog — omit rather than inject stubs.
+      if (adapter.id === "cursor") return [];
+      return adapter.fallbackModels().map(
+        (m): HarnessModel => ({ ...m, harnessId: adapter.id }),
+      );
+    }),
+  };
+}
+
 export const useHarnessStore = create<HarnessStore>((set, get) => ({
   models: [],
   connectedHarnesses: [],
+  harnessErrors: {},
   loading: false,
   error: null,
   fetchedAt: null,
@@ -89,8 +124,11 @@ export const useHarnessStore = create<HarnessStore>((set, get) => ({
     const force = opts?.force ?? false;
     const silent = opts?.silent ?? false;
     const { fetchedAt, models } = get();
+    // Only reuse a recent hit when the last fetch was complete. Partial
+    // results leave `fetchedAt` null so they never suppress a retry.
     if (
       !force &&
+      models.length > 0 &&
       fetchedAt != null &&
       Date.now() - fetchedAt < HARNESS_CACHE_TTL_MS
     ) {
@@ -113,12 +151,21 @@ export const useHarnessStore = create<HarnessStore>((set, get) => ({
         ]);
         await loadModelsInto(set);
       } catch (e) {
+        // Still publish connected harnesses + static catalogs so the picker
+        // doesn't claim "Connect a harness" while the dialog shows Connected.
+        const fallback = fallbackModelsForConnected();
         set({
           error: String(e),
           loading: false,
-          ...(models.length === 0
-            ? { models: [], connectedHarnesses: [] }
-            : {}),
+          ...(fallback.models.length > 0
+            ? {
+                models: fallback.models,
+                connectedHarnesses: fallback.connectedHarnesses,
+                fetchedAt: Date.now(),
+              }
+            : models.length === 0
+              ? { models: [], connectedHarnesses: [] }
+              : {}),
         });
       } finally {
         inflightRefresh = null;
@@ -130,25 +177,36 @@ export const useHarnessStore = create<HarnessStore>((set, get) => ({
 
   refreshModels: async (opts) => {
     if (inflightModels) return inflightModels;
-    // Prefer joining a full refresh if one is already running.
-    if (inflightRefresh) return inflightRefresh;
 
     const silent = opts?.silent ?? false;
     const { models } = get();
 
     inflightModels = (async () => {
+      // Wait out a full refresh, then always reload from *current* connection
+      // state. Joining the in-flight refresh would reuse a models snapshot
+      // taken before a just-completed login, leaving the new harness missing
+      // until the 30s TTL expires.
+      if (inflightRefresh) await inflightRefresh;
+
       const blockUi = !silent && models.length === 0;
       if (blockUi) set({ loading: true, error: null });
       else set({ error: null });
       try {
         await loadModelsInto(set);
       } catch (e) {
+        const fallback = fallbackModelsForConnected();
         set({
           error: String(e),
           loading: false,
-          ...(models.length === 0
-            ? { models: [], connectedHarnesses: [] }
-            : {}),
+          ...(fallback.models.length > 0
+            ? {
+                models: fallback.models,
+                connectedHarnesses: fallback.connectedHarnesses,
+                fetchedAt: Date.now(),
+              }
+            : models.length === 0
+              ? { models: [], connectedHarnesses: [] }
+              : {}),
         });
       } finally {
         inflightModels = null;

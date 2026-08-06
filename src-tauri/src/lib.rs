@@ -7,6 +7,7 @@ mod fold_paths;
 mod git;
 mod github;
 mod opencode;
+mod proc;
 mod projects;
 mod pty;
 mod stream;

@@ -60,4 +60,5 @@ export const codexAdapter: HarnessAdapter = {
       return CODEX_MODELS_FALLBACK;
     }
   },
+  fallbackModels: () => CODEX_MODELS_FALLBACK,
 };

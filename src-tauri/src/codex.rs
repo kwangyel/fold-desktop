@@ -86,23 +86,8 @@ fn resolve_codex_bin() -> Option<PathBuf> {
 
 /// Resolve the `codex` binary (PATH + common install dirs + Conductor bins).
 fn probe_codex_bin() -> Option<PathBuf> {
-    if Command::new("codex")
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-    {
-        if let Ok(which) = Command::new("which").arg("codex").output() {
-            if which.status.success() {
-                let path = String::from_utf8_lossy(&which.stdout).trim().to_string();
-                if !path.is_empty() {
-                    return Some(PathBuf::from(path));
-                }
-            }
-        }
-        return Some(PathBuf::from("codex"));
+    if crate::proc::version_ok("codex") {
+        return Some(crate::proc::which("codex").unwrap_or_else(|| PathBuf::from("codex")));
     }
 
     let mut candidates: Vec<PathBuf> = Vec::new();
@@ -125,19 +110,19 @@ fn probe_codex_bin() -> Option<PathBuf> {
         }
     }
 
+    // PATH entries repeat and symlink onto each other; verifying the same
+    // binary twice means paying another CLI startup for nothing.
+    let mut tried: Vec<PathBuf> = Vec::new();
     for candidate in candidates {
         if !is_executable(&candidate) {
             continue;
         }
         let resolved = std::fs::canonicalize(&candidate).unwrap_or(candidate);
-        let ok = Command::new(&resolved)
-            .arg("--version")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if ok {
+        if tried.contains(&resolved) {
+            continue;
+        }
+        tried.push(resolved.clone());
+        if crate::proc::version_ok(&resolved) {
             return Some(resolved);
         }
     }
@@ -175,19 +160,23 @@ fn auth_file_present() -> bool {
         .unwrap_or(false)
 }
 
-/// `codex login status` exits 0 when credentials are present.
+/// `codex login status` exits 0 when credentials are present. Bounded: this
+/// runs inside a status check the UI is waiting on.
 fn login_status_ok(bin: &std::path::Path) -> bool {
-    Command::new(bin)
-        .args(["login", "status"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    crate::proc::status_ok_with_timeout(
+        Command::new(bin).args(["login", "status"]),
+        Duration::from_secs(10),
+    )
 }
 
-#[tauri::command(async)]
-pub fn codex_status(force: Option<bool>) -> Result<CodexStatus, String> {
+#[tauri::command]
+pub async fn codex_status(force: Option<bool>) -> Result<CodexStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || status_blocking(force))
+        .await
+        .map_err(|e| format!("codex_status failed: {e}"))?
+}
+
+fn status_blocking(force: Option<bool>) -> Result<CodexStatus, String> {
     if force.unwrap_or(false) {
         CODEX_BIN.clear();
     }
@@ -376,7 +365,7 @@ pub fn codex_agent_run(
         .map_err(|e| e.to_string())?
         .insert(session_id.clone(), cancel.clone());
 
-    let status = codex_status(None)?;
+    let status = status_blocking(None)?;
     if !status.authenticated {
         return Err(
             "Codex is not authenticated. Open Connect Harness and log in.".to_string(),

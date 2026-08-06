@@ -7,6 +7,11 @@ export interface ClaudeStatus {
   authenticated: boolean;
   /** `"subscription"` | `"apiKey"` when authenticated. */
   method: string | null;
+  /**
+   * Set when the credential store exists but could not be read (e.g. macOS
+   * keychain ACL denied `/usr/bin/security`). Distinct from "not logged in".
+   */
+  credentialError?: string | null;
 }
 
 /** Raw output chunk from a streamed Claude CLI process. */
@@ -72,7 +77,7 @@ export async function claudeUsageStatus(
 
 /**
  * Start interactive Claude Code login in a PTY. Output streams to `onOutput`.
- * Caller should write `/login\r` shortly after this resolves.
+ * Caller should watch for TUI readiness before writing `/login\r`.
  */
 export async function claudeLogin(
   onOutput: (chunk: ClaudeOutput) => void,

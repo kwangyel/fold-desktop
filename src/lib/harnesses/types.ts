@@ -33,4 +33,9 @@ export type HarnessAdapter = {
   supportsPlanMode: boolean;
   /** Fetch models from the harness SDK/API (or docs fallback). */
   listModels: () => Promise<ModelInfo[]>;
+  /**
+   * Static catalog used when the live fetch hangs or fails. Kept separate so
+   * a timed-out `listModels` can still fill the picker without waiting on IPC.
+   */
+  fallbackModels: () => ModelInfo[];
 };

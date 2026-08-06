@@ -5,34 +5,13 @@ import { harnessMeta } from "./catalog";
 import type { HarnessAdapter } from "./types";
 
 /**
- * Docs / API-shaped fallback when live `GET /v1/models` is unavailable.
- * IDs match Cursor Cloud Agents API examples.
+ * No static Cursor catalog. Live `GET /v1/models` returns the real list
+ * (30+ models). A hardcoded 3-item stub was previously masking API failures
+ * and getting TTL-cached in the picker.
  *
  * @see https://cursor.com/docs/cloud-agent/api/endpoints#list-models
  */
-export const CURSOR_MODELS_FALLBACK: ModelInfo[] = [
-  {
-    value: "composer-2",
-    resolvedModel: "composer-2",
-    displayName: "Composer 2",
-    description: "Cursor Composer 2 · Default coding agent model",
-    supportsFastMode: true,
-  },
-  {
-    value: "composer-2.5",
-    resolvedModel: "composer-2.5",
-    displayName: "Composer 2.5",
-    description: "Cursor Composer 2.5 · Latest Composer agent model",
-    supportsFastMode: true,
-  },
-  {
-    value: "auto-smart",
-    resolvedModel: "auto-smart",
-    displayName: "Auto (Router)",
-    description: "Cursor Router picks a model per request",
-    supportsAutoMode: true,
-  },
-];
+export const CURSOR_MODELS_FALLBACK: ModelInfo[] = [];
 
 export const cursorAdapter: HarnessAdapter = {
   id: "cursor",
@@ -40,11 +19,6 @@ export const cursorAdapter: HarnessAdapter = {
   isConnected: () => useCursorStore.getState().authenticated,
   // `cursor-agent --mode plan` (read-only: analyze, propose, no edits).
   supportsPlanMode: true,
-  listModels: async () => {
-    try {
-      return await cursorListModels();
-    } catch {
-      return CURSOR_MODELS_FALLBACK;
-    }
-  },
+  listModels: async () => cursorListModels(),
+  fallbackModels: () => CURSOR_MODELS_FALLBACK,
 };

@@ -524,6 +524,9 @@ export default function ConnectHarnessDialog({
     if (claudeConnecting) void cancelClaudeLogin();
     if (codexConnecting) void cancelCodexLogin();
     if (opencodeConnecting) void cancelOpenCodeLogin();
+    // Sync the model picker with whatever is connected now — covers the case
+    // where login finished but an earlier empty catalog fetch was still cached.
+    void useHarnessStore.getState().refreshModels({ silent: true });
     onClose();
   }
 
