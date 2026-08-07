@@ -10,10 +10,7 @@ import {
 } from '@tabler/icons-react';
 import { useChatStore, type Attachment } from '../store/chatStore';
 import { findHarnessModel, useHarnessStore } from '../store/harnessStore';
-import {
-  EFFORT_LABELS,
-  resolveEffortLevels,
-} from '../lib/effort';
+import { resolveEffortLevels } from '../lib/effort';
 import {
   harnessSupportsPlanMode,
   type EffortLevel,
@@ -23,6 +20,7 @@ import {
   attachmentFromFile,
   makeTextAttachment,
 } from '../lib/attachments';
+import EffortDial from './EffortDial';
 import ModelPicker from './ModelPicker';
 import './ChatInput.css';
 
@@ -217,14 +215,6 @@ export default function ChatInput({ tabId }: ChatInputProps) {
     applyModelCapabilities(model, tab.modelEffort, tab.mode);
   };
 
-  const handleEffortCycle = () => {
-    if (effortOptions.length === 0) return;
-    const currentIndex = effortOptions.indexOf(tab.modelEffort);
-    const nextIndex =
-      currentIndex === -1 ? 0 : (currentIndex + 1) % effortOptions.length;
-    setEffort(tabId, effortOptions[nextIndex]);
-  };
-
   return (
     <div className="chat-input-container">
       <div className="chat-input-box">
@@ -284,14 +274,12 @@ export default function ChatInput({ tabId }: ChatInputProps) {
             </div>
 
             {showEffort && (
-              <button
-                className="effort-btn"
-                onClick={handleEffortCycle}
+              <EffortDial
+                options={effortOptions}
+                value={tab.modelEffort}
                 disabled={tab.loading}
-                title={`Effort: ${effortOptions.map((e) => EFFORT_LABELS[e]).join(' → ')}`}
-              >
-                {EFFORT_LABELS[tab.modelEffort] ?? tab.modelEffort}
-              </button>
+                onChange={(effort) => setEffort(tabId, effort)}
+              />
             )}
 
             {showPlan && (
