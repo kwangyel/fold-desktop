@@ -1,5 +1,5 @@
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -521,6 +521,73 @@ pub fn opencode_mcp_config_json(worktree: &str) -> Option<String> {
     .ok()
 }
 
+/// Keep Fold-generated Cursor MCP config out of `git status` / commits.
+///
+/// Uses the repo-local exclude file (`.git/info/exclude`) so we don't dirty the
+/// project's committed `.gitignore`. No-op when the path is already ignored.
+fn ensure_cursor_mcp_git_excluded(worktree: &str) {
+    let root = Path::new(worktree);
+    const PATTERN: &str = ".cursor/mcp.json";
+
+    let already_ignored = Command::new("git")
+        .args(["check-ignore", "-q", "--", PATTERN])
+        .current_dir(root)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if already_ignored {
+        return;
+    }
+
+    let exclude_out = Command::new("git")
+        .args(["rev-parse", "--git-path", "info/exclude"])
+        .current_dir(root)
+        .output()
+        .ok();
+    let Some(exclude_out) = exclude_out else {
+        return;
+    };
+    if !exclude_out.status.success() {
+        return;
+    }
+    let rel = String::from_utf8_lossy(&exclude_out.stdout).trim().to_string();
+    if rel.is_empty() {
+        return;
+    }
+    let exclude_path = {
+        let candidate = PathBuf::from(&rel);
+        if candidate.is_absolute() {
+            candidate
+        } else {
+            root.join(candidate)
+        }
+    };
+
+    if let Some(parent) = exclude_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let existing = std::fs::read_to_string(&exclude_path).unwrap_or_default();
+    let already_listed = existing.lines().any(|line| {
+        let trimmed = line.trim();
+        trimmed == PATTERN || trimmed == ".cursor/" || trimmed == ".cursor"
+    });
+    if already_listed {
+        return;
+    }
+
+    let mut next = existing;
+    if !next.is_empty() && !next.ends_with('\n') {
+        next.push('\n');
+    }
+    if !next.contains("# Fold") {
+        next.push_str("# Fold — local Cursor MCP config (do not commit)\n");
+    }
+    next.push_str(PATTERN);
+    next.push('\n');
+    let _ = std::fs::write(&exclude_path, next);
+}
+
 /// Merge Fold's stdio MCP server into `<worktree>/.cursor/mcp.json`. Returns
 /// `true` when the server was registered (Node + script are available).
 pub fn ensure_cursor_fold_mcp(worktree: &str) -> bool {
@@ -565,6 +632,9 @@ pub fn ensure_cursor_fold_mcp(worktree: &str) -> bool {
     {
         return false;
     }
+
+    // Still used by Cursor — just keep it out of commits / the Changes list.
+    ensure_cursor_mcp_git_excluded(worktree);
     true
 }
 

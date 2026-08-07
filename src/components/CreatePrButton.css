@@ -94,3 +94,25 @@
 .create-pr-item-active {
   color: var(--text);
 }
+
+.create-pr-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.create-pr-action-error {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 8px;
+  max-width: 320px;
+  padding: 6px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--danger, #c44);
+  font-size: 11px;
+  line-height: 1.35;
+  z-index: 100;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

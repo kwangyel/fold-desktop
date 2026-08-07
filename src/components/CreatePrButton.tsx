@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useCenterViewStore } from '../store/centerViewStore';
+import { useChangesStore } from '../store/changesStore';
 import { useChatStore } from '../store/chatStore';
 import { useProjectStore } from '../store/projectStore';
 import {
@@ -7,8 +8,14 @@ import {
   useTargetBranchStore,
 } from '../store/targetBranchStore';
 import { ghPrCreateWeb, ghPrViewCached, type PrInfo } from '../lib/github';
-import { gitGithubRemote } from '../lib/git';
-import { mergeBranchPrompt, prCreationPrompt } from '../lib/prPrompt';
+import {
+  gitGithubRemote,
+  gitMergeReadiness,
+  gitMergeToTarget,
+  gitRebaseOntoTarget,
+  type MergeReadiness,
+} from '../lib/git';
+import { commitChangesPrompt, prCreationPrompt } from '../lib/prPrompt';
 import { makePromptAttachment } from '../lib/attachments';
 import './CreatePrButton.css';
 
@@ -18,6 +25,10 @@ export default function CreatePrButton() {
   // Detected live from the worktree (not the persisted project flag), so a
   // remote added after project creation still shows the PR button.
   const [hasGithubRemote, setHasGithubRemote] = useState(false);
+  const [readiness, setReadiness] = useState<MergeReadiness | null>(null);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const prevChatLoading = useRef(false);
 
   const addChatTab = useCenterViewStore((s) => s.addChatTab);
   const setActiveTab = useCenterViewStore((s) => s.setActiveTab);
@@ -25,6 +36,10 @@ export default function CreatePrButton() {
 
   const activePath = useProjectStore((s) => s.activePath);
   const activeId = useProjectStore((s) => s.activeId);
+  const projectPath = useProjectStore((s) => {
+    const proj = s.projects.find((p) => p.id === s.activeId);
+    return proj?.path ?? null;
+  });
   const projectHasGithubRemote = useProjectStore((s) => {
     const proj = s.projects.find((p) => p.id === s.activeId);
     return proj?.hasGithubRemote ?? false;
@@ -32,6 +47,8 @@ export default function CreatePrButton() {
 
   const byProjectId = useTargetBranchStore((s) => s.byProjectId);
   const targetBranch = selectTargetBranch(byProjectId, activeId);
+  const changeCount = useChangesStore((s) => s.changes.length);
+  const refreshChanges = useChangesStore((s) => s.refresh);
 
   // Prefer live detection; fall back to the persisted flag while checking.
   useEffect(() => {
@@ -76,6 +93,61 @@ export default function CreatePrButton() {
     };
   }, [hasGithubRemote, activePath]);
 
+  // Local repos: poll merge readiness so the Merge button appears after the
+  // agent commits (working tree clean + commits ahead of target).
+  useEffect(() => {
+    if (hasGithubRemote || !activePath) {
+      setReadiness(null);
+      return;
+    }
+    const path = activePath;
+    let cancelled = false;
+
+    const check = () => {
+      void gitMergeReadiness(path, targetBranch)
+        .then((info) => {
+          if (cancelled || path !== activePath) return;
+          setReadiness(info);
+          // Clear a stale Changes list after the agent commits (ignore Fold's
+          // own `.cursor/` files when deciding dirtiness).
+          if (!info.dirty && changeCount > 0) void refreshChanges();
+        })
+        .catch((e) => {
+          if (!cancelled) {
+            setReadiness(null);
+            setActionError(String(e));
+          }
+        });
+    };
+
+    check();
+    const timer = window.setInterval(check, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [hasGithubRemote, activePath, targetBranch, changeCount, refreshChanges]);
+
+  // Re-check as soon as the active chat agent finishes (Commit changes flow).
+  const activeChatTabId = useCenterViewStore((s) => {
+    const active = s.tabs.find((t) => t.id === s.activeTabId);
+    return active?.type === 'chat' ? active.id : null;
+  });
+  const chatLoading = useChatStore((s) =>
+    activeChatTabId ? (s.tabs[activeChatTabId]?.loading ?? false) : false,
+  );
+  useEffect(() => {
+    const wasLoading = prevChatLoading.current;
+    prevChatLoading.current = chatLoading;
+    if (hasGithubRemote || !activePath) return;
+    if (wasLoading && !chatLoading) {
+      void refreshChanges();
+      void gitMergeReadiness(activePath, targetBranch)
+        .then(setReadiness)
+        .catch(() => {});
+    }
+  }, [chatLoading, hasGithubRemote, activePath, targetBranch, refreshChanges]);
+
   useEffect(() => {
     if (!open) return;
     const close = () => setOpen(false);
@@ -98,7 +170,7 @@ export default function CreatePrButton() {
     return null; // caller will pick up the new tab after a tick
   };
 
-  /** Attach a prompt chip and immediately send — used for Create PR / Merge only. */
+  /** Attach a prompt chip and immediately send — used for Create PR / Commit only. */
   const attachAndSendPrompt = (name: string, prompt: string) => {
     void (async () => {
       const attachment = await makePromptAttachment(name, prompt);
@@ -195,18 +267,155 @@ export default function CreatePrButton() {
     );
   }
 
-  // --- Local repo: Merge flow (target branch comes from the status bar) ---
-  return (
-    <div className="create-pr-wrap">
-      <button
-        className="create-pr-main create-pr-merge-solo"
-        onClick={() =>
-          attachAndSendPrompt('Merge to target branch', mergeBranchPrompt(targetBranch))
-        }
-        title={`Merge into ${targetBranch}`}
-      >
-        Merge to target branch
-      </button>
-    </div>
-  );
+  // --- Local repo: commit with agent, then merge/rebase via git ---
+  // Prefer live readiness; only fall back to the Changes list before the first
+  // readiness result arrives.
+  const dirty = readiness ? readiness.dirty : changeCount > 0;
+  const aheadCount = readiness?.aheadCount ?? 0;
+  const hasConflicts = readiness?.hasConflicts ?? false;
+  const canShowMerge = aheadCount > 0;
+  const canMerge = canShowMerge && !hasConflicts && (readiness?.safeToMerge ?? false);
+  const sourceBranch = readiness?.currentBranch ?? '';
+  const cannotMergeReason =
+    readiness?.reason
+    || (hasConflicts ? `Cannot merge — conflicts with ${targetBranch}` : null);
+
+  const runMerge = async () => {
+    if (!projectPath || !sourceBranch) {
+      setActionError('Cannot merge — missing project path or branch.');
+      return;
+    }
+    if (!canMerge) {
+      setActionError(cannotMergeReason || `Cannot merge into ${targetBranch}`);
+      return;
+    }
+    setActionBusy(true);
+    setActionError(null);
+    setOpen(false);
+    try {
+      await gitMergeToTarget(projectPath, sourceBranch, targetBranch);
+      await refreshChanges();
+      const next = await gitMergeReadiness(activePath, targetBranch);
+      setReadiness(next);
+    } catch (e) {
+      setActionError(String(e));
+      // Refresh readiness so the button reflects conflict / blocked state.
+      void gitMergeReadiness(activePath, targetBranch).then(setReadiness).catch(() => {});
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const runRebase = async () => {
+    setActionBusy(true);
+    setActionError(null);
+    setOpen(false);
+    try {
+      await gitRebaseOntoTarget(activePath, targetBranch);
+      await refreshChanges();
+      const next = await gitMergeReadiness(activePath, targetBranch);
+      setReadiness(next);
+    } catch (e) {
+      setActionError(String(e));
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  // Commits ahead of target → show Merge (even with uncommitted files).
+  if (canShowMerge) {
+    return (
+      <div className="create-pr-wrap">
+        <div className="create-pr-split">
+          <button
+            className={`create-pr-main${canMerge ? '' : ' create-pr-disabled'}`}
+            onClick={() => void runMerge()}
+            disabled={actionBusy || !canMerge}
+            title={
+              canMerge
+                ? `Merge ${sourceBranch} into ${targetBranch}`
+                : (cannotMergeReason || `Cannot merge into ${targetBranch}`)
+            }
+          >
+            {actionBusy ? 'Working…' : 'Merge'}
+          </button>
+          <button
+            className="create-pr-arrow"
+            onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+            disabled={actionBusy}
+            aria-label="Merge options"
+          >
+            ▾
+          </button>
+        </div>
+        {open && (
+          <div className="create-pr-dropdown">
+            <button
+              className="create-pr-item"
+              onClick={(e) => {
+                e.stopPropagation();
+                void runRebase();
+              }}
+            >
+              Rebase onto {targetBranch}
+            </button>
+            {dirty && (
+              <button
+                className="create-pr-item"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setOpen(false);
+                  attachAndSendPrompt('Commit changes', commitChangesPrompt(targetBranch));
+                }}
+              >
+                Commit changes
+              </button>
+            )}
+          </div>
+        )}
+        {(actionError || (!canMerge && cannotMergeReason)) && (
+          <div
+            className="create-pr-action-error"
+            title={actionError || cannotMergeReason || undefined}
+          >
+            {actionError || cannotMergeReason}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Nothing ahead — offer Commit when the worktree is dirty.
+  if (dirty) {
+    return (
+      <div className="create-pr-wrap">
+        <button
+          className="create-pr-main create-pr-merge-solo"
+          onClick={() =>
+            attachAndSendPrompt('Commit changes', commitChangesPrompt(targetBranch))
+          }
+          title="Review the diff, write a commit message, and commit"
+        >
+          Commit changes
+        </button>
+        {actionError && (
+          <div className="create-pr-action-error" title={actionError}>
+            {actionError}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (actionError) {
+    return (
+      <div className="create-pr-wrap">
+        <div className="create-pr-action-error" title={actionError}>
+          {actionError}
+        </div>
+      </div>
+    );
+  }
+
+  return null;
 }

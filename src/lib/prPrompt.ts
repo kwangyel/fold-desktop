@@ -1,13 +1,22 @@
-export function mergeBranchPrompt(targetBranch: string): string {
-  return `Merge the current branch into ${targetBranch}.
+/**
+ * Prompt for the local-repo commit step. The agent reviews the diff, writes a
+ * commit message, and commits — it must not merge into the target branch.
+ */
+export function commitChangesPrompt(targetBranch: string): string {
+  const base = targetBranch.trim() || "main";
+  return `The user wants to commit their work so it can later be merged into ${base}.
 
-Steps:
-1. Run: git status (check for uncommitted changes — warn me if there are any)
-2. Run: git rev-parse --abbrev-ref HEAD (note the current branch name)
-3. Run: git checkout ${targetBranch}
-4. Run: git merge <current-branch>
-5. If the merge succeeds, report which commits were merged and run git checkout <current-branch> to return.
-6. If there are conflicts, list the conflicted files, explain what needs to be resolved, then run git merge --abort and git checkout <current-branch> to return to a clean state.`;
+Commit the changes yourself — do not merge, rebase, or check out ${base}. Complete every step below, then stop.
+
+Follow these steps:
+
+1. Run \`git status\` and \`git rev-parse --abbrev-ref HEAD\` to confirm the current branch and working tree state.
+2. Review the full set of uncommitted changes with \`git diff\` and \`git diff --cached\`. Also skim \`git diff ${base}...HEAD\` so the commit message fits the branch as a whole when there are already commits.
+3. If there are no uncommitted changes, say so and stop. Do not create an empty commit.
+4. Stage all relevant changes (\`git add -A\` unless the user clearly left something out on purpose), then commit with a clear, conventional commit message that summarizes the changes.
+5. Run \`git status\` again and report the new commit (hash + subject). Do not merge into ${base}, do not rebase, and do not push.
+
+If a step genuinely fails, explain what failed and ask the user for help. Otherwise, do not ask — stage and commit.`;
 }
 
 /** Prompt that tells the agent to open a PR against `targetBranch` (default main). */

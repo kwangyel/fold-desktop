@@ -153,7 +153,9 @@ export async function makePromptAttachment(
       ? 'PR instructions.md'
       : name.toLowerCase().includes('merge')
         ? 'Merge instructions.md'
-        : sanitizeFilename(`${name}.md`, 'instructions.md');
+        : name.toLowerCase().includes('commit')
+          ? 'Commit instructions.md'
+          : sanitizeFilename(`${name}.md`, 'instructions.md');
   try {
     const path = await writeTextAttachmentFile(id, filename, content);
     return {

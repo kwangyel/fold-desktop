@@ -485,3 +485,361 @@ pub fn git_list_branches(path: String) -> Result<Vec<String>, String> {
         .collect();
     Ok(branches)
 }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeReadiness {
+    /// Current branch checked out at `path`.
+    current_branch: String,
+    /// Working tree or index has uncommitted changes.
+    dirty: bool,
+    /// Commits on the current branch that are not on `target_branch`.
+    ahead_count: u32,
+    /// Whether a merge into `target_branch` would conflict.
+    has_conflicts: bool,
+    /// True when clean, ahead > 0, not on target, and no conflicts.
+    safe_to_merge: bool,
+    /// Human-readable reason when not safe (empty when safe).
+    reason: String,
+}
+
+fn git_stdout_trim(root: &Path, args: &[&str]) -> Result<String, String> {
+    let output = git_in_root(root, args)?;
+    if !output.status.success() {
+        return Err(git_stderr(&output));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn branch_exists(root: &Path, branch: &str) -> bool {
+    git_in_root(root, &["rev-parse", "--verify", "--quiet", branch])
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Whether merging `ours` into `theirs` would conflict (checked via merge-tree).
+fn merge_would_conflict(root: &Path, theirs: &str, ours: &str) -> Result<bool, String> {
+    // Git 2.38+: exit 0 = clean, exit 1 = conflicts. Other codes are errors /
+    // unsupported flags — fall through instead of treating them as conflicts.
+    let modern = git_in_root(
+        root,
+        &["merge-tree", "--write-tree", "--no-messages", theirs, ours],
+    )?;
+    match modern.status.code() {
+        Some(0) => return Ok(false),
+        Some(1) => return Ok(true),
+        _ => {}
+    }
+
+    // Older Git: classic three-way merge-tree prints conflict hunks to stdout.
+    let base = match git_stdout_trim(root, &["merge-base", theirs, ours]) {
+        Ok(b) => b,
+        Err(_) => return Ok(false),
+    };
+    let classic = git_in_root(root, &["merge-tree", &base, theirs, ours])?;
+    if !classic.status.success() {
+        // merge-tree unavailable — don't block; the real merge will surface it.
+        return Ok(false);
+    }
+    let out = String::from_utf8_lossy(&classic.stdout);
+    Ok(out.contains("changed in both") || out.contains("CONFLICT"))
+}
+
+/// Porcelain path from a `git status --porcelain` line (skips the XY prefix).
+fn porcelain_path(line: &str) -> &str {
+    let rest = line.get(3..).unwrap_or("").trim();
+    if let Some(idx) = rest.find(" -> ") {
+        &rest[idx + 4..]
+    } else {
+        rest
+    }
+}
+
+/// Fold writes `.cursor/mcp.json` for the Cursor harness; it must not keep the
+/// local "Commit changes" button stuck after the user has committed real work.
+fn is_fold_local_path(path: &str) -> bool {
+    path == ".cursor" || path.starts_with(".cursor/")
+}
+
+/// Inspect whether the branch at `path` is ready to merge into `target_branch`.
+#[tauri::command(async)]
+pub fn git_merge_readiness(
+    path: String,
+    target_branch: String,
+) -> Result<MergeReadiness, String> {
+    let root = Path::new(&path);
+    let target = target_branch.trim();
+    if target.is_empty() {
+        return Err("target branch is empty".to_string());
+    }
+    if !branch_exists(root, target) {
+        return Ok(MergeReadiness {
+            current_branch: String::new(),
+            dirty: false,
+            ahead_count: 0,
+            has_conflicts: false,
+            safe_to_merge: false,
+            reason: format!("Target branch '{target}' does not exist"),
+        });
+    }
+
+    let current_branch = git_stdout_trim(root, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+    if current_branch == "HEAD" {
+        return Ok(MergeReadiness {
+            current_branch,
+            dirty: false,
+            ahead_count: 0,
+            has_conflicts: false,
+            safe_to_merge: false,
+            reason: "Detached HEAD — check out a branch first".to_string(),
+        });
+    }
+    if current_branch == target {
+        return Ok(MergeReadiness {
+            current_branch,
+            dirty: false,
+            ahead_count: 0,
+            has_conflicts: false,
+            safe_to_merge: false,
+            reason: format!("Already on '{target}'"),
+        });
+    }
+
+    let status = git_in_root(root, &["status", "--porcelain"])?;
+    if !status.status.success() {
+        return Err(git_stderr(&status));
+    }
+    let dirty = String::from_utf8_lossy(&status.stdout)
+        .lines()
+        .any(|line| {
+            let p = porcelain_path(line);
+            !p.is_empty() && !is_fold_local_path(p)
+        });
+
+    let ahead_raw = git_stdout_trim(root, &["rev-list", "--count", &format!("{target}..HEAD")])?;
+    let ahead_count: u32 = ahead_raw.parse().unwrap_or(0);
+
+    // Conflict check is independent of worktree dirtiness — uncommitted files
+    // don't affect whether the commits can merge into the target.
+    let has_conflicts = if ahead_count > 0 {
+        merge_would_conflict(root, target, "HEAD")?
+    } else {
+        false
+    };
+
+    let (safe_to_merge, reason) = if ahead_count == 0 {
+        (false, format!("No commits to merge into '{target}'"))
+    } else if has_conflicts {
+        (false, format!("Cannot merge — conflicts with '{target}'"))
+    } else {
+        (true, String::new())
+    };
+
+    Ok(MergeReadiness {
+        current_branch,
+        dirty,
+        ahead_count,
+        has_conflicts,
+        safe_to_merge,
+        reason,
+    })
+}
+
+/// Merge `source_branch` into `target_branch` in the main checkout at `repo_path`.
+///
+/// Worktrees keep the feature branch checked out, so the merge must run against
+/// the main repo. When the main checkout is dirty (common with `__pycache__`
+/// etc.), we merge in a temporary detached worktree and update the branch ref
+/// so local junk never blocks the merge.
+#[tauri::command(async)]
+pub fn git_merge_to_target(
+    repo_path: String,
+    source_branch: String,
+    target_branch: String,
+) -> Result<(), String> {
+    let root = Path::new(&repo_path);
+    let source = source_branch.trim();
+    let target = target_branch.trim();
+    if source.is_empty() || target.is_empty() {
+        return Err("source and target branch are required".to_string());
+    }
+    if source == target {
+        return Err("cannot merge a branch into itself".to_string());
+    }
+    if !branch_exists(root, source) {
+        return Err(format!("source branch '{source}' does not exist"));
+    }
+    if !branch_exists(root, target) {
+        return Err(format!("target branch '{target}' does not exist"));
+    }
+
+    if merge_would_conflict(root, target, source)? {
+        return Err(format!(
+            "Cannot merge — '{source}' conflicts with '{target}'. Resolve conflicts first."
+        ));
+    }
+
+    let status = git_in_root(root, &["status", "--porcelain"])?;
+    if !status.status.success() {
+        return Err(git_stderr(&status));
+    }
+    let main_dirty = !String::from_utf8_lossy(&status.stdout).trim().is_empty();
+
+    if main_dirty {
+        return merge_in_temp_worktree(root, source, target);
+    }
+
+    let head = git_stdout_trim(root, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+    if head != target {
+        let co = git_in_root(root, &["checkout", target])?;
+        if !co.status.success() {
+            return Err(format!(
+                "Cannot merge — main checkout is on '{head}', not '{target}': {}",
+                git_stderr(&co)
+            ));
+        }
+    }
+
+    let merge = git_in_root(root, &["merge", "--no-edit", source])?;
+    if merge.status.success() {
+        return Ok(());
+    }
+    let err = git_stderr(&merge);
+    let stdout = String::from_utf8_lossy(&merge.stdout).trim().to_string();
+    let _ = git_in_root(root, &["merge", "--abort"]);
+    let detail = if !err.is_empty() {
+        err
+    } else if !stdout.is_empty() {
+        stdout
+    } else {
+        format!("git merge {source} failed")
+    };
+    Err(format!("Cannot merge — {detail}"))
+}
+
+/// Merge `source` into `target` inside a temporary detached worktree, then point
+/// `refs/heads/<target>` at the result. Leaves the main checkout's dirty files alone.
+fn merge_in_temp_worktree(root: &Path, source: &str, target: &str) -> Result<(), String> {
+    let target_oid = git_stdout_trim(root, &["rev-parse", target])?;
+    let tmp = std::env::temp_dir().join(format!(
+        "fold-merge-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    ));
+    let tmp_s = tmp.to_string_lossy().to_string();
+
+    let add = git_in_root(
+        root,
+        &["worktree", "add", "--detach", &tmp_s, &target_oid],
+    )?;
+    if !add.status.success() {
+        return Err(format!(
+            "Cannot merge — failed to create temp worktree: {}",
+            git_stderr(&add)
+        ));
+    }
+
+    let cleanup = || {
+        let _ = git_in_root(root, &["worktree", "remove", "--force", &tmp_s]);
+        let _ = std::fs::remove_dir_all(&tmp);
+    };
+
+    let merge = Command::new("git")
+        .args(["merge", "--no-edit", source])
+        .current_dir(&tmp)
+        .output()
+        .map_err(|e| {
+            cleanup();
+            format!("failed to run git merge: {e}")
+        })?;
+    if !merge.status.success() {
+        let err = git_stderr(&merge);
+        let stdout = String::from_utf8_lossy(&merge.stdout).trim().to_string();
+        let _ = Command::new("git")
+            .args(["merge", "--abort"])
+            .current_dir(&tmp)
+            .output();
+        cleanup();
+        let detail = if !err.is_empty() {
+            err
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            format!("git merge {source} failed")
+        };
+        return Err(format!("Cannot merge — {detail}"));
+    }
+
+    let new_oid = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&tmp)
+        .output()
+        .map_err(|e| {
+            cleanup();
+            format!("failed to read merge result: {e}")
+        })?;
+    if !new_oid.status.success() {
+        cleanup();
+        return Err(git_stderr(&new_oid));
+    }
+    let new_oid = String::from_utf8_lossy(&new_oid.stdout).trim().to_string();
+
+    let update = git_in_root(
+        root,
+        &["update-ref", &format!("refs/heads/{target}"), &new_oid],
+    )?;
+    cleanup();
+    if !update.status.success() {
+        return Err(format!(
+            "Cannot merge — failed to update '{target}': {}",
+            git_stderr(&update)
+        ));
+    }
+    Ok(())
+}
+
+/// Rebase the branch checked out at `path` onto `target_branch`.
+#[tauri::command(async)]
+pub fn git_rebase_onto_target(path: String, target_branch: String) -> Result<(), String> {
+    let root = Path::new(&path);
+    let target = target_branch.trim();
+    if target.is_empty() {
+        return Err("target branch is empty".to_string());
+    }
+    if !branch_exists(root, target) {
+        return Err(format!("target branch '{target}' does not exist"));
+    }
+
+    let status = git_in_root(root, &["status", "--porcelain"])?;
+    if !status.status.success() {
+        return Err(git_stderr(&status));
+    }
+    // Ignore Fold-local paths so `.cursor/mcp.json` doesn't block rebase.
+    let dirty = String::from_utf8_lossy(&status.stdout).lines().any(|line| {
+        let p = porcelain_path(line);
+        !p.is_empty() && !is_fold_local_path(p)
+    });
+    if dirty {
+        return Err("Cannot rebase — uncommitted changes. Commit or stash first.".to_string());
+    }
+
+    let current = git_stdout_trim(root, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+    if current == target {
+        return Err(format!("already on '{target}'"));
+    }
+
+    let rebase = git_in_root(root, &["rebase", target])?;
+    if !rebase.status.success() {
+        let _ = git_in_root(root, &["rebase", "--abort"]);
+        let err = git_stderr(&rebase);
+        return Err(if err.is_empty() {
+            format!("Cannot rebase onto '{target}'")
+        } else {
+            format!("Cannot rebase — {err}")
+        });
+    }
+    Ok(())
+}

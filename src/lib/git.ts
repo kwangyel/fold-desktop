@@ -222,3 +222,52 @@ export async function gitListBranches(path: string): Promise<string[]> {
   if (!isTauri()) return ["main"];
   return invoke<string[]>("git_list_branches", { path });
 }
+
+export interface MergeReadiness {
+  currentBranch: string;
+  dirty: boolean;
+  aheadCount: number;
+  hasConflicts: boolean;
+  safeToMerge: boolean;
+  reason: string;
+}
+
+/** Whether the branch at `path` is ready to merge into `targetBranch`. */
+export async function gitMergeReadiness(
+  path: string,
+  targetBranch: string,
+): Promise<MergeReadiness> {
+  if (!isTauri()) {
+    return {
+      currentBranch: "feature",
+      dirty: false,
+      aheadCount: 1,
+      hasConflicts: false,
+      safeToMerge: true,
+      reason: "",
+    };
+  }
+  return invoke<MergeReadiness>("git_merge_readiness", { path, targetBranch });
+}
+
+/**
+ * Merge `sourceBranch` into `targetBranch` in the main checkout at `repoPath`.
+ * Must run in the main repo because worktrees keep the feature branch checked out.
+ */
+export async function gitMergeToTarget(
+  repoPath: string,
+  sourceBranch: string,
+  targetBranch: string,
+): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("git_merge_to_target", { repoPath, sourceBranch, targetBranch });
+}
+
+/** Rebase the branch checked out at `path` onto `targetBranch`. */
+export async function gitRebaseOntoTarget(
+  path: string,
+  targetBranch: string,
+): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("git_rebase_onto_target", { path, targetBranch });
+}
