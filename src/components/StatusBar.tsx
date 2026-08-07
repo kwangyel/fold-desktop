@@ -5,6 +5,7 @@ import {
   formatTokenCount,
   harnessSupportsContextStatus,
 } from "../lib/contextUsage";
+import { gitListBranches } from "../lib/git";
 import { HARNESS_CATALOG, type HarnessId } from "../lib/harnesses";
 import { useCenterViewStore } from "../store/centerViewStore";
 import { useChatStore } from "../store/chatStore";
@@ -15,6 +16,11 @@ import {
 } from "../store/contextUsageStore";
 import { useHarnessStore } from "../store/harnessStore";
 import { useProjectStore } from "../store/projectStore";
+import {
+  DEFAULT_TARGET_BRANCH,
+  selectTargetBranch,
+  useTargetBranchStore,
+} from "../store/targetBranchStore";
 import HarnessIcon from "./icons/HarnessIcon";
 import "./StatusBar.css";
 
@@ -58,14 +64,22 @@ function UsageMeter({
 
 function StatusBar() {
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [targetOpen, setTargetOpen] = useState(false);
+  const [branches, setBranches] = useState<string[]>([]);
   const pickerRef = useRef<HTMLDivElement>(null);
+  const targetRef = useRef<HTMLDivElement>(null);
 
+  const activeId = useProjectStore((s) => s.activeId);
   const branch = useProjectStore((s) => {
     const project = s.projects.find((p) => p.id === s.activeId);
     if (!project?.activeWorktreeId) return null;
     const wt = project.worktrees.find((w) => w.id === project.activeWorktreeId);
     return wt?.branch ?? null;
   });
+
+  const byProjectId = useTargetBranchStore((s) => s.byProjectId);
+  const setTargetBranch = useTargetBranchStore((s) => s.setTargetBranch);
+  const targetBranch = selectTargetBranch(byProjectId, activeId);
 
   const activeTabId = useCenterViewStore((s) => s.activeTabId);
   const preferredHarnessId = useChatStore((s) => {
@@ -82,12 +96,7 @@ function StatusBar() {
   const refreshHarnesses = useHarnessStore((s) => s.refresh);
   const refreshUsage = useContextUsageStore((s) => s.refresh);
 
-  const activeWorktreePath = useProjectStore((s) => {
-    const project = s.projects.find((p) => p.id === s.activeId);
-    if (!project) return null;
-    const wt = project.worktrees.find((w) => w.id === project.activeWorktreeId);
-    return wt?.path ?? null;
-  });
+  const activePath = useProjectStore((s) => s.activePath);
 
   const usage = resolveViewingUsage(
     byHarness,
@@ -132,10 +141,63 @@ function StatusBar() {
     };
   }, [pickerOpen, refreshHarnesses]);
 
+  // Load local branches for the target-branch drop-up.
+  useEffect(() => {
+    if (!activePath) {
+      setBranches([]);
+      return;
+    }
+    const path = activePath;
+    let cancelled = false;
+    void gitListBranches(path)
+      .then((list) => {
+        if (cancelled || path !== activePath) return;
+        // Always offer `main` even if it isn't checked out locally yet.
+        const next =
+          list.includes(DEFAULT_TARGET_BRANCH) || list.length === 0
+            ? list
+            : [DEFAULT_TARGET_BRANCH, ...list];
+        setBranches(next);
+        // If the saved target vanished, fall back to main (or first branch).
+        if (activeId && next.length > 0 && !next.includes(targetBranch)) {
+          const fallback = next.includes(DEFAULT_TARGET_BRANCH)
+            ? DEFAULT_TARGET_BRANCH
+            : next[0];
+          setTargetBranch(activeId, fallback);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setBranches([DEFAULT_TARGET_BRANCH]);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Intentionally omit targetBranch — we only re-validate when path changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePath, activeId, setTargetBranch]);
+
+  useEffect(() => {
+    if (!targetOpen) return;
+    const onPointer = (e: MouseEvent) => {
+      if (!targetRef.current?.contains(e.target as Node)) {
+        setTargetOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setTargetOpen(false);
+    };
+    window.addEventListener("mousedown", onPointer);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onPointer);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [targetOpen]);
+
   useEffect(() => {
     if (!connectedHarnesses.some((h) => h.id === "claudecode")) return;
     void refreshUsage();
-  }, [connectedHarnesses, activeTabId, activeWorktreePath, refreshUsage]);
+  }, [connectedHarnesses, activeTabId, activePath, refreshUsage]);
 
   const showUsage =
     usage != null || session != null || pickerEntries.length > 0;
@@ -172,6 +234,11 @@ function StatusBar() {
         .join(" · ")
     : "Session usage updates after the next agent turn (Pro/Max)";
 
+  const menuBranches =
+    branches.length > 0
+      ? branches
+      : [DEFAULT_TARGET_BRANCH];
+
   return (
     <footer className="status-bar">
       <div className="status-bar-left">
@@ -183,6 +250,47 @@ function StatusBar() {
         ) : (
           <span className="status-bar-branch muted">No branch</span>
         )}
+
+        {activePath ? (
+          <div className="status-bar-target" ref={targetRef}>
+            <span className="status-bar-target-label" title="PR / merge target">
+              Target Branch
+            </span>
+            <button
+              type="button"
+              className="status-bar-target-btn"
+              aria-haspopup="menu"
+              aria-expanded={targetOpen}
+              aria-label={`Target branch ${targetBranch}`}
+              title="Target branch for Create PR / Merge"
+              onClick={(e) => {
+                e.stopPropagation();
+                setTargetOpen((o) => !o);
+              }}
+            >
+              <span className="status-bar-target-name">{targetBranch}</span>
+              <IconChevronUp size={12} stroke={2} aria-hidden />
+            </button>
+            {targetOpen ? (
+              <div className="status-bar-target-menu" role="menu">
+                {menuBranches.map((b) => (
+                  <button
+                    key={b}
+                    type="button"
+                    role="menuitem"
+                    className={`status-bar-target-item${b === targetBranch ? " active" : ""}`}
+                    onClick={() => {
+                      if (activeId) setTargetBranch(activeId, b);
+                      setTargetOpen(false);
+                    }}
+                  >
+                    {b}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       {showUsage ? (
