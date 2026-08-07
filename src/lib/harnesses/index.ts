@@ -84,8 +84,9 @@ export type HarnessModelsResult = {
   models: HarnessModel[];
   /**
    * Harnesses whose live fetch failed, keyed by id. A harness listed here
-   * either fell back to a static catalog or (Cursor, which has none)
-   * contributed nothing — so the caller must not cache this result as good.
+   * either fell back to a static catalog or (Claude Code / Cursor, which
+   * have none) contributed nothing — so the caller must not cache this
+   * result as good.
    */
   errors: Partial<Record<HarnessId, string>>;
 };
@@ -113,8 +114,8 @@ export async function listConnectedHarnessModels(): Promise<HarnessModelsResult>
           }
           return { models: tagModels(adapter, models) };
         } catch (err) {
-          // Cursor has no static catalog, so a failure here means the harness
-          // would silently vanish from the picker. Report it either way.
+          // Claude Code / Cursor have no static catalog, so a failure here
+          // means the harness would silently vanish from the picker.
           return {
             models: tagModels(adapter, adapter.fallbackModels()),
             error: err instanceof Error ? err.message : String(err),

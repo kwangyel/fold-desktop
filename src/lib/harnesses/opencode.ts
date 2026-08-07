@@ -14,24 +14,18 @@ export const OPENCODE_MODELS_FALLBACK: ModelInfo[] = [
     resolvedModel: "opencode/gpt-5.1-codex",
     displayName: "GPT-5.1 Codex",
     description: "OpenCode Zen · GPT-5.1 Codex",
-    supportsEffort: true,
-    supportedEffortLevels: ["low", "medium", "high", "xhigh"],
   },
   {
     value: "anthropic/claude-sonnet-4-5",
     resolvedModel: "anthropic/claude-sonnet-4-5",
     displayName: "Claude Sonnet 4.5",
     description: "Anthropic · Claude Sonnet 4.5",
-    supportsEffort: true,
-    supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
   },
   {
     value: "openai/gpt-5",
     resolvedModel: "openai/gpt-5",
     displayName: "GPT-5",
     description: "OpenAI · GPT-5",
-    supportsEffort: true,
-    supportedEffortLevels: ["low", "medium", "high", "xhigh"],
   },
 ];
 

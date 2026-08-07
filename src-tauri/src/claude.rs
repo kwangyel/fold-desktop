@@ -436,8 +436,8 @@ static MODEL_CACHE: std::sync::Mutex<Option<(std::time::Instant, Vec<ClaudeModel
     std::sync::Mutex::new(None);
 
 /// List Claude Code models via the Agent SDK (`supportedModels()`).
-/// Cached for `MODEL_CACHE_TTL`; the caller falls back to a static catalog on
-/// error, so failing fast here is better than blocking.
+/// Cached for `MODEL_CACHE_TTL`; there is no static frontend fallback, so
+/// failing fast here is better than blocking the harness refresh.
 #[tauri::command]
 pub async fn claude_list_models() -> Result<Vec<ClaudeModelInfo>, String> {
     tauri::async_runtime::spawn_blocking(move || list_models_blocking())
@@ -455,7 +455,7 @@ fn list_models_blocking() -> Result<Vec<ClaudeModelInfo>, String> {
     }
 
     // Packaged builds ship no `scripts/` directory — don't pay a Node lookup
-    // and spawn just to fail; the frontend's static catalog is the answer.
+    // and spawn just to fail; the caller surfaces the error in the picker.
     let root = project_root().ok_or_else(|| {
         "Fold project root not found (need package.json + scripts/list-claude-models.mjs)"
             .to_string()

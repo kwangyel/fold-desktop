@@ -84,8 +84,8 @@ async function loadModelsInto(
     loading: false,
     // A partial result must never satisfy the TTL: leaving `fetchedAt` null
     // makes the next refresh re-fetch instead of serving a catalog that is
-    // missing a connected harness (Cursor, which has no static fallback,
-    // otherwise just disappears from the picker until the TTL expires).
+    // missing a connected harness (Claude Code / Cursor have no static
+    // fallback and would otherwise disappear until the TTL expires).
     fetchedAt: failed ? null : Date.now(),
     error: null,
   });
@@ -94,7 +94,7 @@ async function loadModelsInto(
   }
 }
 
-/** Docs fallbacks for non-Cursor harnesses when a live fetch fails. */
+/** Docs fallbacks when a live fetch fails (empty for Claude Code / Cursor). */
 function fallbackModelsForConnected(): {
   models: HarnessModel[];
   connectedHarnesses: HarnessMeta[];
@@ -103,8 +103,8 @@ function fallbackModelsForConnected(): {
   return {
     connectedHarnesses: adapters.map((a) => a.meta),
     models: adapters.flatMap((adapter) => {
-      // Cursor has no static catalog — omit rather than inject stubs.
-      if (adapter.id === "cursor") return [];
+      // Claude Code / Cursor have no static catalog — omit stubs.
+      if (adapter.id === "cursor" || adapter.id === "claudecode") return [];
       return adapter.fallbackModels().map(
         (m): HarnessModel => ({ ...m, harnessId: adapter.id }),
       );
@@ -151,8 +151,8 @@ export const useHarnessStore = create<HarnessStore>((set, get) => ({
         ]);
         await loadModelsInto(set);
       } catch (e) {
-        // Still publish connected harnesses + static catalogs so the picker
-        // doesn't claim "Connect a harness" while the dialog shows Connected.
+        // Still publish connected harnesses + any static catalogs so the
+        // picker doesn't claim "Connect a harness" while the dialog shows Connected.
         const fallback = fallbackModelsForConnected();
         set({
           error: String(e),

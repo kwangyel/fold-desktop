@@ -1,0 +1,49 @@
+.effort-dial {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.effort-dial:hover:not(:disabled) {
+  background: rgba(124, 92, 255, 0.1);
+}
+
+.effort-dial:active:not(:disabled) {
+  background: rgba(124, 92, 255, 0.2);
+}
+
+.effort-dial:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.effort-dial-ring {
+  flex-shrink: 0;
+}
+
+.effort-dial-track {
+  stroke: var(--border);
+}
+
+.effort-dial-fill {
+  stroke: var(--accent);
+  transition: stroke-dashoffset 0.25s ease;
+}
+
+.effort-dial-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  line-height: 1;
+}
+
+.effort-dial:hover:not(:disabled) .effort-dial-label {
+  color: var(--accent);
+}

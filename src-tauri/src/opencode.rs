@@ -282,26 +282,6 @@ pub fn opencode_login_cancel(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
-fn opencode_model_supports_effort(provider: &str, model: &str) -> bool {
-    let provider = provider.to_lowercase();
-    let model = model.to_lowercase();
-    matches!(provider.as_str(), "openai" | "anthropic" | "google" | "opencode")
-        && !model.contains("instant")
-        && !model.contains("nano")
-}
-
-fn opencode_effort_levels(provider: &str, model: &str) -> Option<Vec<String>> {
-    if !opencode_model_supports_effort(provider, model) {
-        return None;
-    }
-    Some(vec![
-        "low".into(),
-        "medium".into(),
-        "high".into(),
-        "xhigh".into(),
-    ])
-}
-
 /// Cap `opencode models` so a hung CLI cannot wedge harness refresh.
 const MODELS_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -335,17 +315,15 @@ pub fn opencode_list_models() -> Result<Vec<OpenCodeModelInfo>, String> {
             continue;
         }
         let (provider, model) = id.split_once('/').unwrap_or(("unknown", id));
-        let effort_levels = opencode_effort_levels(provider, model);
-        let supports_effort = effort_levels
-            .as_ref()
-            .is_some_and(|levels| !levels.is_empty());
+        // `opencode models` does not report effort — leave unset rather than
+        // inventing a docs ladder.
         models.push(OpenCodeModelInfo {
             value: id.to_string(),
             resolved_model: Some(id.to_string()),
             display_name: model.to_string(),
             description: format!("{provider} · {model}"),
-            supports_effort: supports_effort.then_some(true),
-            supported_effort_levels: effort_levels,
+            supports_effort: None,
+            supported_effort_levels: None,
             supports_adaptive_thinking: None,
             supports_fast_mode: None,
             supports_auto_mode: None,
