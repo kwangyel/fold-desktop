@@ -319,6 +319,38 @@ fn sanitize_slug(name: &str) -> String {
     }
 }
 
+/// True when a local branch ref already exists (`refs/heads/<branch>`).
+fn local_branch_exists(repo: &Path, branch: &str) -> bool {
+    git_ok(
+        repo,
+        &["show-ref", "--verify", "--quiet", &format!("refs/heads/{branch}")],
+    )
+}
+
+/// True when any remote-tracking ref ends with `/<branch>` (e.g. `origin/ws/foo`).
+fn remote_branch_exists(repo: &Path, branch: &str) -> Result<bool, String> {
+    let output = git_in(repo, &[
+        "for-each-ref",
+        "--format=%(refname:short)",
+        "refs/remotes",
+    ])?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            "git for-each-ref failed".to_string()
+        } else {
+            stderr
+        });
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout.lines().any(|line| {
+        let short = line.trim();
+        short
+            .split_once('/')
+            .is_some_and(|(_, name)| name == branch)
+    }))
+}
+
 /// Shared parent for all worktrees of a project:
 /// `~/fold/workspaces/<project-slug>/`
 fn workspaces_root(project_name: &str) -> Result<PathBuf, String> {
@@ -331,6 +363,14 @@ fn workspaces_root(project_name: &str) -> Result<PathBuf, String> {
         .join(sanitize_slug(project_name));
     std::fs::create_dir_all(&root).map_err(|e| format!("failed to create workspaces dir: {e}"))?;
     Ok(root)
+}
+
+/// Returns true when `rel` is ignored by git (via `.gitignore` or global excludes).
+fn is_gitignored(repo: &Path, rel: &Path) -> bool {
+    let rel_str = rel.to_string_lossy();
+    git_in(repo, &["check-ignore", "-q", "--", rel_str.as_ref()])
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Known environment directories that are usually gitignored and expensive to recreate.
@@ -439,15 +479,21 @@ fn apply_env_transfers(main: &Path, dest: &Path, transfers: &[EnvTransfer]) -> R
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
         }
-        if dest_path.exists() || dest_path.symlink_metadata().is_ok() {
-            return Err(format!(
-                "{} already exists in worktree",
-                dest_path.display()
-            ));
-        }
+        let dest_exists = dest_path.exists() || dest_path.symlink_metadata().is_ok();
 
         match transfer.mode {
             TransferMode::Symlink => {
+                // Only symlink gitignored paths — tracked dirs/files are already
+                // checked out into the worktree and would collide.
+                if !is_gitignored(main, &rel) {
+                    continue;
+                }
+                if dest_exists {
+                    return Err(format!(
+                        "{} already exists in worktree",
+                        dest_path.display()
+                    ));
+                }
                 std::os::unix::fs::symlink(&src, &dest_path).map_err(|e| {
                     format!(
                         "failed to symlink {} → {}: {e}",
@@ -457,6 +503,10 @@ fn apply_env_transfers(main: &Path, dest: &Path, transfers: &[EnvTransfer]) -> R
                 })?;
             }
             TransferMode::Copy => {
+                // Tracked files are already in the worktree from `git worktree add`.
+                if dest_exists {
+                    continue;
+                }
                 if src.is_dir() {
                     return Err(format!(
                         "cannot copy directory {} (use symlink for env folders)",
@@ -697,16 +747,18 @@ pub fn scan_worktree_env(app: AppHandle, project_id: String) -> Result<WorktreeE
 
     let mut dirs = Vec::new();
     for name in ENV_DIRS {
-        let candidate = root.join(name);
-        if candidate.is_dir() {
+        let rel = Path::new(name);
+        let candidate = root.join(rel);
+        if candidate.is_dir() && is_gitignored(&root, rel) {
             dirs.push((*name).to_string());
         }
     }
 
     let mut files = Vec::new();
     for name in ENV_FILES {
-        let candidate = root.join(name);
-        if candidate.is_file() {
+        let rel = Path::new(name);
+        let candidate = root.join(rel);
+        if candidate.is_file() && is_gitignored(&root, rel) {
             files.push((*name).to_string());
         }
     }
@@ -754,6 +806,19 @@ pub fn create_worktree(
         return Err("project is not a git repository".to_string());
     }
     ensure_base_commit(&repo)?;
+
+    if project.worktrees.iter().any(|w| sanitize_slug(&w.name) == slug) {
+        return Err(format!("worktree \"{name}\" already exists"));
+    }
+
+    if local_branch_exists(&repo, &branch_name) {
+        return Err(format!("branch \"{branch_name}\" already exists"));
+    }
+    if remote_branch_exists(&repo, &branch_name)? {
+        return Err(format!(
+            "branch \"{branch_name}\" already exists on a remote"
+        ));
+    }
 
     let dest = workspaces_root(&project.name)?.join(&slug);
     if project.worktrees.iter().any(|w| w.path == dest.to_string_lossy()) {
