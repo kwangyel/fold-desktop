@@ -321,14 +321,21 @@ const ChatTurn = memo(
             <div className="message-content">
               {turn.user.content ? (
                 <p className="message-text">{turn.user.content}</p>
-              ) : (
+              ) : turn.user.attachments && turn.user.attachments.length > 0 ? null : (
                 <p className="message-text text-muted">…</p>
               )}
               {turn.user.attachments && turn.user.attachments.length > 0 ? (
                 <div className="attachments">
                   {turn.user.attachments.map((att) => (
                     <div key={att.id} className="attachment-item">
-                      {att.name}
+                      {att.kind === 'image' && att.dataUrl ? (
+                        <img
+                          className="attachment-item-thumb"
+                          src={att.dataUrl}
+                          alt=""
+                        />
+                      ) : null}
+                      <span className="attachment-item-name">{att.name}</span>
                     </div>
                   ))}
                 </div>

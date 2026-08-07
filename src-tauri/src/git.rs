@@ -408,6 +408,22 @@ pub fn write_file(
     std::fs::write(&abs, content).map_err(|e| format!("failed to write file: {e}"))
 }
 
+/// Write raw bytes to a repo-relative path (used for pasted/attached images).
+#[tauri::command(async)]
+pub fn write_bytes(
+    path: String,
+    bytes: Vec<u8>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let root = repo_root(&state)?;
+    let abs = safe_join(&root, &path)?;
+    if let Some(parent) = abs.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create directory: {e}"))?;
+    }
+    std::fs::write(&abs, bytes).map_err(|e| format!("failed to write file: {e}"))
+}
+
 /// Current HEAD commit SHA for the repo at `path`. Empty on a repo with no
 /// commits yet.
 #[tauri::command(async)]

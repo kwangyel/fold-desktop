@@ -46,7 +46,7 @@ export default function XTerminal({ id, active, cwd }: XTerminalProps) {
       theme: {
         background: "#101014",
         foreground: "#e6e6e6",
-        cursor: "#7c5cff",
+        cursor: "#8ecaff",
         selectionBackground: "rgba(124, 92, 255, 0.3)",
       },
     });

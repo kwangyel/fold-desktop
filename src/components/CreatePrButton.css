@@ -11,53 +11,47 @@
 .create-pr-split {
   display: flex;
   align-items: stretch;
-  border: 1px solid var(--border);
+  border: 1px solid var(--accent-button-hover);
   border-radius: 4px;
   overflow: hidden;
 }
 
 .create-pr-main {
   padding: 4px 10px;
-  background: var(--panel-2);
-  color: var(--muted);
+  background: var(--accent-button);
+  color: #fff;
   border: none;
   font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
-  transition: color 0.15s, background 0.15s;
+  transition: background 0.15s;
   white-space: nowrap;
 }
 
 .create-pr-main:hover {
-  color: var(--text);
-  background: var(--panel-3, var(--panel-2));
+  background: var(--accent-button-hover);
+  color: #fff;
 }
 
 .create-pr-view {
-  color: var(--text);
   font-weight: 600;
-  background: var(--accent-dim);
-}
-
-.create-pr-view:hover {
-  color: var(--text);
-  background: var(--accent);
 }
 
 .create-pr-arrow {
   padding: 4px 7px;
-  background: var(--panel-2);
-  color: var(--muted);
+  background: var(--accent-button-hover);
+  color: rgba(255, 255, 255, 0.9);
   border: none;
-  border-left: 1px solid var(--border);
+  border-left: 1px solid rgba(0, 0, 0, 0.2);
   font-size: 10px;
   cursor: pointer;
-  transition: color 0.15s, background 0.15s;
+  transition: background 0.15s;
   line-height: 1;
 }
 
 .create-pr-arrow:hover {
-  color: var(--text);
-  background: var(--panel-3, var(--panel-2));
+  background: #123352;
+  color: #fff;
 }
 
 .create-pr-dropdown {

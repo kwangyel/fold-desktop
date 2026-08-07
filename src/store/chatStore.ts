@@ -27,6 +27,10 @@ import {
 } from '../lib/opencode';
 import { harnessSupportsPlanMode, type EffortLevel, type HarnessId } from '../lib/harnesses';
 import { writeFile } from '../lib/git';
+import {
+  composeAgentPrompt,
+  materializeAttachments,
+} from '../lib/attachments';
 import type { SDKMessage } from '../lib/claudeStreamTypes';
 import {
   cursorToolPayload,
@@ -60,11 +64,20 @@ import { useCodexStore } from './codexStore';
 import { useCursorStore } from './cursorStore';
 import { useOpenCodeStore } from './opencodeStore';
 
+export type AttachmentKind = 'file' | 'text' | 'image' | 'prompt';
+
 export type Attachment = {
   id: string;
   name: string;
   size: number;
   type: string;
+  kind: AttachmentKind;
+  /** Text / prompt body included when the message is sent. */
+  content?: string;
+  /** Data URL for image preview. */
+  dataUrl?: string;
+  /** Worktree-relative path after an image is written to disk. */
+  path?: string;
 };
 
 export type Message = {
@@ -589,7 +602,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   sendPrompt: async (tabId, prompt, options) => {
     const tab = get().tabs[tabId];
-    if (!tab || tab.loading || !prompt.trim()) return;
+    if (!tab || tab.loading) return;
+
+    const hasAttachments = tab.attachments.length > 0;
+    if (!prompt.trim() && !hasAttachments) return;
 
     const worktree = useProjectStore.getState().activePath;
     if (!worktree) {
@@ -618,12 +634,32 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       return;
     }
 
+    const preparedAttachments = hasAttachments
+      ? await materializeAttachments(tab.attachments)
+      : [];
+    const displayContent = prompt.trim();
+    const agentPrompt = composeAgentPrompt(displayContent, preparedAttachments);
+    if (!agentPrompt.trim()) return;
+
+    // Persist path-only chips in the transcript (drop bulky in-memory bodies).
+    const messageAttachments =
+      preparedAttachments.length > 0
+        ? preparedAttachments.map(({ id, name, size, type, kind, path, dataUrl }) => ({
+            id,
+            name,
+            size,
+            type,
+            kind,
+            path,
+            // Keep a small preview URL for images in the chat UI.
+            dataUrl: kind === 'image' ? dataUrl : undefined,
+          }))
+        : undefined;
     const userMessage: Message = {
       id: `user-${Date.now()}`,
       role: 'user',
-      content: prompt.trim(),
-      attachments:
-        tab.attachments.length > 0 ? [...tab.attachments] : undefined,
+      content: displayContent,
+      attachments: messageAttachments,
       timestamp: Date.now(),
     };
     get().addMessage(tabId, userMessage);
@@ -638,6 +674,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       };
     });
 
+    // Use the composed agent prompt (user text + attachment path refs) from here on.
+    const promptForAgent = agentPrompt;
     let lineBuffer = '';
     let assistantId: string | null = null;
     let finished = false;
@@ -790,7 +828,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         }
         const record: PlanRecord = {
           id,
-          title: planTitle(body, prompt),
+          title: planTitle(body, displayContent || promptForAgent),
           path,
           worktreePath: worktree,
           createdByHarness: harnessId,
@@ -1322,7 +1360,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         // Soft plan mode: Cursor's native `--mode plan` hangs in `-p` after
         // create_plan. We pre-assign a plan path, instruct the agent to write
         // there and stop, and poll until the file appears.
-        let cursorPrompt = prompt.trim();
+        let cursorPrompt = promptForAgent;
         if (planningRun) {
           const planPath = `${PLANS_DIR}/${newPlanId()}.md`;
           trackedPlanPath = planPath;
@@ -1340,7 +1378,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       } else if (harnessId === 'codex') {
         await codexAgentRun(
           tabId,
-          prompt.trim(),
+          promptForAgent,
           worktree,
           tab.selectedModel || null,
           onEvent,
@@ -1348,7 +1386,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       } else if (harnessId === 'opencode') {
         await opencodeAgentRun(
           tabId,
-          prompt.trim(),
+          promptForAgent,
           worktree,
           tab.selectedModel || null,
           planningRun,
@@ -1365,7 +1403,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
         await claudeAgentRun(
           tabId,
-          prompt.trim(),
+          promptForAgent,
           worktree,
           tab.selectedModel || null,
           effort,

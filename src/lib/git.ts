@@ -134,6 +134,13 @@ export async function writeFile(path: string, content: string): Promise<void> {
   await invoke("write_file", { path, content });
 }
 
+/** Write raw bytes to a repo-relative path (e.g. pasted images under `.fold/`). */
+export async function writeBytes(path: string, bytes: number[] | Uint8Array): Promise<void> {
+  if (!isTauri()) return;
+  const payload = Array.isArray(bytes) ? bytes : Array.from(bytes);
+  await invoke("write_bytes", { path, bytes: payload });
+}
+
 /** Returns true if the repo at `path` has a GitHub remote as `origin`. */
 export async function gitGithubRemote(path: string): Promise<boolean> {
   if (!isTauri()) return false;
