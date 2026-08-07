@@ -10,7 +10,10 @@ Steps:
 6. If there are conflicts, list the conflicted files, explain what needs to be resolved, then run git merge --abort and git checkout <current-branch> to return to a clean state.`;
 }
 
-export const PR_CREATION_PROMPT = `The user requested a pull request. The target branch is origin/main.
+/** Prompt that tells the agent to open a PR against `targetBranch` (default main). */
+export function prCreationPrompt(targetBranch: string): string {
+  const base = targetBranch.trim() || "main";
+  return `The user requested a pull request. The target branch is origin/${base}.
 
 Create the PR yourself — do not stop to ask for confirmation. Complete every step below, then report the PR URL.
 
@@ -19,10 +22,10 @@ Follow these steps to create the PR:
 1. If you have any skills related to creating PRs, invoke them now. Instructions there take precedence over these instructions.
 2. Run \`git status\` to check for uncommitted changes. If there are any, review them with \`git diff\`, then stage and commit them with a clear, conventional commit message that summarizes the changes.
 3. Determine the current branch with \`git rev-parse --abbrev-ref HEAD\`. If the branch has no upstream or has unpushed commits, push with \`git push -u origin HEAD\`. If it tracks a remote branch with a different name or remote, push to that upstream instead.
-4. Review the full diff against the target with \`git diff origin/main...HEAD\` so the description covers ALL changes on the branch, not just this session.
+4. Review the full diff against the target with \`git diff origin/${base}...HEAD\` so the description covers ALL changes on the branch, not just this session.
 5. Create the PR with:
    \`\`\`
-   gh pr create --base main --title "<title>" --body "$(cat <<'EOF'
+   gh pr create --base ${base} --title "<title>" --body "$(cat <<'EOF'
    <body>
    EOF
    )"
@@ -37,3 +40,4 @@ Follow these steps to create the PR:
 6. Report the created PR URL back to the user.
 
 If a step genuinely fails (e.g. a git error, missing gh auth, or no changes at all to commit or push), explain what failed and ask the user for help. Otherwise, do not ask — commit, push, and open the PR.`;
+}

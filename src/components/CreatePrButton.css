@@ -28,6 +28,11 @@
   white-space: nowrap;
 }
 
+.create-pr-merge-solo {
+  border: 1px solid var(--accent-button-hover);
+  border-radius: 4px;
+}
+
 .create-pr-main:hover {
   background: var(--accent-button-hover);
   color: #fff;

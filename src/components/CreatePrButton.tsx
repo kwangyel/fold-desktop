@@ -2,16 +2,18 @@ import { useEffect, useState } from 'react';
 import { useCenterViewStore } from '../store/centerViewStore';
 import { useChatStore } from '../store/chatStore';
 import { useProjectStore } from '../store/projectStore';
+import {
+  selectTargetBranch,
+  useTargetBranchStore,
+} from '../store/targetBranchStore';
 import { ghPrCreateWeb, ghPrViewCached, type PrInfo } from '../lib/github';
-import { gitGithubRemote, gitListBranches } from '../lib/git';
-import { PR_CREATION_PROMPT, mergeBranchPrompt } from '../lib/prPrompt';
+import { gitGithubRemote } from '../lib/git';
+import { mergeBranchPrompt, prCreationPrompt } from '../lib/prPrompt';
 import { makePromptAttachment } from '../lib/attachments';
 import './CreatePrButton.css';
 
 export default function CreatePrButton() {
   const [open, setOpen] = useState(false);
-  const [branches, setBranches] = useState<string[]>([]);
-  const [mergeTo, setMergeTo] = useState('main');
   const [existingPr, setExistingPr] = useState<PrInfo | null>(null);
   // Detected live from the worktree (not the persisted project flag), so a
   // remote added after project creation still shows the PR button.
@@ -22,10 +24,14 @@ export default function CreatePrButton() {
   const openPrTab = useCenterViewStore((s) => s.openPrTab);
 
   const activePath = useProjectStore((s) => s.activePath);
+  const activeId = useProjectStore((s) => s.activeId);
   const projectHasGithubRemote = useProjectStore((s) => {
     const proj = s.projects.find((p) => p.id === s.activeId);
     return proj?.hasGithubRemote ?? false;
   });
+
+  const byProjectId = useTargetBranchStore((s) => s.byProjectId);
+  const targetBranch = selectTargetBranch(byProjectId, activeId);
 
   // Prefer live detection; fall back to the persisted flag while checking.
   useEffect(() => {
@@ -45,20 +51,6 @@ export default function CreatePrButton() {
       cancelled = true;
     };
   }, [activePath, projectHasGithubRemote]);
-
-  // Load branches for local-repo mode
-  useEffect(() => {
-    if (hasGithubRemote || !activePath) return;
-    gitListBranches(activePath).then((list) => {
-      setBranches(list);
-      // Default merge target to 'main', or first other branch if main doesn't exist
-      if (list.length > 0 && !list.includes('main')) {
-        setMergeTo(list[0]);
-      } else {
-        setMergeTo('main');
-      }
-    }).catch(() => setBranches([]));
-  }, [hasGithubRemote, activePath]);
 
   // Detect an existing PR for the current branch so we can surface a "View PR"
   // affordance. Re-checks periodically to catch PRs created out of band.
@@ -129,6 +121,8 @@ export default function CreatePrButton() {
     })();
   };
 
+  const createPrPrompt = prCreationPrompt(targetBranch);
+
   // --- GitHub remote: PR flow ---
   if (hasGithubRemote) {
     const hasPr = existingPr !== null;
@@ -146,7 +140,8 @@ export default function CreatePrButton() {
           ) : (
             <button
               className="create-pr-main"
-              onClick={() => attachAndSendPrompt('Create PR', PR_CREATION_PROMPT)}
+              onClick={() => attachAndSendPrompt('Create PR', createPrPrompt)}
+              title={`Create PR into ${targetBranch}`}
             >
               Create PR
             </button>
@@ -167,7 +162,7 @@ export default function CreatePrButton() {
                 onClick={(e) => {
                   e.stopPropagation();
                   setOpen(false);
-                  attachAndSendPrompt('Create PR', PR_CREATION_PROMPT);
+                  attachAndSendPrompt('Create PR', createPrPrompt);
                 }}
               >
                 Create new PR
@@ -200,43 +195,18 @@ export default function CreatePrButton() {
     );
   }
 
-  // --- Local repo: Merge flow ---
+  // --- Local repo: Merge flow (target branch comes from the status bar) ---
   return (
     <div className="create-pr-wrap">
-      <div className="create-pr-split">
-        <button
-          className="create-pr-main"
-          onClick={() =>
-            attachAndSendPrompt(`Merge to ${mergeTo}`, mergeBranchPrompt(mergeTo))
-          }
-        >
-          Merge to {mergeTo}
-        </button>
-        <button
-          className="create-pr-arrow"
-          onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
-          aria-label="Merge options"
-        >
-          ▾
-        </button>
-      </div>
-      {open && branches.length > 0 && (
-        <div className="create-pr-dropdown">
-          {branches.map((branch) => (
-            <button
-              key={branch}
-              className={`create-pr-item${branch === mergeTo ? ' create-pr-item-active' : ''}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                setMergeTo(branch);
-                setOpen(false);
-              }}
-            >
-              {branch}
-            </button>
-          ))}
-        </div>
-      )}
+      <button
+        className="create-pr-main create-pr-merge-solo"
+        onClick={() =>
+          attachAndSendPrompt(`Merge to ${targetBranch}`, mergeBranchPrompt(targetBranch))
+        }
+        title={`Merge into ${targetBranch}`}
+      >
+        Merge to {targetBranch}
+      </button>
     </div>
   );
 }
