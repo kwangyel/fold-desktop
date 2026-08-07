@@ -264,6 +264,30 @@ fn validate_api_key(api_key: &str) -> Result<MeResponse, String> {
     api_get_json::<MeResponse>(api_key, "/v1/me")
 }
 
+fn normalize_effort_level(raw: &str) -> String {
+    match raw.trim().to_lowercase().as_str() {
+        "extra" | "x-high" | "xhigh" => "xhigh".to_string(),
+        "ultra" | "ultracode" => "ultracode".to_string(),
+        "med" => "medium".to_string(),
+        "min" | "minimal" => "minimal".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn cursor_model_with_effort(model: &str, effort: Option<&str>) -> String {
+    let Some(effort) = effort.filter(|s| !s.is_empty()) else {
+        return model.to_string();
+    };
+    if model.contains('[') {
+        return model.to_string();
+    }
+    let wire = match effort {
+        "ultracode" => "xhigh",
+        other => other,
+    };
+    format!("{model}[effort={wire}]")
+}
+
 fn map_model(m: ApiModel) -> CursorModelInfo {
     let params = m.parameters.unwrap_or_default();
     let supports_fast = params.iter().any(|p| p.id == "fast");
@@ -271,9 +295,11 @@ fn map_model(m: ApiModel) -> CursorModelInfo {
         p.id == "effort" || p.id == "reasoning_effort" || p.id.contains("effort")
     });
     let effort_levels = effort_param.and_then(|p| {
-        p.values
-            .as_ref()
-            .map(|vals| vals.iter().map(|v| v.value.clone()).collect::<Vec<_>>())
+        p.values.as_ref().map(|vals| {
+            vals.iter()
+                .map(|v| normalize_effort_level(&v.value))
+                .collect::<Vec<_>>()
+        })
     });
     let supports_effort = effort_levels
         .as_ref()
@@ -446,6 +472,7 @@ pub fn cursor_agent_run(
     prompt: String,
     worktree: String,
     model: Option<String>,
+    effort: Option<String>,
     plan_mode: Option<bool>,
     on_output: Channel,
     app: AppHandle,
@@ -509,7 +536,10 @@ pub fn cursor_agent_run(
     ];
     if let Some(m) = model.filter(|s| !s.is_empty()) {
         args.push("--model".into());
-        args.push(m);
+        args.push(cursor_model_with_effort(
+            &m,
+            effort.as_deref(),
+        ));
     }
     // Intentionally do NOT pass `--mode plan`. In non-interactive `-p` mode,
     // Cursor's native plan mode calls `create_plan` and then hangs waiting for

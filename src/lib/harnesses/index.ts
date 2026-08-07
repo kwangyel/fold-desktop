@@ -1,9 +1,15 @@
+import { enrichModelEffort } from "../effort";
 import { claudeCodeAdapter } from "./claudeCode";
 import { codexAdapter } from "./codex";
 import { cursorAdapter } from "./cursor";
 import { opencodeAdapter } from "./opencode";
 import type { HarnessAdapter, HarnessId, HarnessModel } from "./types";
 
+export {
+  EFFORT_LABELS,
+  EFFORT_ORDER,
+  resolveEffortLevels,
+} from "../effort";
 export { HARNESS_CATALOG, harnessMeta } from "./catalog";
 export { CLAUDE_CODE_MODELS_FALLBACK } from "./claudeCode";
 export { CODEX_MODELS_FALLBACK } from "./codex";
@@ -67,12 +73,10 @@ function tagModels(
   adapter: HarnessAdapter,
   models: Awaited<ReturnType<HarnessAdapter["listModels"]>>,
 ): HarnessModel[] {
-  return models.map(
-    (m): HarnessModel => ({
-      ...m,
-      harnessId: adapter.id,
-    }),
-  );
+  return models.map((m): HarnessModel => {
+    const tagged: HarnessModel = { ...m, harnessId: adapter.id };
+    return enrichModelEffort(tagged);
+  });
 }
 
 /** Outcome of one catalog load, per connected harness. */

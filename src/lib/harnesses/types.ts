@@ -3,8 +3,19 @@ import type { ModelInfo } from "@anthropic-ai/claude-agent-sdk";
 /** Known harness identifiers. */
 export type HarnessId = "claudecode" | "codex" | "cursor" | "opencode";
 
-/** Effort levels accepted by Claude Code (`--effort`) / Agent SDK. */
-export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max" | "ultracode";
+/**
+ * Effort / reasoning levels across harnesses.
+ * @see https://platform.claude.com/docs/en/build-with-claude/effort
+ * @see https://developers.openai.com/codex/config-advanced
+ */
+export type EffortLevel =
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max"
+  | "ultracode";
 
 /** Shared display metadata for a harness (icons, labels). */
 export type HarnessMeta = {
@@ -16,8 +27,9 @@ export type HarnessMeta = {
 };
 
 /** A model offered by a connected harness, ready for the chat picker. */
-export type HarnessModel = ModelInfo & {
+export type HarnessModel = Omit<ModelInfo, "supportedEffortLevels"> & {
   harnessId: HarnessId;
+  supportedEffortLevels?: EffortLevel[];
 };
 
 export type HarnessAdapter = {

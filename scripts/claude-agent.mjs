@@ -123,10 +123,12 @@ async function main() {
   };
 
   if (model) options.model = model;
-  if (effort) {
-    // The SDK's EffortLevel union is low|medium|high|xhigh|max. The chat also
-    // offers `ultracode`, so pass anything outside the union straight through
-    // as a CLI arg and let Claude Code validate it.
+  if (effort === "ultracode") {
+    options.ultracode = true;
+    options.effort = "xhigh";
+  } else if (effort) {
+    // The SDK's EffortLevel union is low|medium|high|xhigh|max. Pass anything
+    // outside the union straight through as a CLI arg and let Claude Code validate it.
     if (SDK_EFFORT_LEVELS.has(effort)) {
       options.effort = effort;
     } else {

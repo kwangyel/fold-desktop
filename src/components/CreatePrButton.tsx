@@ -201,11 +201,11 @@ export default function CreatePrButton() {
       <button
         className="create-pr-main create-pr-merge-solo"
         onClick={() =>
-          attachAndSendPrompt(`Merge to ${targetBranch}`, mergeBranchPrompt(targetBranch))
+          attachAndSendPrompt('Merge to target branch', mergeBranchPrompt(targetBranch))
         }
         title={`Merge into ${targetBranch}`}
       >
-        Merge to {targetBranch}
+        Merge to target branch
       </button>
     </div>
   );

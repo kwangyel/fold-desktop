@@ -342,6 +342,7 @@ pub fn codex_agent_run(
     prompt: String,
     worktree: String,
     model: Option<String>,
+    effort: Option<String>,
     on_output: Channel,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
@@ -390,6 +391,10 @@ pub fn codex_agent_run(
     if let Some(m) = model.filter(|s| !s.is_empty()) {
         args.push("-m".into());
         args.push(m);
+    }
+    if let Some(e) = effort.filter(|s| !s.is_empty()) {
+        args.push("-c".into());
+        args.push(format!("model_reasoning_effort={}", toml_str(&e)));
     }
 
     // Register Fold's `fold_ask_user` MCP tool so Codex can ask the user
