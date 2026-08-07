@@ -26,6 +26,7 @@ import {
   opencodeReleaseChannel,
 } from '../lib/opencode';
 import { harnessSupportsPlanMode, type EffortLevel, type HarnessId } from '../lib/harnesses';
+import { effortForAgentWire, resolveEffortLevels } from '../lib/effort';
 import { writeFile } from '../lib/git';
 import {
   composeAgentPrompt,
@@ -1355,6 +1356,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         tab.selectedModel,
         harnessId,
       );
+      const effortLevels = resolveEffortLevels(modelInfo);
+      const selectedEffort =
+        effortLevels.length > 0 && effortLevels.includes(tab.modelEffort)
+          ? tab.modelEffort
+          : null;
+      const agentEffort = selectedEffort
+        ? effortForAgentWire(harnessId, selectedEffort)
+        : null;
 
       if (harnessId === 'cursor') {
         // Soft plan mode: Cursor's native `--mode plan` hangs in `-p` after
@@ -1372,6 +1381,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           cursorPrompt,
           worktree,
           tab.selectedModel || null,
+          agentEffort,
           planningRun,
           onEvent,
         );
@@ -1381,6 +1391,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           promptForAgent,
           worktree,
           tab.selectedModel || null,
+          agentEffort,
           onEvent,
         );
       } else if (harnessId === 'opencode') {
@@ -1389,14 +1400,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           promptForAgent,
           worktree,
           tab.selectedModel || null,
+          agentEffort,
           planningRun,
           onEvent,
         );
       } else {
-        const effort =
-          modelInfo?.supportsEffort && tab.modelEffort
-            ? tab.modelEffort
-            : null;
+        const effort = agentEffort;
         const fastMode = Boolean(
           modelInfo?.supportsFastMode && tab.mode === 'fast',
         );

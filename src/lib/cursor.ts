@@ -89,6 +89,7 @@ export async function cursorAgentRun(
   prompt: string,
   worktree: string,
   model: string | null,
+  effort: string | null,
   planMode: boolean,
   onEvent: (chunk: CursorOutput) => void,
 ): Promise<void> {
@@ -104,6 +105,7 @@ export async function cursorAgentRun(
       prompt,
       worktree,
       model,
+      effort,
       planMode,
       onOutput: output,
     });

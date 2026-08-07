@@ -85,6 +85,7 @@ export async function opencodeAgentRun(
   prompt: string,
   worktree: string,
   model: string | null,
+  effort: string | null,
   planMode: boolean,
   onEvent: (chunk: OpenCodeOutput) => void,
 ): Promise<void> {
@@ -100,6 +101,7 @@ export async function opencodeAgentRun(
       prompt,
       worktree,
       model,
+      effort,
       planMode,
       onOutput: output,
     });

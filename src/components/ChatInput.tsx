@@ -11,6 +11,10 @@ import {
 import { useChatStore, type Attachment } from '../store/chatStore';
 import { findHarnessModel, useHarnessStore } from '../store/harnessStore';
 import {
+  EFFORT_LABELS,
+  resolveEffortLevels,
+} from '../lib/effort';
+import {
   harnessSupportsPlanMode,
   type EffortLevel,
   type HarnessModel,
@@ -26,28 +30,9 @@ interface ChatInputProps {
   tabId: string;
 }
 
-const EFFORT_LABELS: Record<EffortLevel, string> = {
-  low: 'Low',
-  medium: 'Med',
-  high: 'High',
-  xhigh: 'XHigh',
-  max: 'Max',
-  ultracode: 'Ultra',
-};
-
-/** Effort options for a model: SDK levels + ultracode when effort is supported. */
+/** Effort options for a model (API levels merged with harness docs). */
 function effortOptionsFor(model: HarnessModel | undefined): EffortLevel[] {
-  if (!model?.supportsEffort) return [];
-  const levels = (model.supportedEffortLevels ?? [
-    'low',
-    'medium',
-    'high',
-  ]) as EffortLevel[];
-  // Claude Code exposes ultracode in the effort menu for effort-capable models.
-  if (!levels.includes('ultracode')) {
-    return [...levels, 'ultracode'];
-  }
-  return levels;
+  return resolveEffortLevels(model);
 }
 
 function AttachmentIcon({ kind }: { kind: Attachment['kind'] }) {

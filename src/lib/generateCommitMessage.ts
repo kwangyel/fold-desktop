@@ -18,7 +18,8 @@ import {
   opencodeAgentRun,
   opencodeReleaseChannel,
 } from "./opencode";
-import type { HarnessId } from "./harnesses";
+import { effortForAgentWire } from "./effort";
+import type { EffortLevel, HarnessId } from "./harnesses";
 import { getStagedDiff, isTauri } from "./git";
 import { useCenterViewStore } from "../store/centerViewStore";
 import { useChatStore } from "../store/chatStore";
@@ -275,7 +276,10 @@ export async function generateCommitMessage(): Promise<string> {
     throw new Error("Stage changes before generating a commit message.");
   }
 
-  const { harnessId, model, effort, fastMode } = resolveActiveHarness();
+  const { harnessId, model, effort: rawEffort, fastMode } = resolveActiveHarness();
+  const effort = rawEffort
+    ? effortForAgentWire(harnessId, rawEffort as EffortLevel)
+    : null;
   if (!isConnected(harnessId)) {
     throw new Error(
       `${harnessId} is not connected. Open Connect Harness to connect.`,
@@ -310,10 +314,18 @@ export async function generateCommitMessage(): Promise<string> {
   return collectAssistantText(harnessId, sessionId, async (onEvent) => {
     switch (harnessId) {
       case "cursor":
-        await cursorAgentRun(sessionId, prompt, worktree, model, false, onEvent);
+        await cursorAgentRun(
+          sessionId,
+          prompt,
+          worktree,
+          model,
+          effort,
+          false,
+          onEvent,
+        );
         break;
       case "codex":
-        await codexAgentRun(sessionId, prompt, worktree, model, onEvent);
+        await codexAgentRun(sessionId, prompt, worktree, model, effort, onEvent);
         break;
       case "opencode":
         await opencodeAgentRun(
@@ -321,6 +333,7 @@ export async function generateCommitMessage(): Promise<string> {
           prompt,
           worktree,
           model,
+          effort,
           false,
           onEvent,
         );
