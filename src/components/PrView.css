@@ -89,8 +89,13 @@
 }
 
 .pr-btn-merge {
-  background: #2da44e;
-  border-color: #2a9147;
+  background: var(--accent-button);
+  border-color: var(--accent-button-hover);
+}
+
+.pr-btn-merge:hover:not(:disabled) {
+  background: var(--accent-button-hover);
+  border-color: var(--accent-button-hover);
 }
 
 .pr-btn-archive {

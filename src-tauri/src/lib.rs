@@ -211,6 +211,7 @@ pub fn run() {
             git::list_dir,
             git::read_file,
             git::write_file,
+            git::write_bytes,
             git::git_head_commit,
             git::git_changed_since,
             projects::list_projects,

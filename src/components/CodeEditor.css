@@ -58,7 +58,7 @@
 }
 
 .diff-toggle-group button.active {
-  background: var(--accent);
+  background: var(--accent-button);
   color: #fff;
 }
 
@@ -78,8 +78,8 @@
 }
 
 .diff-tool-btn.primary {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--accent-button);
+  border-color: var(--accent-button);
   color: #fff;
 }
 

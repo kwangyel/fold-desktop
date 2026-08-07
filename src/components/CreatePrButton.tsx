@@ -5,6 +5,7 @@ import { useProjectStore } from '../store/projectStore';
 import { ghPrCreateWeb, ghPrViewCached, type PrInfo } from '../lib/github';
 import { gitGithubRemote, gitListBranches } from '../lib/git';
 import { PR_CREATION_PROMPT, mergeBranchPrompt } from '../lib/prPrompt';
+import { makePromptAttachment } from '../lib/attachments';
 import './CreatePrButton.css';
 
 export default function CreatePrButton() {
@@ -105,17 +106,27 @@ export default function CreatePrButton() {
     return null; // caller will pick up the new tab after a tick
   };
 
-  const sendToChat = (prompt: string) => {
-    const chatTabId = getOrCreateChatTabId();
-    if (chatTabId) {
-      void useChatStore.getState().sendPrompt(chatTabId, prompt);
-    } else {
+  /** Attach a prompt chip and immediately send — used for Create PR / Merge only. */
+  const attachAndSendPrompt = (name: string, prompt: string) => {
+    void (async () => {
+      const attachment = await makePromptAttachment(name, prompt);
+      const attachAndSend = (tabId: string) => {
+        const store = useChatStore.getState();
+        store.initializeTab(tabId);
+        store.addAttachment(tabId, attachment);
+        void store.sendPrompt(tabId, '');
+      };
+      const chatTabId = getOrCreateChatTabId();
+      if (chatTabId) {
+        attachAndSend(chatTabId);
+        return;
+      }
       addChatTab();
       setTimeout(() => {
         const newTabId = useCenterViewStore.getState().activeTabId;
-        void useChatStore.getState().sendPrompt(newTabId, prompt);
+        attachAndSend(newTabId);
       }, 100);
-    }
+    })();
   };
 
   // --- GitHub remote: PR flow ---
@@ -133,7 +144,10 @@ export default function CreatePrButton() {
               View PR #{existingPr?.number}
             </button>
           ) : (
-            <button className="create-pr-main" onClick={() => sendToChat(PR_CREATION_PROMPT)}>
+            <button
+              className="create-pr-main"
+              onClick={() => attachAndSendPrompt('Create PR', PR_CREATION_PROMPT)}
+            >
               Create PR
             </button>
           )}
@@ -153,7 +167,7 @@ export default function CreatePrButton() {
                 onClick={(e) => {
                   e.stopPropagation();
                   setOpen(false);
-                  sendToChat(PR_CREATION_PROMPT);
+                  attachAndSendPrompt('Create PR', PR_CREATION_PROMPT);
                 }}
               >
                 Create new PR
@@ -192,7 +206,9 @@ export default function CreatePrButton() {
       <div className="create-pr-split">
         <button
           className="create-pr-main"
-          onClick={() => sendToChat(mergeBranchPrompt(mergeTo))}
+          onClick={() =>
+            attachAndSendPrompt(`Merge to ${mergeTo}`, mergeBranchPrompt(mergeTo))
+          }
         >
           Merge to {mergeTo}
         </button>

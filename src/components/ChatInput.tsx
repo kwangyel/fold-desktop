@@ -1,13 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { IconChecklist } from '@tabler/icons-react';
-import { useChatStore } from '../store/chatStore';
+import {
+  IconChecklist,
+  IconFile,
+  IconFileText,
+  IconPaperclip,
+  IconPhoto,
+  IconSparkles,
+} from '@tabler/icons-react';
+import { useChatStore, type Attachment } from '../store/chatStore';
 import { findHarnessModel, useHarnessStore } from '../store/harnessStore';
 import {
   harnessSupportsPlanMode,
   type EffortLevel,
   type HarnessModel,
 } from '../lib/harnesses';
+import {
+  attachmentFromFile,
+  makeTextAttachment,
+} from '../lib/attachments';
 import ModelPicker from './ModelPicker';
 import './ChatInput.css';
 
@@ -37,6 +48,14 @@ function effortOptionsFor(model: HarnessModel | undefined): EffortLevel[] {
     return [...levels, 'ultracode'];
   }
   return levels;
+}
+
+function AttachmentIcon({ kind }: { kind: Attachment['kind'] }) {
+  const props = { size: 14, stroke: 2 } as const;
+  if (kind === 'image') return <IconPhoto {...props} />;
+  if (kind === 'prompt') return <IconSparkles {...props} />;
+  if (kind === 'text') return <IconFileText {...props} />;
+  return <IconFile {...props} />;
 }
 
 export default function ChatInput({ tabId }: ChatInputProps) {
@@ -142,7 +161,8 @@ export default function ChatInput({ tabId }: ChatInputProps) {
   );
 
   const handleSend = () => {
-    if (!message.trim() || tab.loading) return;
+    if (tab.loading) return;
+    if (!message.trim() && tab.attachments.length === 0) return;
     const prompt = message.trim();
     setMessage('');
     void sendPrompt(tabId, prompt);
@@ -153,20 +173,50 @@ export default function ChatInput({ tabId }: ChatInputProps) {
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = e.target.files;
+    if (!files?.length) return;
 
-    const attachment = {
-      id: Date.now().toString(),
-      name: file.name,
-      size: file.size,
-      type: file.type,
-    };
-
-    addAttachment(tabId, attachment);
+    void (async () => {
+      for (const file of Array.from(files)) {
+        const attachment = await attachmentFromFile(file);
+        addAttachment(tabId, attachment);
+      }
+    })();
 
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
+    }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items?.length) return;
+
+    const files: File[] = [];
+    for (const item of Array.from(items)) {
+      if (item.kind === 'file') {
+        const file = item.getAsFile();
+        if (file) files.push(file);
+      }
+    }
+
+    if (files.length > 0) {
+      e.preventDefault();
+      void (async () => {
+        for (const file of files) {
+          const attachment = await attachmentFromFile(file);
+          addAttachment(tabId, attachment);
+        }
+      })();
+      return;
+    }
+
+    const text = e.clipboardData.getData('text/plain');
+    if (text) {
+      e.preventDefault();
+      void makeTextAttachment(text).then((attachment) => {
+        addAttachment(tabId, attachment);
+      });
     }
   };
 
@@ -196,8 +246,22 @@ export default function ChatInput({ tabId }: ChatInputProps) {
         {tab.attachments.length > 0 && (
           <div className="attachments-preview">
             {tab.attachments.map((att) => (
-              <div key={att.id} className="attachment-badge">
-                <span className="attachment-icon">📎</span>
+              <div
+                key={att.id}
+                className={`attachment-badge kind-${att.kind}`}
+                title={att.path ?? att.content ?? att.name}
+              >
+                {att.kind === 'image' && att.dataUrl ? (
+                  <img
+                    className="attachment-thumb"
+                    src={att.dataUrl}
+                    alt=""
+                  />
+                ) : (
+                  <span className="attachment-icon">
+                    <AttachmentIcon kind={att.kind} />
+                  </span>
+                )}
                 <span className="attachment-name">{att.name}</span>
                 <button
                   className="attachment-remove"
@@ -215,7 +279,8 @@ export default function ChatInput({ tabId }: ChatInputProps) {
           value={message}
           onChange={(e) => setMessage(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Type your message... (Shift+Enter for new line)"
+          onPaste={handlePaste}
+          placeholder="Type your message... (paste text or images as attachments)"
           className="message-input"
           disabled={tab.loading}
           rows={3}
@@ -298,7 +363,7 @@ export default function ChatInput({ tabId }: ChatInputProps) {
               title="Attach file"
               aria-label="Attach file"
             >
-              📎
+              <IconPaperclip size={16} stroke={2} />
             </button>
 
             {tab.loading ? (
@@ -314,7 +379,7 @@ export default function ChatInput({ tabId }: ChatInputProps) {
               <button
                 className="send-btn"
                 onClick={handleSend}
-                disabled={!message.trim()}
+                disabled={!message.trim() && tab.attachments.length === 0}
                 title="Send message"
                 aria-label="Send message"
               >
@@ -328,6 +393,7 @@ export default function ChatInput({ tabId }: ChatInputProps) {
       <input
         ref={fileInputRef}
         type="file"
+        multiple
         onChange={handleFileSelect}
         style={{ display: 'none' }}
         aria-label="File input"

@@ -40,7 +40,7 @@
 
 .commit-message:focus {
   outline: none;
-  border-color: var(--accent, #7c5cff);
+  border-color: var(--accent, #8ecaff);
 }
 
 .commit-message:disabled {

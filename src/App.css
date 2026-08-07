@@ -125,7 +125,7 @@ select {
 .primary-btn {
   margin-top: 4px;
   width: 100%;
-  background: var(--accent);
+  background: var(--accent-button);
   color: white;
   border: none;
   border-radius: 5px;
@@ -135,7 +135,7 @@ select {
 }
 
 .primary-btn:hover {
-  background: var(--accent-dim);
+  background: var(--accent-button-hover);
 }
 
 .project-actions {

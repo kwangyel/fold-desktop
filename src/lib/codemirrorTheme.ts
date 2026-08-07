@@ -63,7 +63,7 @@ export const foldEditorTheme = EditorView.theme(
 );
 
 export const foldHighlightStyle = HighlightStyle.define([
-  { tag: t.keyword, color: "#c792ea" },
+  { tag: t.keyword, color: "#8ecaff" },
   { tag: [t.name, t.deleted, t.character, t.propertyName, t.macroName], color: "#82aaff" },
   { tag: [t.function(t.variableName), t.labelName], color: "#82aaff" },
   { tag: [t.color, t.constant(t.name), t.standard(t.name)], color: "#f78c6c" },
@@ -75,7 +75,7 @@ export const foldHighlightStyle = HighlightStyle.define([
   { tag: t.emphasis, fontStyle: "italic" },
   { tag: t.strikethrough, textDecoration: "line-through" },
   { tag: t.link, color: "#89ddff", textDecoration: "underline" },
-  { tag: t.heading, fontWeight: "bold", color: "#c792ea" },
+  { tag: t.heading, fontWeight: "bold", color: "#8ecaff" },
   { tag: [t.atom, t.bool, t.special(t.variableName)], color: "#f78c6c" },
   { tag: [t.processingInstruction, t.string, t.inserted], color: "#c3e88d" },
   { tag: t.invalid, color: "#ff5370" },
