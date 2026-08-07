@@ -227,7 +227,7 @@ export default function CreateWorktreeDialog({ projectId, onClose }: Props) {
                   <span>Symlink environments</span>
                 </label>
                 {dirs.length === 0 ? (
-                  <div className="env-empty">No known env folders found in main.</div>
+                  <div className="env-empty">No gitignored env folders found in main.</div>
                 ) : (
                   <div className={`env-list ${symlinkEnvs ? "" : "disabled"}`}>
                     {dirs.map((d) => (
@@ -249,7 +249,7 @@ export default function CreateWorktreeDialog({ projectId, onClose }: Props) {
               <div className="env-section">
                 <div className="env-section-label">Environment files</div>
                 {files.length === 0 ? (
-                  <div className="env-empty">No .env files found in main.</div>
+                  <div className="env-empty">No gitignored .env files found in main.</div>
                 ) : (
                   <div className="env-list">
                     {files.map((f) => (
