@@ -6,6 +6,7 @@ import {
   type PlanRecord,
 } from "../lib/plans";
 import { gitChangedSince, gitHeadCommit } from "../lib/git";
+import { useAgentStatusStore } from "./agentStatusStore";
 
 type PlanStore = {
   /** Plans for the active worktree, newest first. */
@@ -47,7 +48,14 @@ export const usePlanStore = create<PlanStore>((set, get) => ({
   },
 
   update: async (id, patch) => {
+    const before = get().plans.find((p) => p.id === id);
     set({ plans: await patchPlan(id, patch) });
+    // The plan is no longer waiting on the user, so its source chat should stop
+    // saying so. The plan opens in its own center tab, so viewing it never
+    // reaches the chat tab's "seen" clearing.
+    if (patch.status && patch.status !== "draft" && before?.sourceChatTabId) {
+      useAgentStatusStore.getState().clear(before.sourceChatTabId);
+    }
   },
 
   finishImplementation: async (id, ok) => {

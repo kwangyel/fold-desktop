@@ -33,6 +33,7 @@ import {
   makeTranscriptAttachment,
   materializeAttachments,
 } from '../lib/attachments';
+import { abandonQuestions } from '../lib/answerQuestions';
 import {
   chatTitleFromPrompt,
   clearChatSession,
@@ -77,6 +78,7 @@ import {
 } from '../lib/plans';
 import { useCenterViewStore } from './centerViewStore';
 import { useQuestionStore } from './questionStore';
+import { useAgentStatusStore } from './agentStatusStore';
 import type { Question } from '../lib/questions';
 import { findHarnessModel, useHarnessStore } from './harnessStore';
 import { useCodexStore } from './codexStore';
@@ -441,6 +443,13 @@ const FLUSH_DEBOUNCE_MS = 500;
 const dirtyMessages = new Map<string, Set<string>>();
 const flushTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+/**
+ * Tabs the user cancelled. Killing the agent still drives the stream to its
+ * exit sentinel, so `finish` consults this to avoid announcing a "done" the
+ * user never waited for.
+ */
+const cancelledTabs = new Set<string>();
+
 /** Queue a message row for the next transcript flush. No-op for draft tabs. */
 function markMessageDirty(tabId: string, ...messageIds: string[]): void {
   const tab = useChatStore.getState().tabs[tabId];
@@ -779,6 +788,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     // Clearing means "start over": drop the persisted transcript and the
     // harness sessions with it, so the next prompt opens a fresh session.
     const { worktreePath, persisted } = tab;
+    useAgentStatusStore.getState().clear(tabId);
     dirtyMessages.delete(tabId);
     const timer = flushTimers.get(tabId);
     if (timer) {
@@ -934,6 +944,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         },
       };
     });
+    // A cancel that never reached its exit sentinel must not swallow this run.
+    cancelledTabs.delete(tabId);
+    useAgentStatusStore
+      .getState()
+      .setState(tabId, 'running', { worktreePath: worktree, title: chatTitle });
 
     // Use the composed agent prompt (user text + attachment path refs) from here on.
     let promptForAgent = agentPrompt;
@@ -1108,6 +1123,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         if (requestId) {
           pendingPlanApprovals.set(id, { tabId, requestId });
         }
+        // Every captured plan lands in `draft` and waits on "Approve &
+        // implement" — whether or not an agent is parked on an ExitPlanMode
+        // request behind it — so it always wants the user.
+        useAgentStatusStore.getState().setState(tabId, 'needs-you', {
+          worktreePath: worktree,
+          title: get().tabs[tabId]?.title,
+          reason: 'plan',
+        });
         await usePlanStore.getState().add(record);
         useCenterViewStore.getState().openPlanTab(id, record.title);
         return true;
@@ -1286,16 +1309,40 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       }
       get().settleRunningTools(tabId);
       get().setLoading(tabId, false);
+
+      const wasCancelled = cancelledTabs.delete(tabId);
+      const settleStatus = () => {
+        const status = useAgentStatusStore.getState();
+        if (wasCancelled) {
+          status.clear(tabId);
+          return;
+        }
+        // A plan is still waiting to be approved — that outranks "finished".
+        // A pending *question*, by contrast, died with the run just above.
+        if (status.statuses[tabId]?.reason === 'plan') return;
+        status.setState(tabId, 'done', {
+          worktreePath: worktree,
+          title: get().tabs[tabId]?.title,
+        });
+      };
       releaseChannelFor(harnessId, tabId);
       // The agent is gone, so nothing is listening for an answer any more.
+      const abandoned = useQuestionStore.getState().get(tabId);
+      if (abandoned) void abandonQuestions(abandoned);
       useQuestionStore.getState().clear(tabId);
       void useChangesStore.getState().refresh();
       // Settle the transcript on disk and refresh the sidebar's chat list.
       void flushChatMessages(tabId, true);
 
+      const willLookForPlan = planningRun && !errorText && !capturedPlan;
+      // That search can still turn this run into "plan ready", so hold the
+      // terminal status until it resolves — otherwise the user gets a
+      // "finished" notification immediately followed by a "plan ready" one.
+      if (!willLookForPlan) settleStatus();
+
       // Prefer THIS run's plan file only. Never scan for "some other" plan —
       // that was returning unrelated older plans from `.fold/plans/`.
-      if (planningRun && !errorText && !capturedPlan) {
+      if (willLookForPlan) {
         void (async () => {
           if (trackedPlanPath) {
             const fromDisk = await loadPlanMarkdownFromDisk(
@@ -1320,7 +1367,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             )?.content;
             if (body) await capturePlan(body);
           }
-        })();
+        })().finally(settleStatus);
       }
 
       // An implementation run just ended — settle the plan's status from it.
@@ -1819,6 +1866,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   cancelAgent: async (tabId) => {
+    cancelledTabs.add(tabId);
+    useAgentStatusStore.getState().clear(tabId);
     const harnessId = (get().tabs[tabId]?.selectedHarness ||
       'claudecode') as HarnessId;
     switch (harnessId) {

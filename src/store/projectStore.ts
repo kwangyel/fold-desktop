@@ -16,6 +16,7 @@ import {
 } from "../lib/projects";
 import { useChangesStore } from "./changesStore";
 import { useChatSessionStore } from "./chatSessionStore";
+import { useAgentStatusStore } from "./agentStatusStore";
 import { syncChatTabsForWorktree } from "../lib/chatTabs";
 
 type ProjectStore = {
@@ -252,7 +253,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         (w) => w.id === worktreeId,
       )?.path;
       const updated = await removeWorktree(projectId, worktreeId);
-      if (removedPath) useChatSessionStore.getState().forget(removedPath);
+      if (removedPath) {
+        useChatSessionStore.getState().forget(removedPath);
+        useAgentStatusStore.getState().clearWorktree(removedPath);
+      }
       set((s) => ({
         projects: replaceProject(s.projects, updated),
         activeId: s.activeId ?? projectId,
@@ -274,7 +278,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       )?.path;
       const updated = await archiveWorktree(projectId, worktreeId);
       // Archiving deletes the worktree folder and its `.fold` data too.
-      if (archivedPath) useChatSessionStore.getState().forget(archivedPath);
+      if (archivedPath) {
+        useChatSessionStore.getState().forget(archivedPath);
+        useAgentStatusStore.getState().clearWorktree(archivedPath);
+      }
       set((s) => ({
         projects: replaceProject(s.projects, updated),
         activeId: s.activeId ?? projectId,

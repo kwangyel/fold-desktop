@@ -369,6 +369,45 @@ select {
   flex: 1;
 }
 
+/* Agent state on sidebar rows: running / needs-you / done. */
+.agent-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-left: auto;
+  background: var(--muted);
+}
+
+.agent-dot.running {
+  background: var(--accent);
+  animation: agent-dot-pulse 1.4s ease-in-out infinite;
+}
+
+.agent-dot.needs-you {
+  background: var(--warn);
+}
+
+.agent-dot.done {
+  background: var(--success);
+}
+
+@keyframes agent-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-dot.running {
+    animation: none;
+  }
+}
+
 .chat-rename-input {
   flex: 1;
   min-width: 0;

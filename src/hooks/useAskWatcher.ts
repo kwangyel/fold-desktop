@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { listDir, readFile } from "../lib/git";
 import { ASKS_DIR, type AskRequestFile } from "../lib/asks";
 import { useQuestionStore } from "../store/questionStore";
@@ -21,6 +21,13 @@ export function useAskWatcher(tabId: string): void {
   const loading = useChatStore((s) => s.tabs[tabId]?.loading ?? false);
   const harness = useChatStore((s) => s.tabs[tabId]?.selectedHarness);
   const activePath = useProjectStore((s) => s.activePath);
+
+  // When this run began. The asks directory is shared by every chat in the
+  // worktree and request files are never deleted, so without this a question
+  // left unanswered by an earlier run would be re-surfaced here and shown as
+  // though this agent had asked it. Deliberately not keyed on `activePath` or
+  // `harness`: those can change mid-run and must not reset the cutoff.
+  const runStartedAt = useMemo(() => Date.now(), [tabId, loading]);
 
   useEffect(() => {
     if (!loading || !activePath || harness === "claudecode") return;
@@ -56,6 +63,13 @@ export function useAskWatcher(tabId: string): void {
             seen.delete(entry.name);
             continue;
           }
+          // Left over from an earlier run, or belonging to another worktree
+          // (`.fold/asks` resolves against whichever worktree is active, which
+          // can change mid-run). Either way it was not asked of this chat.
+          if (request.createdAt < runStartedAt) continue;
+          if (request.worktreePath && request.worktreePath !== activePath) {
+            continue;
+          }
           // Skip asks that already have an answer on disk.
           try {
             await readFile(`${ASKS_DIR}/${request.askId}.answer.json`);
@@ -87,5 +101,5 @@ export function useAskWatcher(tabId: string): void {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [tabId, loading, harness, activePath]);
+  }, [tabId, loading, harness, activePath, runStartedAt]);
 }
