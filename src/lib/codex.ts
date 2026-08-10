@@ -80,6 +80,7 @@ export async function codexAgentRun(
   worktree: string,
   model: string | null,
   effort: string | null,
+  resumeSessionId: string | null,
   onEvent: (chunk: CodexOutput) => void,
 ): Promise<void> {
   if (!isTauri()) {
@@ -95,6 +96,7 @@ export async function codexAgentRun(
       worktree,
       model,
       effort,
+      resumeSessionId,
       onOutput: output,
     });
   } catch (e) {

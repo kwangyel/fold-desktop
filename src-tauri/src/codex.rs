@@ -343,6 +343,7 @@ pub fn codex_agent_run(
     worktree: String,
     model: Option<String>,
     effort: Option<String>,
+    resume_session_id: Option<String>,
     on_output: Channel,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
@@ -379,15 +380,26 @@ pub fn codex_agent_run(
         return Err(format!("worktree path does not exist: {worktree}"));
     }
 
-    // workspace-write so the agent can edit files in the Fold worktree.
-    let mut args: Vec<String> = vec![
-        "exec".into(),
-        "--json".into(),
-        "--sandbox".into(),
-        "workspace-write".into(),
-        "-C".into(),
-        worktree.clone(),
-    ];
+    // Resuming is a subcommand (`codex exec resume <SESSION_ID> [PROMPT]`),
+    // not a flag, and it accepts neither `-C/--cd` nor `-s/--sandbox`. The
+    // working directory therefore comes from the child's cwd (set below for
+    // both paths) and the sandbox from an equivalent config override.
+    //
+    // Either way: workspace-write so the agent can edit files in the worktree.
+    let resume = resume_session_id.filter(|s| !s.is_empty());
+    let mut args: Vec<String> = vec!["exec".into()];
+    if let Some(id) = &resume {
+        args.push("resume".into());
+        args.push(id.clone());
+        args.push("-c".into());
+        args.push(format!("sandbox_mode={}", toml_str("workspace-write")));
+    } else {
+        args.push("--sandbox".into());
+        args.push("workspace-write".into());
+        args.push("-C".into());
+        args.push(worktree.clone());
+    }
+    args.push("--json".into());
     if let Some(m) = model.filter(|s| !s.is_empty()) {
         args.push("-m".into());
         args.push(m);

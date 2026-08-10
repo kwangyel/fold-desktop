@@ -4,6 +4,7 @@ import {
   IconChecklist,
   IconFile,
   IconFileText,
+  IconMessage,
   IconPaperclip,
   IconPhoto,
   IconSparkles,
@@ -20,6 +21,7 @@ import {
   attachmentFromFile,
   makeTextAttachment,
 } from '../lib/attachments';
+import { startHarnessHandoff } from '../lib/chatTabs';
 import EffortDial from './EffortDial';
 import ModelPicker from './ModelPicker';
 import './ChatInput.css';
@@ -37,6 +39,7 @@ function AttachmentIcon({ kind }: { kind: Attachment['kind'] }) {
   const props = { size: 14, stroke: 2 } as const;
   if (kind === 'image') return <IconPhoto {...props} />;
   if (kind === 'prompt') return <IconSparkles {...props} />;
+  if (kind === 'transcript') return <IconMessage {...props} />;
   if (kind === 'text') return <IconFileText {...props} />;
   return <IconFile {...props} />;
 }
@@ -211,6 +214,16 @@ export default function ChatInput({ tabId }: ChatInputProps) {
   };
 
   const handleModelChange = (model: HarnessModel) => {
+    // Harnesses cannot read each other's sessions. Switching harness in a chat
+    // that already has history therefore opens a new chat on the new harness
+    // with the transcript attached, rather than silently dropping the context.
+    const switchingHarness =
+      model.harnessId !== tab.selectedHarness &&
+      useChatStore.getState().tabs[tabId]?.messages.length;
+    if (switchingHarness) {
+      void startHarnessHandoff(tabId, model.harnessId, model.value);
+      return;
+    }
     setModel(tabId, model.value, model.harnessId);
     applyModelCapabilities(model, tab.modelEffort, tab.mode);
   };

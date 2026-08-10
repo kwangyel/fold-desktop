@@ -4,6 +4,7 @@ import CreatePrButton from "./CreatePrButton";
 import GlobalQuestionOverlay from "./GlobalQuestionOverlay";
 import BackgroundAskWatchers from "./BackgroundAskWatchers";
 import { closeActiveTab } from "../lib/closeActiveTab";
+import { newChatTab } from "../lib/chatTabs";
 import { useCenterViewStore, getLiveEditorContent, setLiveEditorContent } from "../store/centerViewStore";
 import { useChatStore } from "../store/chatStore";
 import { useProjectStore } from "../store/projectStore";
@@ -19,7 +20,6 @@ const PlanView = lazy(() => import("./PlanView"));
 function CenterPane() {
   const tabs = useCenterViewStore((state) => state.tabs);
   const activeTabId = useCenterViewStore((state) => state.activeTabId);
-  const addChatTab = useCenterViewStore((state) => state.addChatTab);
   const closeTab = useCenterViewStore((state) => state.closeTab);
   const setActiveTab = useCenterViewStore((state) => state.setActiveTab);
   const pinTab = useCenterViewStore((state) => state.pinTab);
@@ -240,7 +240,11 @@ function CenterPane() {
               )}
             </div>
           ))}
-          <div className="tab-add" onClick={addChatTab}>
+          <div
+            className="tab-add"
+            onClick={() => newChatTab(activePath)}
+            title="New chat"
+          >
             +
           </div>
         </div>

@@ -30,8 +30,26 @@ import { effortForAgentWire, resolveEffortLevels } from '../lib/effort';
 import { writeFile } from '../lib/git';
 import {
   composeAgentPrompt,
+  makeTranscriptAttachment,
   materializeAttachments,
 } from '../lib/attachments';
+import {
+  chatTitleFromPrompt,
+  clearChatSession,
+  deleteChat,
+  messageFromRow,
+  rowFromMessage,
+  saveChatMessages,
+  setChatSession,
+  upsertChat,
+  type ChatMessageRow,
+  type ChatRecord,
+} from '../lib/chats';
+import {
+  renderTranscriptMarkdown,
+  transcriptAttachmentName,
+} from '../lib/chatTranscript';
+import { useChatSessionStore } from './chatSessionStore';
 import type { SDKMessage } from '../lib/claudeStreamTypes';
 import {
   cursorToolPayload,
@@ -65,7 +83,13 @@ import { useCodexStore } from './codexStore';
 import { useCursorStore } from './cursorStore';
 import { useOpenCodeStore } from './opencodeStore';
 
-export type AttachmentKind = 'file' | 'text' | 'image' | 'prompt';
+export type AttachmentKind =
+  | 'file'
+  | 'text'
+  | 'image'
+  | 'prompt'
+  /** Transcript of an earlier chat, carried over on a harness switch. */
+  | 'transcript';
 
 export type Attachment = {
   id: string;
@@ -109,6 +133,28 @@ export type ChatTabState = {
   planMode: boolean;
   attachments: Attachment[];
   loading: boolean;
+  /**
+   * `false` until the first prompt is sent. Draft tabs are never written to
+   * disk, so opening a tab and closing it again leaves no empty chat behind.
+   */
+  persisted: boolean;
+  /** Worktree this chat belongs to; set when it is first persisted. */
+  worktreePath: string | null;
+  /** Sidebar label, derived from the opening prompt. */
+  title: string;
+  /**
+   * Harness session ids for this chat, keyed by harness. Each harness keeps its
+   * own conversation memory, so a chat can hold one session per harness it has
+   * been run with and resume whichever is selected.
+   */
+  sessions: Partial<Record<HarnessId, string>>;
+};
+
+/** Options for seeding a new tab (used by the harness-switch handoff). */
+export type NewTabOptions = {
+  harnessId?: string;
+  model?: string;
+  attachments?: Attachment[];
 };
 
 /**
@@ -165,7 +211,13 @@ export type SendPromptOptions = {
 type ChatStore = {
   tabs: Record<string, ChatTabState>;
 
-  initializeTab: (tabId: string) => void;
+  initializeTab: (tabId: string, options?: NewTabOptions) => void;
+  /** Restore a persisted chat into a tab (transcript, harness, sessions). */
+  hydrateTab: (
+    tabId: string,
+    worktreePath: string,
+    record: ChatRecord,
+  ) => void;
   addMessage: (tabId: string, message: Message) => void;
   updateMessage: (
     tabId: string,
@@ -234,6 +286,12 @@ type GenericStreamEvent = {
   tool_call?: Record<string, unknown>;
   timestamp_ms?: number;
   model_call_id?: string;
+  /** Claude Code (`system`/`init`) and Cursor stream-json session id. */
+  session_id?: string;
+  /** OpenCode stamps its `ses_…` id on every JSON event. */
+  sessionID?: string;
+  /** Codex `thread.started` conversation id. */
+  thread_id?: string;
   /** Codex `item.*` payload. */
   item?: {
     id?: string;
@@ -374,6 +432,98 @@ function thinkingFromBlocks(blocks: ContentBlock[]): string[] {
     .filter(Boolean);
 }
 
+/**
+ * Streaming rewrites the same assistant row on every frame, so transcript
+ * writes are batched: actions mark rows dirty and a debounced flush upserts
+ * only what changed.
+ */
+const FLUSH_DEBOUNCE_MS = 500;
+const dirtyMessages = new Map<string, Set<string>>();
+const flushTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** Queue a message row for the next transcript flush. No-op for draft tabs. */
+function markMessageDirty(tabId: string, ...messageIds: string[]): void {
+  const tab = useChatStore.getState().tabs[tabId];
+  if (!tab?.persisted || !tab.worktreePath) return;
+  let ids = dirtyMessages.get(tabId);
+  if (!ids) {
+    ids = new Set();
+    dirtyMessages.set(tabId, ids);
+  }
+  for (const id of messageIds) ids.add(id);
+  if (!flushTimers.has(tabId)) {
+    flushTimers.set(
+      tabId,
+      setTimeout(() => {
+        flushTimers.delete(tabId);
+        void flushChatMessages(tabId);
+      }, FLUSH_DEBOUNCE_MS),
+    );
+  }
+}
+
+/**
+ * Write pending transcript rows for a tab. `refreshIndex` re-reads the sidebar
+ * list, which is only worth doing at the end of a turn.
+ */
+export async function flushChatMessages(
+  tabId: string,
+  refreshIndex = false,
+): Promise<void> {
+  const pending = flushTimers.get(tabId);
+  if (pending) {
+    clearTimeout(pending);
+    flushTimers.delete(tabId);
+  }
+  const ids = dirtyMessages.get(tabId);
+  dirtyMessages.delete(tabId);
+
+  const tab = useChatStore.getState().tabs[tabId];
+  if (!tab?.persisted || !tab.worktreePath) return;
+
+  const rows: ChatMessageRow[] = [];
+  if (ids?.size) {
+    tab.messages.forEach((m, index) => {
+      if (ids.has(m.id)) rows.push(rowFromMessage(m, index));
+    });
+  }
+
+  try {
+    await saveChatMessages(tab.worktreePath, tabId, rows);
+  } catch {
+    // Losing a transcript write should never break the run; the next flush
+    // will pick these rows up again if they change.
+    if (ids?.size) dirtyMessages.set(tabId, ids);
+  }
+  if (refreshIndex) {
+    void useChatSessionStore.getState().refresh(tab.worktreePath);
+  }
+}
+
+/**
+ * Harness session id carried by a stream event, or `null`.
+ *
+ * Every harness surfaces its own id differently: Claude Code and Cursor put
+ * `session_id` on their `system`/`init` event, Codex opens with
+ * `thread.started`, and OpenCode stamps `sessionID` on every event.
+ */
+function sessionIdFromEvent(
+  harnessId: HarnessId,
+  event: StreamEvent,
+): string | null {
+  const e = event as GenericStreamEvent;
+  switch (harnessId) {
+    case 'codex':
+      return e.type === 'thread.started' && e.thread_id ? e.thread_id : null;
+    case 'opencode':
+      return e.sessionID || null;
+    case 'cursor':
+    case 'claudecode':
+    default:
+      return e.session_id || null;
+  }
+}
+
 /** Map Cursor CLI `tool_call` payload keys to a display name. */
 function cursorToolName(toolCall: Record<string, unknown> | undefined): string {
   if (!toolCall) return 'tool';
@@ -391,7 +541,7 @@ function cursorToolName(toolCall: Record<string, unknown> | undefined): string {
 export const useChatStore = create<ChatStore>((set, get) => ({
   tabs: {},
 
-  initializeTab: (tabId) =>
+  initializeTab: (tabId, options) =>
     set((state) => {
       if (state.tabs[tabId]) return state;
       return {
@@ -399,19 +549,55 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           ...state.tabs,
           [tabId]: {
             messages: [],
-            selectedModel: 'sonnet',
-            selectedHarness: 'claudecode',
+            selectedModel: options?.model ?? 'sonnet',
+            selectedHarness: options?.harnessId ?? 'claudecode',
             modelEffort: 'medium',
             mode: 'normal',
             planMode: false,
-            attachments: [],
+            attachments: options?.attachments ?? [],
             loading: false,
+            persisted: false,
+            worktreePath: null,
+            title: 'New chat',
+            sessions: {},
           },
         },
       };
     }),
 
-  addMessage: (tabId, message) =>
+  hydrateTab: (tabId, worktreePath, record) =>
+    set((state) => {
+      const existing = state.tabs[tabId];
+      const sessions: Partial<Record<HarnessId, string>> = {};
+      for (const s of record.sessions) {
+        sessions[s.harness as HarnessId] = s.sessionId;
+      }
+      return {
+        tabs: {
+          ...state.tabs,
+          [tabId]: {
+            messages: record.messages.map(messageFromRow),
+            selectedModel: record.meta.model ?? existing?.selectedModel ?? 'sonnet',
+            selectedHarness: record.meta.harness,
+            modelEffort:
+              (record.meta.effort as EffortLevel | null) ??
+              existing?.modelEffort ??
+              'medium',
+            mode: 'normal',
+            planMode: false,
+            // A reopened chat starts with an empty composer.
+            attachments: [],
+            loading: false,
+            persisted: true,
+            worktreePath,
+            title: record.meta.title,
+            sessions,
+          },
+        },
+      };
+    }),
+
+  addMessage: (tabId, message) => {
     set((state) => {
       const tab = state.tabs[tabId];
       if (!tab) return state;
@@ -424,9 +610,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           },
         },
       };
-    }),
+    });
+    markMessageDirty(tabId, message.id);
+  },
 
-  updateMessage: (tabId, messageId, patch) =>
+  updateMessage: (tabId, messageId, patch) => {
     set((state) => {
       const tab = state.tabs[tabId];
       if (!tab) return state;
@@ -441,9 +629,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           },
         },
       };
-    }),
+    });
+    markMessageDirty(tabId, messageId);
+  },
 
-  appendToMessage: (tabId, messageId, text) =>
+  appendToMessage: (tabId, messageId, text) => {
     set((state) => {
       const tab = state.tabs[tabId];
       if (!tab || !text) return state;
@@ -455,23 +645,27 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       return {
         tabs: { ...state.tabs, [tabId]: { ...tab, messages } },
       };
-    }),
+    });
+    markMessageDirty(tabId, messageId);
+  },
 
-  settleRunningTools: (tabId) =>
+  settleRunningTools: (tabId) => {
+    const settled: string[] = [];
     set((state) => {
       const tab = state.tabs[tabId];
       if (!tab) return state;
-      let changed = false;
       const messages = tab.messages.map((m) => {
         if (m.role !== 'tool' || m.toolStatus !== 'running') return m;
-        changed = true;
+        settled.push(m.id);
         return { ...m, toolStatus: 'done' as const };
       });
-      if (!changed) return state;
+      if (settled.length === 0) return state;
       return {
         tabs: { ...state.tabs, [tabId]: { ...tab, messages } },
       };
-    }),
+    });
+    if (settled.length > 0) markMessageDirty(tabId, ...settled);
+  },
 
   setModel: (tabId, model, harnessId) =>
     set((state) => {
@@ -579,27 +773,49 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       };
     }),
 
-  clearChat: (tabId) =>
+  clearChat: (tabId) => {
+    const tab = get().tabs[tabId];
+    if (!tab) return;
+    // Clearing means "start over": drop the persisted transcript and the
+    // harness sessions with it, so the next prompt opens a fresh session.
+    const { worktreePath, persisted } = tab;
+    dirtyMessages.delete(tabId);
+    const timer = flushTimers.get(tabId);
+    if (timer) {
+      clearTimeout(timer);
+      flushTimers.delete(tabId);
+    }
     set((state) => {
-      const tab = state.tabs[tabId];
-      if (!tab) return state;
+      const current = state.tabs[tabId];
+      if (!current) return state;
       return {
         tabs: {
           ...state.tabs,
           [tabId]: {
-            ...tab,
+            ...current,
             messages: [],
             attachments: [],
+            sessions: {},
+            persisted: false,
           },
         },
       };
-    }),
+    });
+    if (persisted && worktreePath) {
+      void deleteChat(worktreePath, tabId).then(() =>
+        useChatSessionStore.getState().refresh(worktreePath),
+      );
+    }
+  },
 
-  deleteTab: (tabId) =>
+  // Closing a tab keeps the chat on disk — it stays listed under its worktree.
+  deleteTab: (tabId) => {
+    void flushChatMessages(tabId);
     set((state) => {
       const { [tabId]: _, ...remainingTabs } = state.tabs;
       return { tabs: remainingTabs };
-    }),
+    });
+  },
 
   sendPrompt: async (tabId, prompt, options) => {
     const tab = get().tabs[tabId];
@@ -642,6 +858,47 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const agentPrompt = composeAgentPrompt(displayContent, preparedAttachments);
     if (!agentPrompt.trim()) return;
 
+    // First prompt promotes the draft tab into a real chat. Until this point
+    // nothing was written to disk, so opening tabs and closing them again
+    // never leaves empty chats in the sidebar.
+    const chatTitle = tab.persisted
+      ? tab.title
+      : chatTitleFromPrompt(displayContent, 'New chat');
+    const wasDraft = !tab.persisted;
+    try {
+      const stamp = Date.now();
+      await upsertChat(worktree, {
+        id: tabId,
+        title: chatTitle,
+        harness: harnessId,
+        model: tab.selectedModel || null,
+        effort: tab.modelEffort ?? null,
+        createdAt: stamp,
+        updatedAt: stamp,
+      });
+      set((state) => {
+        const t = state.tabs[tabId];
+        if (!t) return state;
+        return {
+          tabs: {
+            ...state.tabs,
+            [tabId]: {
+              ...t,
+              persisted: true,
+              worktreePath: worktree,
+              title: chatTitle,
+            },
+          },
+        };
+      });
+      if (wasDraft) {
+        useCenterViewStore.getState().renameTab(tabId, chatTitle);
+        void useChatSessionStore.getState().refresh(worktree);
+      }
+    } catch {
+      // Persistence is best-effort — a failed write must not block the run.
+    }
+
     // Persist path-only chips in the transcript (drop bulky in-memory bodies).
     const messageAttachments =
       preparedAttachments.length > 0
@@ -664,6 +921,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       timestamp: Date.now(),
     };
     get().addMessage(tabId, userMessage);
+    // Write the prompt straight through rather than waiting on the streaming
+    // debounce, so a crash mid-turn can't lose what the user actually asked.
+    void flushChatMessages(tabId);
     set((state) => {
       const t = state.tabs[tabId];
       if (!t) return state;
@@ -676,11 +936,18 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     });
 
     // Use the composed agent prompt (user text + attachment path refs) from here on.
-    const promptForAgent = agentPrompt;
+    let promptForAgent = agentPrompt;
     let lineBuffer = '';
     let assistantId: string | null = null;
     let finished = false;
     let lastAssistantSegment = '';
+    /** Session id this attempt asked the harness to resume, if any. */
+    let runResumeId: string | null = null;
+    /** Set once a resume has already been retried, so it happens at most once. */
+    let resumeRetried = false;
+    /** Whether the harness produced anything before failing. */
+    let sawOutput = false;
+    let runStartedAt = 0;
     // Set once a plan has been captured for this run, so the fallback capture
     // on exit doesn't produce a second record.
     let capturedPlan = false;
@@ -857,6 +1124,31 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       }
     };
 
+    /**
+     * Record the harness's own session id for this chat so the next turn can
+     * resume it. Stored per harness — switching back to a harness used earlier
+     * in this chat picks its session up again.
+     */
+    const rememberSession = (sessionId: string) => {
+      if (get().tabs[tabId]?.sessions?.[harnessId] === sessionId) return;
+      set((state) => {
+        const t = state.tabs[tabId];
+        if (!t) return state;
+        return {
+          tabs: {
+            ...state.tabs,
+            [tabId]: {
+              ...t,
+              sessions: { ...t.sessions, [harnessId]: sessionId },
+            },
+          },
+        };
+      });
+      void setChatSession(worktree, tabId, harnessId, sessionId).catch(() => {
+        // Best-effort: an unsaved id just means the next turn starts fresh.
+      });
+    };
+
     const ensureAssistant = (): string => {
       if (assistantId) return assistantId;
       assistantId = `assistant-${Date.now()}`;
@@ -884,6 +1176,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
     const appendAssistant = (text: string) => {
       if (!text) return;
+      sawOutput = true;
       pendingAssistantText += text;
       if (flushRaf === null) {
         flushRaf = requestAnimationFrame(flushAssistant);
@@ -901,6 +1194,72 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       lastAssistantSegment = text;
     };
 
+    /**
+     * A resume can be rejected when the harness has pruned its own session
+     * store (or the id belongs to a session it no longer recognises). That
+     * fails fast and silently, so retry the turn from a fresh session once,
+     * carrying the transcript across so the context isn't lost.
+     */
+    const shouldRetryWithoutResume = (errorText?: string): boolean =>
+      Boolean(errorText) &&
+      runResumeId !== null &&
+      !resumeRetried &&
+      !sawOutput &&
+      Date.now() - runStartedAt < 15_000;
+
+    const retryWithoutResume = async () => {
+      resumeRetried = true;
+      const staleHarness = harnessId;
+      void clearChatSession(worktree, tabId, staleHarness).catch(() => {});
+      set((state) => {
+        const t = state.tabs[tabId];
+        if (!t) return state;
+        const { [staleHarness]: _dropped, ...rest } = t.sessions;
+        return { tabs: { ...state.tabs, [tabId]: { ...t, sessions: rest } } };
+      });
+
+      // Hand the previous turns over as an attachment, minus the prompt we are
+      // about to send again.
+      const prior =
+        get().tabs[tabId]?.messages.filter((m) => m.id !== userMessage.id) ?? [];
+      if (prior.length > 0) {
+        try {
+          const markdown = renderTranscriptMarkdown(prior, harnessId);
+          const attachment = await makeTranscriptAttachment(
+            transcriptAttachmentName(harnessId),
+            markdown,
+          );
+          promptForAgent = composeAgentPrompt(agentPrompt, [attachment]);
+        } catch {
+          // Fall back to the bare prompt rather than dropping the turn.
+        }
+      }
+
+      // Say so in the transcript — resuming silently failing and quietly
+      // starting over would look like the agent had simply forgotten.
+      get().addMessage(tabId, {
+        id: `resume-${Date.now()}`,
+        role: 'assistant',
+        content:
+          `Could not resume the previous ${exitLabelFor(harnessId)} session. ` +
+          `Starting a new one` +
+          (prior.length > 0 ? ' with the earlier transcript attached.' : '.'),
+        timestamp: Date.now(),
+      });
+
+      // Reset the per-attempt stream state; the event handlers close over
+      // these bindings, so reassigning is enough to start clean.
+      lineBuffer = '';
+      assistantId = null;
+      lastAssistantSegment = '';
+      pendingAssistantText = '';
+      capturedPlan = false;
+      trackedPlanPath = null;
+      sawOutput = false;
+      finished = false;
+      await dispatch();
+    };
+
     const finish = (errorText?: string) => {
       if (finished) return;
       finished = true;
@@ -909,6 +1268,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         flushAssistant();
       }
       stopCursorPlanPoll();
+
+      if (shouldRetryWithoutResume(errorText)) {
+        get().settleRunningTools(tabId);
+        releaseChannelFor(harnessId, tabId);
+        void retryWithoutResume();
+        return;
+      }
+
       if (errorText) {
         const id = ensureAssistant();
         const current = get().tabs[tabId]?.messages.find((m) => m.id === id);
@@ -923,6 +1290,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       // The agent is gone, so nothing is listening for an answer any more.
       useQuestionStore.getState().clear(tabId);
       void useChangesStore.getState().refresh();
+      // Settle the transcript on disk and refresh the sidebar's chat list.
+      void flushChatMessages(tabId, true);
 
       // Prefer THIS run's plan file only. Never scan for "some other" plan —
       // that was returning unrelated older plans from `.fold/plans/`.
@@ -973,6 +1342,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         filePaths?: string[];
       },
     ) => {
+      sawOutput = true;
       const existing = get().tabs[tabId]?.messages.find((m) => m.id === id);
       const content = extras?.content ?? name;
       if (existing) {
@@ -1085,6 +1455,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     };
 
     const handleEvent = (event: StreamEvent) => {
+      // Every harness announces its session id somewhere in the stream; grab it
+      // before the per-harness branches so the next turn can resume.
+      const sessionId = sessionIdFromEvent(harnessId, event);
+      if (sessionId) rememberSession(sessionId);
+
       // Fold sidecar emits Claude `/context` occupancy for the status bar.
       if ((event as { type?: string }).type === 'fold_context_usage') {
         const usage = contextUsageFromClaudeEvent(event);
@@ -1350,80 +1725,97 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       }
     };
 
-    try {
-      const modelInfo = findHarnessModel(
-        useHarnessStore.getState().models,
-        tab.selectedModel,
-        harnessId,
-      );
-      const effortLevels = resolveEffortLevels(modelInfo);
-      const selectedEffort =
-        effortLevels.length > 0 && effortLevels.includes(tab.modelEffort)
-          ? tab.modelEffort
+    /**
+     * Start the harness for this turn. Called again (with the resume id
+     * dropped) when a resume is rejected — the event handlers close over
+     * mutable state, so re-invoking is enough to run a clean attempt.
+     */
+    const dispatch = async (): Promise<void> => {
+      runStartedAt = Date.now();
+      // Resume this chat's session for the selected harness, when it has one.
+      runResumeId = get().tabs[tabId]?.sessions?.[harnessId] ?? null;
+
+      try {
+        const modelInfo = findHarnessModel(
+          useHarnessStore.getState().models,
+          tab.selectedModel,
+          harnessId,
+        );
+        const effortLevels = resolveEffortLevels(modelInfo);
+        const selectedEffort =
+          effortLevels.length > 0 && effortLevels.includes(tab.modelEffort)
+            ? tab.modelEffort
+            : null;
+        const agentEffort = selectedEffort
+          ? effortForAgentWire(harnessId, selectedEffort)
           : null;
-      const agentEffort = selectedEffort
-        ? effortForAgentWire(harnessId, selectedEffort)
-        : null;
 
-      if (harnessId === 'cursor') {
-        // Soft plan mode: Cursor's native `--mode plan` hangs in `-p` after
-        // create_plan. We pre-assign a plan path, instruct the agent to write
-        // there and stop, and poll until the file appears.
-        let cursorPrompt = promptForAgent;
-        if (planningRun) {
-          const planPath = `${PLANS_DIR}/${newPlanId()}.md`;
-          trackedPlanPath = planPath;
-          cursorPrompt = buildCursorPlanPrompt(cursorPrompt, planPath);
-          startCursorPlanPoll(planPath);
+        if (harnessId === 'cursor') {
+          // Soft plan mode: Cursor's native `--mode plan` hangs in `-p` after
+          // create_plan. We pre-assign a plan path, instruct the agent to write
+          // there and stop, and poll until the file appears.
+          let cursorPrompt = promptForAgent;
+          if (planningRun) {
+            const planPath = `${PLANS_DIR}/${newPlanId()}.md`;
+            trackedPlanPath = planPath;
+            cursorPrompt = buildCursorPlanPrompt(cursorPrompt, planPath);
+            startCursorPlanPoll(planPath);
+          }
+          await cursorAgentRun(
+            tabId,
+            cursorPrompt,
+            worktree,
+            tab.selectedModel || null,
+            agentEffort,
+            planningRun,
+            runResumeId,
+            onEvent,
+          );
+        } else if (harnessId === 'codex') {
+          await codexAgentRun(
+            tabId,
+            promptForAgent,
+            worktree,
+            tab.selectedModel || null,
+            agentEffort,
+            runResumeId,
+            onEvent,
+          );
+        } else if (harnessId === 'opencode') {
+          await opencodeAgentRun(
+            tabId,
+            promptForAgent,
+            worktree,
+            tab.selectedModel || null,
+            agentEffort,
+            planningRun,
+            runResumeId,
+            onEvent,
+          );
+        } else {
+          const effort = agentEffort;
+          const fastMode = Boolean(
+            modelInfo?.supportsFastMode && tab.mode === 'fast',
+          );
+
+          await claudeAgentRun(
+            tabId,
+            promptForAgent,
+            worktree,
+            tab.selectedModel || null,
+            effort,
+            fastMode,
+            planningRun ? 'plan' : null,
+            runResumeId,
+            onEvent,
+          );
         }
-        await cursorAgentRun(
-          tabId,
-          cursorPrompt,
-          worktree,
-          tab.selectedModel || null,
-          agentEffort,
-          planningRun,
-          onEvent,
-        );
-      } else if (harnessId === 'codex') {
-        await codexAgentRun(
-          tabId,
-          promptForAgent,
-          worktree,
-          tab.selectedModel || null,
-          agentEffort,
-          onEvent,
-        );
-      } else if (harnessId === 'opencode') {
-        await opencodeAgentRun(
-          tabId,
-          promptForAgent,
-          worktree,
-          tab.selectedModel || null,
-          agentEffort,
-          planningRun,
-          onEvent,
-        );
-      } else {
-        const effort = agentEffort;
-        const fastMode = Boolean(
-          modelInfo?.supportsFastMode && tab.mode === 'fast',
-        );
-
-        await claudeAgentRun(
-          tabId,
-          promptForAgent,
-          worktree,
-          tab.selectedModel || null,
-          effort,
-          fastMode,
-          planningRun ? 'plan' : null,
-          onEvent,
-        );
+      } catch (e) {
+        finish(String(e));
       }
-    } catch (e) {
-      finish(String(e));
-    }
+    };
+
+    await dispatch();
   },
 
   cancelAgent: async (tabId) => {

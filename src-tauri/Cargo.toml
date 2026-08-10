@@ -22,6 +22,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 portable-pty = "0.8"
 window-vibrancy = "0.6"
+# `bundled` compiles SQLite in-tree so chat storage does not depend on a
+# system libsqlite3 being present on the user's machine.
+rusqlite = { version = "0.32", features = ["bundled"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "rustls", "json"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]

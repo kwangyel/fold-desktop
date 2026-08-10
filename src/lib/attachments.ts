@@ -178,6 +178,39 @@ export async function makePromptAttachment(
   }
 }
 
+/**
+ * Persist the transcript of an earlier chat so it can be handed to a different
+ * harness. Kept as a normal removable chip: the user can drop it to start the
+ * new harness with a clean slate.
+ */
+export async function makeTranscriptAttachment(
+  name: string,
+  markdown: string,
+): Promise<Attachment> {
+  const id = shortId();
+  const filename = sanitizeFilename(`${name}.md`, 'transcript.md');
+  try {
+    const path = await writeTextAttachmentFile(id, filename, markdown);
+    return {
+      id,
+      name,
+      kind: 'transcript',
+      type: 'text/markdown',
+      size: markdown.length,
+      path,
+    };
+  } catch {
+    return {
+      id,
+      name,
+      kind: 'transcript',
+      type: 'text/markdown',
+      size: markdown.length,
+      content: markdown,
+    };
+  }
+}
+
 /** Persist a picked/pasted file or image under `.fold/attachments/<id>/`. */
 export async function attachmentFromFile(file: File): Promise<Attachment> {
   const id = shortId();
@@ -273,11 +306,13 @@ export async function materializeAttachments(
     if (att.content != null) {
       const id = att.id || shortId();
       const filename =
-        att.kind === 'prompt'
-          ? att.name.toLowerCase().includes('pr')
-            ? 'PR instructions.md'
-            : sanitizeFilename(`${att.name}.md`, 'instructions.md')
-          : pastedTextFilename();
+        att.kind === 'transcript'
+          ? sanitizeFilename(`${att.name}.md`, 'transcript.md')
+          : att.kind === 'prompt'
+            ? att.name.toLowerCase().includes('pr')
+              ? 'PR instructions.md'
+              : sanitizeFilename(`${att.name}.md`, 'instructions.md')
+            : pastedTextFilename();
       const path = await writeTextAttachmentFile(id, filename, att.content);
       out.push({ ...att, id, path, content: undefined });
       continue;
@@ -308,6 +343,11 @@ export function composeAgentPrompt(
       } else if (att.kind === 'image') {
         parts.push(
           `The user attached an image "${att.name}". Read and examine the file at: ${att.path}`,
+        );
+      } else if (att.kind === 'transcript') {
+        parts.push(
+          `This conversation continues an earlier chat with a different agent. ` +
+            `Read the transcript at: ${att.path} for context before responding.`,
         );
       } else {
         parts.push(

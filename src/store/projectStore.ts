@@ -15,7 +15,8 @@ import {
   workspacePath,
 } from "../lib/projects";
 import { useChangesStore } from "./changesStore";
-import { useCenterViewStore } from "./centerViewStore";
+import { useChatSessionStore } from "./chatSessionStore";
+import { syncChatTabsForWorktree } from "../lib/chatTabs";
 
 type ProjectStore = {
   projects: Project[];
@@ -62,8 +63,17 @@ function refreshChanges() {
 
 function onWorkspaceSwitch() {
   const activePath = useProjectStore.getState().activePath;
-  useCenterViewStore.getState().closeWorkspaceTabs(activePath);
+  // Chats are stored per worktree, so the open tabs follow the switch.
+  void syncChatTabsForWorktree(activePath);
   refreshChanges();
+}
+
+/** Chat lists for every live worktree, so the sidebar can show counts. */
+function refreshChatIndex(projects: Project[]) {
+  const paths = projects.flatMap((p) =>
+    p.worktrees.filter((w) => !w.archived).map((w) => w.path),
+  );
+  void useChatSessionStore.getState().refreshAll(paths);
 }
 
 function replaceProject(projects: Project[], updated: Project): Project[] {
@@ -88,7 +98,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         activePath,
         loading: false,
       });
-      useCenterViewStore.getState().closeWorkspaceTabs(activePath);
+      void syncChatTabsForWorktree(activePath);
+      refreshChatIndex(projects);
       // Defer git status so the sidebar paints before three git subprocesses run.
       if (activeId) {
         const schedule =
@@ -235,7 +246,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     try {
       const previous = get().projects.find((p) => p.id === projectId);
       const removedWasActive = previous?.activeWorktreeId === worktreeId;
+      // The backend deletes the whole `.fold/<worktree>` dir — chats.db with
+      // it — so the cached chat list has to go too.
+      const removedPath = previous?.worktrees.find(
+        (w) => w.id === worktreeId,
+      )?.path;
       const updated = await removeWorktree(projectId, worktreeId);
+      if (removedPath) useChatSessionStore.getState().forget(removedPath);
       set((s) => ({
         projects: replaceProject(s.projects, updated),
         activeId: s.activeId ?? projectId,
@@ -252,7 +269,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     try {
       const previous = get().projects.find((p) => p.id === projectId);
       const archivedWasActive = previous?.activeWorktreeId === worktreeId;
+      const archivedPath = previous?.worktrees.find(
+        (w) => w.id === worktreeId,
+      )?.path;
       const updated = await archiveWorktree(projectId, worktreeId);
+      // Archiving deletes the worktree folder and its `.fold` data too.
+      if (archivedPath) useChatSessionStore.getState().forget(archivedPath);
       set((s) => ({
         projects: replaceProject(s.projects, updated),
         activeId: s.activeId ?? projectId,
