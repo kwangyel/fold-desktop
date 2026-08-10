@@ -160,6 +160,7 @@ export async function claudeAgentRun(
   effort: string | null,
   fastMode: boolean,
   permissionMode: ClaudePermissionMode | null,
+  resumeSessionId: string | null,
   onEvent: (chunk: ClaudeOutput) => void,
 ): Promise<void> {
   if (!isTauri()) {
@@ -177,7 +178,7 @@ export async function claudeAgentRun(
       effort,
       fastMode,
       permissionMode,
-      resumeSessionId: null,
+      resumeSessionId,
       onOutput: output,
     });
   } catch (e) {

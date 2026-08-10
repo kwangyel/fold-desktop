@@ -20,6 +20,11 @@ export type CenterTab = {
   prError?: string;
   /** Set on `plan` tabs — the PlanRecord id being reviewed. */
   planId?: string;
+  /**
+   * Set on `chat` tabs — the worktree the chat belongs to. Chats are stored per
+   * worktree, so tabs follow the active worktree rather than staying global.
+   */
+  worktreePath?: string | null;
 };
 
 function fileName(path: string): string {
@@ -34,12 +39,6 @@ function editorTabFields(path: string): Pick<CenterTab, "label" | "filePath" | "
     fileLoading: true,
   };
 }
-
-const INITIAL_CHAT_TAB: CenterTab = {
-  id: "chat-1",
-  type: "chat",
-  label: "Chat",
-};
 
 /** In-memory editor buffer so UI can debounce store writes without losing keystrokes. */
 const liveEditorContent = new Map<string, string>();
@@ -59,7 +58,18 @@ export function clearLiveEditorContent(id: string) {
 type CenterViewStore = {
   tabs: CenterTab[];
   activeTabId: string;
-  addChatTab: () => void;
+  /** Open a new (unsaved) chat tab bound to a worktree. */
+  addChatTab: (options?: {
+    id?: string;
+    worktreePath?: string | null;
+    label?: string;
+  }) => void;
+  /** Open (or focus) a persisted chat. The tab id is the chat id. */
+  openChatTab: (
+    chatId: string,
+    worktreePath: string,
+    label?: string,
+  ) => void;
   openFileTab: (path: string, pin?: boolean) => void;
   openDiffTab: (path: string, original: string, modified: string) => void;
   updateDiffContent: (id: string, original: string, modified: string) => void;
@@ -68,9 +78,14 @@ type CenterViewStore = {
   setPrMerged: (id: string) => void;
   /** Open (or focus) the review tab for a captured plan. */
   openPlanTab: (planId: string, label?: string) => void;
-  /** Drop editor/diff tabs when switching projects or worktrees. */
+  /**
+   * Drop editor/diff/pr/plan tabs, plus chat tabs belonging to another
+   * worktree, when switching projects or worktrees.
+   */
   closeWorkspaceTabs: (activePath: string | null) => void;
   pinTab: (id: string) => void;
+  /** Retitle a tab (a chat picks up its title from its first prompt). */
+  renameTab: (id: string, label: string) => void;
   closeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
   updateTabContent: (id: string, content: string) => void;
@@ -119,13 +134,39 @@ export const useCenterViewStore = create<CenterViewStore>((set, get) => ({
   tabs: [],
   activeTabId: "",
 
-  addChatTab: () => {
-    const id = `chat-${Date.now()}`;
-    const tab: CenterTab = { id, type: "chat", label: "Chat" };
+  addChatTab: (options) => {
+    const id = options?.id ?? `chat-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const tab: CenterTab = {
+      id,
+      type: "chat",
+      label: options?.label ?? "New chat",
+      worktreePath: options?.worktreePath ?? null,
+    };
     set((state) => ({
       tabs: [...state.tabs, tab],
       activeTabId: id,
     }));
+  },
+
+  openChatTab: (chatId, worktreePath, label) => {
+    const state = get();
+    const existing = state.tabs.find((tab) => tab.id === chatId);
+    if (existing) {
+      set({
+        tabs: label
+          ? state.tabs.map((t) => (t.id === chatId ? { ...t, label } : t))
+          : state.tabs,
+        activeTabId: chatId,
+      });
+      return;
+    }
+    const tab: CenterTab = {
+      id: chatId,
+      type: "chat",
+      label: label ?? "Chat",
+      worktreePath,
+    };
+    set({ tabs: [...state.tabs, tab], activeTabId: chatId });
   },
 
   openFileTab: (path, pin = false) => {
@@ -332,12 +373,17 @@ export const useCenterViewStore = create<CenterViewStore>((set, get) => ({
       if (!activePath) {
         return { tabs: [], activeTabId: "" };
       }
-      const tabs = state.tabs.filter((tab) => tab.type === "chat");
-      const nextTabs = tabs.length > 0 ? tabs : [INITIAL_CHAT_TAB];
+      // Chats belong to a worktree now, so only this worktree's survive.
+      // `syncChatTabsForWorktree` opens one if that leaves none.
+      const nextTabs = state.tabs.filter(
+        (tab) => tab.type === "chat" && tab.worktreePath === activePath,
+      );
       const activeStillOpen = nextTabs.some((t) => t.id === state.activeTabId);
       return {
         tabs: nextTabs,
-        activeTabId: activeStillOpen ? state.activeTabId : nextTabs[0].id,
+        activeTabId: activeStillOpen
+          ? state.activeTabId
+          : (nextTabs[0]?.id ?? ""),
       };
     });
   },
@@ -347,6 +393,12 @@ export const useCenterViewStore = create<CenterViewStore>((set, get) => ({
       tabs: state.tabs.map((tab) =>
         tab.id === id && tab.type === "editor" ? { ...tab, isPreview: false } : tab,
       ),
+    }));
+  },
+
+  renameTab: (id, label) => {
+    set((state) => ({
+      tabs: state.tabs.map((tab) => (tab.id === id ? { ...tab, label } : tab)),
     }));
   },
 

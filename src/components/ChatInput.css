@@ -45,6 +45,11 @@
   background: rgba(142, 202, 255, 0.08);
 }
 
+.attachment-badge.kind-transcript {
+  border-color: rgba(124, 92, 255, 0.6);
+  background: rgba(124, 92, 255, 0.08);
+}
+
 .attachment-icon {
   display: inline-flex;
   align-items: center;

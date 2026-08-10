@@ -1,5 +1,6 @@
 mod auth;
 mod bin_cache;
+mod chats;
 mod claude;
 mod codex;
 mod cursor;
@@ -274,6 +275,14 @@ pub fn run() {
             opencode::opencode_list_models,
             opencode::opencode_agent_run,
             opencode::opencode_agent_cancel,
+            chats::chat_list,
+            chats::chat_load,
+            chats::chat_upsert,
+            chats::chat_save_messages,
+            chats::chat_set_session,
+            chats::chat_clear_session,
+            chats::chat_rename,
+            chats::chat_delete,
             auth::auth_save_token,
             auth::auth_get_token,
             auth::auth_clear_token

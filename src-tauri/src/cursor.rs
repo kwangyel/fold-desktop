@@ -474,6 +474,7 @@ pub fn cursor_agent_run(
     model: Option<String>,
     effort: Option<String>,
     plan_mode: Option<bool>,
+    resume_session_id: Option<String>,
     on_output: Channel,
     app: AppHandle,
     state: State<'_, AppState>,
@@ -540,6 +541,12 @@ pub fn cursor_agent_run(
             &m,
             effort.as_deref(),
         ));
+    }
+    // Continue the chat the previous turn created, so the agent keeps its
+    // history. The id comes from the `system`/`init` event's `session_id`.
+    if let Some(chat_id) = resume_session_id.filter(|s| !s.is_empty()) {
+        args.push("--resume".into());
+        args.push(chat_id);
     }
     // Intentionally do NOT pass `--mode plan`. In non-interactive `-p` mode,
     // Cursor's native plan mode calls `create_plan` and then hangs waiting for

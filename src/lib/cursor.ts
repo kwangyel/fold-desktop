@@ -91,6 +91,7 @@ export async function cursorAgentRun(
   model: string | null,
   effort: string | null,
   planMode: boolean,
+  resumeSessionId: string | null,
   onEvent: (chunk: CursorOutput) => void,
 ): Promise<void> {
   if (!isTauri()) {
@@ -107,6 +108,7 @@ export async function cursorAgentRun(
       model,
       effort,
       planMode,
+      resumeSessionId,
       onOutput: output,
     });
   } catch (e) {

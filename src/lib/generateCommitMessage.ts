@@ -311,6 +311,7 @@ export async function generateCommitMessage(): Promise<string> {
 
   const sessionId = `commit-msg-${Date.now()}`;
 
+  // One-shot run with no history to carry: never resume a harness session.
   return collectAssistantText(harnessId, sessionId, async (onEvent) => {
     switch (harnessId) {
       case "cursor":
@@ -321,11 +322,20 @@ export async function generateCommitMessage(): Promise<string> {
           model,
           effort,
           false,
+          null,
           onEvent,
         );
         break;
       case "codex":
-        await codexAgentRun(sessionId, prompt, worktree, model, effort, onEvent);
+        await codexAgentRun(
+          sessionId,
+          prompt,
+          worktree,
+          model,
+          effort,
+          null,
+          onEvent,
+        );
         break;
       case "opencode":
         await opencodeAgentRun(
@@ -335,6 +345,7 @@ export async function generateCommitMessage(): Promise<string> {
           model,
           effort,
           false,
+          null,
           onEvent,
         );
         break;
@@ -346,6 +357,7 @@ export async function generateCommitMessage(): Promise<string> {
           model,
           effort,
           fastMode,
+          null,
           null,
           onEvent,
         );

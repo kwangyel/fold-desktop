@@ -350,6 +350,7 @@ pub fn opencode_agent_run(
     model: Option<String>,
     effort: Option<String>,
     plan_mode: Option<bool>,
+    resume_session_id: Option<String>,
     on_output: Channel,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
@@ -410,6 +411,12 @@ pub fn opencode_agent_run(
     if let Some(variant) = effort.filter(|s| !s.is_empty() && s != "ultracode") {
         args.push("--variant".into());
         args.push(variant);
+    }
+    // Continue an existing session (`ses_…`) rather than creating a new one.
+    // The id is read off the `sessionID` field present on every JSON event.
+    if let Some(session) = resume_session_id.filter(|s| !s.is_empty()) {
+        args.push("--session".into());
+        args.push(session);
     }
 
     let fold_mcp = crate::claude::resolve_fold_mcp_server().is_some();
