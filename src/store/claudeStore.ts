@@ -28,6 +28,18 @@ const TUI_READY_RE =
 const LOGIN_UI_RE =
   /(?:Select login|Log in with|Sign in|Login method|browser|oauth|authorization|authenticate|console\.anthropic|claude\.ai\/login|Waiting for|Open this URL|Visit (?:this|the) (?:URL|link))/i;
 
+/** Claude Code reported a successful (re)login in the TUI. */
+const LOGIN_SUCCESS_RE =
+  /Logged in|login successful|Authentication successful|Successfully logged in|You're now logged in/i;
+
+/**
+ * Stale subscription tokens Claude Code can no longer refresh. Fold's status
+ * probe only checks that a keychain/credentials entry *exists*, so this must
+ * be detected from agent output and surfaced as needing re-login.
+ */
+export const CLAUDE_OAUTH_EXPIRED_RE =
+  /OAuth session expired|could not be refreshed|Failed to authenticate/i;
+
 /** One retry if the first `/login` was swallowed by a trust/theme prompt. */
 const LOGIN_RETRY_MS = 5_000;
 /** Absolute ceiling — never leave the UI on "Waiting for authorization…" forever. */
@@ -47,7 +59,15 @@ type ClaudeStore = {
   /** Latest login-terminal output chunk listeners (xterm write). */
   subscribeLoginOutput: (listener: (data: Uint8Array) => void) => () => void;
   refresh: (opts?: { force?: boolean }) => Promise<void>;
-  startLogin: () => Promise<void>;
+  /**
+   * Start Claude Code `/login` in a PTY.
+   * Pass `{ reauth: true }` (or call while already authenticated) to refresh
+   * expired OAuth — otherwise the status poll would instantly "succeed" on the
+   * stale keychain entry.
+   */
+  startLogin: (opts?: { reauth?: boolean }) => Promise<void>;
+  /** Mark credentials invalid after an agent-side OAuth failure. */
+  markAuthInvalid: (message?: string) => void;
   writeLogin: (data: string) => Promise<void>;
   cancelLogin: () => Promise<void>;
   openInstallDocs: () => Promise<void>;
@@ -192,9 +212,12 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => {
       return inflightRefresh;
     },
 
-    startLogin: async () => {
+    startLogin: async (opts) => {
       if (get().connecting) return;
       resetFlow();
+      // Re-auth when asked, or when we already think we're connected — stale
+      // keychain entries still report authenticated and must not short-circuit.
+      const reauth = opts?.reauth === true || get().authenticated;
       set({ connecting: true, error: null });
 
       let loginSent = false;
@@ -231,10 +254,15 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => {
           }, LOGIN_RETRY_MS);
         }
 
-        // Best-effort success detection from TUI text (polling is the source of truth).
-        if (/Logged in|login successful|Authentication successful/i.test(text)) {
+        // TUI success text. For re-auth this is the only reliable completion
+        // signal — the credential probe stays true for the whole flow.
+        if (LOGIN_SUCCESS_RE.test(text)) {
           void (async () => {
             if (!get().connecting || finishing) return;
+            if (reauth) {
+              void finish();
+              return;
+            }
             const status = await claudeStatus();
             if (status.authenticated) void finish();
           })();
@@ -251,7 +279,9 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => {
 
         loginHardTimer = setTimeout(() => {
           void failLogin(
-            "Claude login timed out. Try again, or run `claude` in a terminal and type /login.",
+            reauth
+              ? "Claude re-login timed out. Complete /login in the terminal below, or run `claude` and type /login."
+              : "Claude login timed out. Try again, or run `claude` in a terminal and type /login.",
           );
         }, LOGIN_HARD_TIMEOUT_MS);
 
@@ -259,7 +289,9 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => {
           void (async () => {
             if (!get().connecting || finishing) return;
             const status = await claudeStatus();
-            if (status.authenticated) {
+            // First-time login only: credentials appear after OAuth completes.
+            // Re-auth keeps an existing (possibly expired) entry the whole time.
+            if (!reauth && status.authenticated) {
               void finish();
               return;
             }
@@ -274,6 +306,17 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => {
         resetFlow();
         set({ connecting: false, error: String(e) });
       }
+    },
+
+    markAuthInvalid: (message) => {
+      checkedAt = 0;
+      set({
+        authenticated: false,
+        method: null,
+        error:
+          message?.trim() ||
+          "Claude Code OAuth session expired. Use Re-login in Connect Harness.",
+      });
     },
 
     writeLogin: async (data) => {

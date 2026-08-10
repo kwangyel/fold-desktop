@@ -146,6 +146,19 @@
   width: min(560px, calc(100vw - 48px));
 }
 
+/* Roomier Connect Harness shell so the login PTY is readable. */
+.dialog.dialog-harness {
+  width: min(780px, calc(100vw - 40px));
+  max-height: min(88vh, 820px);
+}
+
+.dialog.dialog-harness .dialog-body {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+}
+
 .harness-login-panel {
   display: flex;
   flex-direction: column;
@@ -165,7 +178,8 @@
 }
 
 .harness-login-terminal {
-  height: 220px;
+  height: min(42vh, 420px);
+  min-height: 280px;
   border-radius: 6px;
   overflow: hidden;
   background: #101014;

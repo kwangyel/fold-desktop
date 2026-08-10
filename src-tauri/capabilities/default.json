@@ -22,7 +22,7 @@
     {
       "identifier": "http:default",
       "allow": [
-        { "url": "https://fold.optulus.com/*" },
+        { "url": "https://api.optulus.com/*" },
         { "url": "https://avatars.githubusercontent.com/*" },
         { "url": "https://github.com/*" }
       ]
