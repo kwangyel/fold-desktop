@@ -1,6 +1,7 @@
 import { useCenterViewStore } from "../store/centerViewStore";
 import { useChatSessionStore } from "../store/chatSessionStore";
 import { useChatStore } from "../store/chatStore";
+import { useAgentStatusStore } from "../store/agentStatusStore";
 import { loadChat, newChatId } from "./chats";
 import { makeTranscriptAttachment } from "./attachments";
 import {
@@ -158,6 +159,7 @@ export async function deleteChatEverywhere(
   chatId: string,
 ): Promise<void> {
   await useChatSessionStore.getState().remove(worktreePath, chatId);
+  useAgentStatusStore.getState().clear(chatId);
   const center = useCenterViewStore.getState();
   if (!center.tabs.some((t) => t.id === chatId)) return;
   // `closeTab` refuses to close the last remaining tab, so open a draft first.

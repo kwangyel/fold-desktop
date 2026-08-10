@@ -25,6 +25,7 @@ import ConnectAppDialog from "./ConnectAppDialog";
 import UserMenu from "./UserMenu";
 import ProjectGithubAvatar from "./ProjectGithubAvatar";
 import ResizeHandle from "./ResizeHandle";
+import { ChatStatusDot, WorktreeStatusDot } from "./AgentStatusDot";
 
 const ConnectHarnessDialog = lazy(() => import("./ConnectHarnessDialog"));
 
@@ -166,6 +167,7 @@ function WorktreeChats({
                 ) : (
                   <span className="chat-title">{chat.title}</span>
                 )}
+                <ChatStatusDot chatId={chat.id} />
               </div>
             ))}
           </div>
@@ -351,6 +353,7 @@ export default function Sidebar({ width, topRatio = 0.38, onSplitDrag }: Props) 
                               <div className="name">{wt.name}</div>
                               <div className="sub">{wt.branch}</div>
                             </div>
+                            <WorktreeStatusDot worktreePath={wt.path} />
                           </div>
                           <WorktreeChats
                             projectId={p.id}

@@ -146,6 +146,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_notification::init())
         // Block browser-like shortcuts (DevTools, reload, find, print, …)
         // and the default right-click menu so the app feels native. Custom
         // React context menus (e.g. Sidebar) still work — they render their

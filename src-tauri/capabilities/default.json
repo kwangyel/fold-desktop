@@ -8,6 +8,8 @@
     "core:window:allow-start-dragging",
     "core:window:allow-toggle-maximize",
     "core:menu:default",
+    "core:window:allow-is-focused",
+    "core:window:allow-set-badge-count",
     "pty-commands",
     "git-commands",
     "project-commands",
@@ -18,6 +20,7 @@
     "opencode-commands",
     "auth-commands",
     "dialog:default",
+    "notification:default",
     "deep-link:default",
     {
       "identifier": "http:default",

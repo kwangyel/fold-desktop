@@ -36,3 +36,24 @@ export async function answerQuestions(
     `${JSON.stringify({ answers }, null, 2)}\n`,
   );
 }
+
+/**
+ * Retire a question whose run has ended before the user answered it.
+ *
+ * Nothing deletes the MCP request file, and the watcher treats any request
+ * without an answer beside it as live — so an abandoned ask would otherwise be
+ * picked up again by the *next* run in this worktree and shown as if the new
+ * agent had asked it. Writing the answer file settles it for good, and releases
+ * the MCP server immediately instead of leaving it to poll out its timeout.
+ */
+export async function abandonQuestions(pending: PendingQuestions): Promise<void> {
+  if (pending.source.kind !== "mcp") return;
+  try {
+    await writeFile(
+      `${ASKS_DIR}/${pending.source.askId}.answer.json`,
+      `${JSON.stringify({ answers: {}, cancelled: true }, null, 2)}\n`,
+    );
+  } catch {
+    // Best-effort cleanup; the watcher's own staleness check still covers us.
+  }
+}
