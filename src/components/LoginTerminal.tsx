@@ -24,8 +24,8 @@ export default function LoginTerminal({
 
     const term = new Terminal({
       fontFamily: '"SF Mono", Menlo, monospace',
-      fontSize: 11,
-      lineHeight: 1.2,
+      fontSize: 12,
+      lineHeight: 1.25,
       cursorBlink: true,
       convertEol: true,
       theme: {

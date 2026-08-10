@@ -92,10 +92,27 @@ function ClaudeCodeRow() {
               <IconExternalLink size={13} stroke={1.75} />
             </button>
           ) : authenticated ? (
-            <span className="harness-connected">
-              <IconCheck size={15} stroke={2.25} />
-              Connected
-            </span>
+            <div className="harness-connected-actions">
+              {!connecting && (
+                <span className="harness-connected">
+                  <IconCheck size={15} stroke={2.25} />
+                  Connected
+                </span>
+              )}
+              <button
+                className={
+                  connecting
+                    ? "primary-btn harness-connect-btn"
+                    : "ghost-btn harness-connect-btn"
+                }
+                type="button"
+                disabled={checking || connecting}
+                onClick={() => void startLogin({ reauth: true })}
+                title="Run Claude Code /login again to refresh an expired OAuth session"
+              >
+                {connecting ? "Logging in…" : "Re-login"}
+              </button>
+            </div>
           ) : (
             <button
               className="primary-btn harness-connect-btn"
@@ -113,7 +130,9 @@ function ClaudeCodeRow() {
         <div className="harness-login-panel">
           <div className="harness-login-hint">
             <IconLoader2 size={14} className="spin" />
-            Waiting for authorization… complete login in the terminal below.
+            {authenticated
+              ? "Re-authorizing… complete /login in the terminal below to refresh OAuth."
+              : "Waiting for authorization… complete login in the terminal below."}
           </div>
           <Suspense fallback={<div className="harness-login-terminal" />}>
             <LoginTerminal
@@ -533,7 +552,7 @@ export default function ConnectHarnessDialog({
   return (
     <div className="dialog-overlay" onMouseDown={handleClose}>
       <div
-        className={`dialog dialog-wide`}
+        className="dialog dialog-wide dialog-harness"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="dialog-header">Connect Harness</div>

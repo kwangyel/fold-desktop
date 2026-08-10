@@ -257,8 +257,8 @@ pub fn opencode_login(on_output: Channel, state: State<'_, AppState>) -> Result<
     let session = PtySession::spawn_command(
         bin.to_str().ok_or("invalid opencode path")?,
         &["auth", "login"],
-        100,
-        28,
+        120,
+        36,
         None,
         on_output,
     )?;

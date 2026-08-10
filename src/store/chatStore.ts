@@ -79,6 +79,7 @@ import { useCenterViewStore } from './centerViewStore';
 import { useQuestionStore } from './questionStore';
 import type { Question } from '../lib/questions';
 import { findHarnessModel, useHarnessStore } from './harnessStore';
+import { useClaudeStore, CLAUDE_OAUTH_EXPIRED_RE } from './claudeStore';
 import { useCodexStore } from './codexStore';
 import { useCursorStore } from './cursorStore';
 import { useOpenCodeStore } from './opencodeStore';
@@ -376,7 +377,10 @@ function isHarnessConnected(harnessId: HarnessId): boolean {
       const s = useOpenCodeStore.getState();
       return s.installed && s.authenticated;
     }
-    case 'claudecode':
+    case 'claudecode': {
+      const s = useClaudeStore.getState();
+      return s.installed && s.authenticated;
+    }
     default:
       return true;
   }
@@ -390,6 +394,8 @@ function connectHintFor(harnessId: HarnessId): string {
       return 'Codex is not connected. Open Connect Harness and log in.';
     case 'opencode':
       return 'OpenCode is not connected. Open Connect Harness and log in.';
+    case 'claudecode':
+      return 'Claude Code is not connected. Open Connect Harness and log in (or Re-login if OAuth expired).';
     default:
       return 'Harness is not connected. Open Connect Harness to connect.';
   }
@@ -841,7 +847,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const planningRun = tab.planMode && harnessSupportsPlanMode(harnessId);
     const implementingPlanId = options?.planId;
 
-    if (harnessId !== 'claudecode' && !isHarnessConnected(harnessId)) {
+    if (!isHarnessConnected(harnessId)) {
       get().addMessage(tabId, {
         id: `err-${Date.now()}`,
         role: 'assistant',
@@ -1670,7 +1676,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         const resultText = 'result' in event ? event.result : undefined;
         const isError = 'is_error' in event ? Boolean(event.is_error) : false;
         if (isError && resultText) {
-          appendAssistant(String(resultText));
+          const text = String(resultText);
+          appendAssistant(text);
+          if (
+            harnessId === 'claudecode' &&
+            CLAUDE_OAUTH_EXPIRED_RE.test(text)
+          ) {
+            useClaudeStore.getState().markAuthInvalid(text);
+          }
         } else if (resultText && !assistantId) {
           appendAssistant(String(resultText));
         }
@@ -1705,6 +1718,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           // plan file is written — don't surface that as a user-facing error.
           finish(capturedPlan ? undefined : 'Agent cancelled.');
         } else if (code !== 0) {
+          if (
+            harnessId === 'claudecode' &&
+            CLAUDE_OAUTH_EXPIRED_RE.test(lineBuffer)
+          ) {
+            useClaudeStore.getState().markAuthInvalid(
+              'Claude Code OAuth session expired and could not be refreshed. Use Re-login in Connect Harness.',
+            );
+          }
           finish(`${exitLabelFor(harnessId)} exited with code ${code}.`);
         } else {
           finish();

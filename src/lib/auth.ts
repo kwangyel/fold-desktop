@@ -3,7 +3,7 @@ import { fetch } from "@tauri-apps/plugin-http";
 import { isTauri } from "./git";
 
 /** Base URL of the Fold backend that owns the GitHub OAuth flow. */
-export const API_BASE = "https://fold.optulus.com";
+export const API_BASE = "https://api.optulus.com";
 
 /** Decoded payload of the backend-issued JWT. */
 export interface AuthUser {
