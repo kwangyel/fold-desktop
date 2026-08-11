@@ -7,6 +7,7 @@ commands.allow = [
   "claude_login_write",
   "claude_login_cancel",
   "claude_list_models",
+  "claude_usage_status",
   "claude_agent_run",
   "claude_agent_respond",
   "claude_agent_cancel",

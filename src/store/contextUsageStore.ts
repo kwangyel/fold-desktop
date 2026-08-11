@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import { claudeUsageStatus } from "../lib/claude";
 import {
-  contextUsageFromFoldEvent,
   sessionUsageFromFoldEvent,
   type ContextUsage,
   type SessionUsage,
@@ -27,6 +26,8 @@ type ContextUsageStore = {
   viewingHarnessId: HarnessId | null;
   /** Last successful proactive fetch (ms). */
   fetchedAt: number | null;
+  /** Why the last refresh produced nothing, for the meter tooltips. */
+  lastError: string | null;
   setUsage: (usage: ContextUsage) => void;
   setSessionUsage: (usage: SessionUsage) => void;
   setViewingHarness: (id: HarnessId | null) => void;
@@ -42,6 +43,7 @@ export const useContextUsageStore = create<ContextUsageStore>((set, get) => ({
   sessionByHarness: {},
   viewingHarnessId: null,
   fetchedAt: null,
+  lastError: null,
 
   setUsage: (usage) =>
     set((state) => ({
@@ -99,26 +101,27 @@ export const useContextUsageStore = create<ContextUsageStore>((set, get) => ({
 
     inflightRefresh = (async () => {
       const { installed, authenticated } = useClaudeStore.getState();
-      if (!installed || !authenticated) return;
+      if (!installed || !authenticated) {
+        // Common cause of "usage never appears": the status probe hasn't
+        // resolved yet, so we bail before ever reaching the SDK.
+        console.info(
+          `[usage] skipped — claude installed=${installed} authenticated=${authenticated}`,
+        );
+        set({ lastError: "Claude Code not connected yet" });
+        return;
+      }
 
       const { projects, activeId } = useProjectStore.getState();
       const project = projects.find((p) => p.id === activeId);
       const worktree = project ? workspacePath(project) : null;
 
+      const startedAt = Date.now();
+      console.info(`[usage] → claude_usage_status worktree=${worktree ?? "(none)"}`);
       try {
         const raw = await claudeUsageStatus(worktree);
+        const ms = Date.now() - startedAt;
+        console.info(`[usage] ← ${ms}ms`, raw);
         let gotSomething = false;
-        if (raw.context) {
-          const usage = contextUsageFromFoldEvent({
-            type: "fold_context_usage",
-            harnessId: "claudecode",
-            ...raw.context,
-          });
-          if (usage) {
-            get().setUsage(usage);
-            gotSomething = true;
-          }
-        }
         if (raw.session) {
           const session = sessionUsageFromFoldEvent({
             type: "fold_session_usage",
@@ -131,9 +134,23 @@ export const useContextUsageStore = create<ContextUsageStore>((set, get) => ({
           }
         }
         // Only cache successes — empty results should retry on next refresh.
-        if (gotSomething) set({ fetchedAt: Date.now() });
-      } catch {
-        // SDK unavailable or not authenticated — keep last known values.
+        if (gotSomething) {
+          set({ fetchedAt: Date.now(), lastError: null });
+        } else {
+          // The command succeeded but carried no usable numbers — distinct
+          // from a transport failure, and the reason the meters sit at "—".
+          const reason =
+            typeof raw.error === "string"
+              ? raw.error
+              : "SDK returned no session usage (API-key plans have no quotas)";
+          console.warn(`[usage] no usable data: ${reason}`);
+          set({ lastError: reason });
+        }
+      } catch (err) {
+        // SDK unavailable or not authenticated — keep last known values, but
+        // don't fail silently: a swallowed error here hid a script timeout.
+        console.warn("[usage] refresh failed:", err);
+        set({ lastError: String(err) });
       } finally {
         inflightRefresh = null;
       }
