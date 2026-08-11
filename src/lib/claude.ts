@@ -57,18 +57,22 @@ export async function claudeListModels(): Promise<ModelInfo[]> {
   return invoke<ModelInfo[]>("claude_list_models");
 }
 
-/** Context-window + plan session usage from the Agent SDK. */
+/**
+ * Claude.ai plan session usage (5-hour / weekly quotas) from the Agent SDK.
+ * Context-window usage is not included — it arrives from the agent sidecar,
+ * which owns the real session.
+ */
 export type ClaudeUsageStatus = {
-  context: Record<string, unknown> | null;
   session: Record<string, unknown> | null;
+  error?: string | null;
 };
 
-/** Fetch Claude context + session usage without running an agent turn. */
+/** Fetch Claude plan session usage without running an agent turn. */
 export async function claudeUsageStatus(
   worktree?: string | null,
 ): Promise<ClaudeUsageStatus> {
   if (!isTauri()) {
-    return { context: null, session: null };
+    return { session: null };
   }
   return invoke<ClaudeUsageStatus>("claude_usage_status", {
     worktree: worktree ?? null,

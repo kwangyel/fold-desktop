@@ -366,16 +366,22 @@ fn probe_node_bin() -> Option<PathBuf> {
     None
 }
 
-/// Context-window + plan session usage from the Agent SDK (`getContextUsage` /
-/// `getUsage`). Same data the status bar shows after an agent turn.
+/// Claude.ai plan session usage from the Agent SDK (`getUsage`) — the 5-hour
+/// and weekly quota windows behind `/usage`.
+///
+/// Context-window usage is intentionally absent: this command runs a throwaway
+/// SDK session, so its context reading would describe that session rather than
+/// the user's chat. The `claude-agent.mjs` sidecar reports the real thing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClaudeUsageStatus {
-    context: Option<serde_json::Value>,
     session: Option<serde_json::Value>,
+    /// Why `session` is empty, when the script could say.
+    #[serde(default)]
+    error: Option<String>,
 }
 
-/// Fetch Claude Code context + session usage without running an agent turn.
+/// Fetch Claude plan session usage without running an agent turn.
 #[tauri::command]
 pub async fn claude_usage_status(worktree: Option<String>) -> Result<ClaudeUsageStatus, String> {
     tauri::async_runtime::spawn_blocking(move || usage_status_blocking(worktree))
@@ -397,17 +403,39 @@ fn usage_status_blocking(worktree: Option<String>) -> Result<ClaudeUsageStatus, 
 
     let mut cmd = Command::new(&node);
     cmd.arg(&script).current_dir(&root).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut cwd_used = root.display().to_string();
     if let Some(wt) = worktree.filter(|s| !s.is_empty()) {
         let worktree_path = PathBuf::from(&wt);
         if worktree_path.is_dir() {
+            cwd_used = wt.clone();
             cmd.arg(wt);
         }
     }
 
-    let output = crate::proc::output_with_timeout(&mut cmd, SDK_SCRIPT_TIMEOUT)
-        .map_err(|e| format!("failed to run claude-usage: {e}"))?;
+    // This path is invisible from the UI (a failure just leaves the meters
+    // empty), so trace every run — root, target cwd, timing and outcome.
+    let started = std::time::Instant::now();
+    eprintln!("[fold][usage] spawn {} in {cwd_used}", script.display());
+
+    let output = crate::proc::output_with_handshake(
+        &mut cmd,
+        USAGE_CONNECT_TIMEOUT,
+        USAGE_QUERY_TIMEOUT,
+        USAGE_READY_MARKER,
+    )
+    .map_err(|e| {
+        eprintln!("[fold][usage] failed after {:?}: {e}", started.elapsed());
+        format!("failed to run claude-usage: {e}")
+    })?;
+
+    eprintln!(
+        "[fold][usage] exited {} after {:?}",
+        output.code,
+        started.elapsed()
+    );
 
     if !output.success() {
+        eprintln!("[fold][usage] stderr: {}", output.stderr.trim());
         return Err(format!(
             "claude-usage failed ({}): {}",
             output.code,
@@ -415,10 +443,19 @@ fn usage_status_blocking(worktree: Option<String>) -> Result<ClaudeUsageStatus, 
         ));
     }
 
-    serde_json::from_str(output.stdout.trim()).map_err(|e| {
+    // NDJSON: the handshake line comes first, the result is the last one.
+    let result_line = output
+        .stdout
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.contains(USAGE_READY_MARKER))
+        .next_back()
+        .ok_or_else(|| "claude-usage produced no result line".to_string())?;
+
+    serde_json::from_str(result_line).map_err(|e| {
         format!(
             "failed to parse usage status: {e}; stdout={}",
-            output.stdout.chars().take(200).collect::<String>()
+            result_line.chars().take(200).collect::<String>()
         )
     })
 }
@@ -431,6 +468,19 @@ const MODEL_CACHE_TTL: Duration = Duration::from_secs(600);
 /// The SDK scripts talk to the network; cap them so a stall can never wedge the
 /// harness refresh that awaits them.
 const SDK_SCRIPT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The usage script's wall time is almost entirely spent booting the Claude
+/// Code CLI and waiting for its control channel (~20s cold); the usage calls
+/// themselves return in milliseconds. So it is timed in two phases around the
+/// `fold_usage_ready` handshake rather than under one deadline — the shared 10s
+/// `SDK_SCRIPT_TIMEOUT` used to kill it mid-connect, every time.
+const USAGE_CONNECT_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// Budget for `getContextUsage` + `getUsage` once the control channel is live.
+const USAGE_QUERY_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Handshake line the usage script prints when its SDK session is ready.
+const USAGE_READY_MARKER: &str = "fold_usage_ready";
 
 static MODEL_CACHE: std::sync::Mutex<Option<(std::time::Instant, Vec<ClaudeModelInfo>)>> =
     std::sync::Mutex::new(None);

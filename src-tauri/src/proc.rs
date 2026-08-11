@@ -6,7 +6,7 @@
 //! through `output_with_timeout`, which kills the child once the deadline
 //! passes.
 
-use std::io::Read;
+use std::io::{BufRead, Read};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -53,6 +53,84 @@ pub fn output_with_timeout(cmd: &mut Command, timeout: Duration) -> Result<Timed
                     let _ = child.kill();
                     let _ = child.wait();
                     return Err(format!("timed out after {}s", timeout.as_secs()));
+                }
+                thread::sleep(POLL_INTERVAL);
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    };
+
+    Ok(TimedOutput {
+        code,
+        stdout: stdout_reader.join().unwrap_or_default(),
+        stderr: stderr_reader.join().unwrap_or_default(),
+    })
+}
+
+/// Run `cmd` under two deadlines instead of one, split by a handshake line the
+/// child prints on stdout.
+///
+/// Some sidecars spend most of their wall time connecting (booting the Claude
+/// Code CLI and waiting for its control channel) and only milliseconds on the
+/// actual work. A single timeout over both forces a choice between killing slow
+/// connects and waiting forever on a hung query. Here `connect_timeout` bounds
+/// the time until `marker` appears, and `work_timeout` starts fresh from that
+/// point — so a successful connect is never charged against the query budget.
+///
+/// The returned `TimedOutput` still contains the child's full stdout, marker
+/// line included; callers parse the payload they care about out of it.
+pub fn output_with_handshake(
+    cmd: &mut Command,
+    connect_timeout: Duration,
+    work_timeout: Duration,
+    marker: &'static str,
+) -> Result<TimedOutput, String> {
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    let stdout_pipe = child.stdout.take();
+    let mut stderr_pipe = child.stderr.take();
+    let (marker_tx, marker_rx) = std::sync::mpsc::channel::<()>();
+
+    // Read stdout line-wise so the handshake can be detected as it streams,
+    // while still accumulating the full text for the caller.
+    let stdout_reader = thread::spawn(move || {
+        let mut buf = String::new();
+        if let Some(pipe) = stdout_pipe {
+            let mut seen = false;
+            for line in std::io::BufReader::new(pipe).lines().map_while(Result::ok) {
+                if !seen && line.contains(marker) {
+                    seen = true;
+                    let _ = marker_tx.send(());
+                }
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+        }
+        buf
+    });
+    let stderr_reader = thread::spawn(move || drain(stderr_pipe.as_mut()));
+
+    let mut deadline = Instant::now() + connect_timeout;
+    let mut connected = false;
+    let code = loop {
+        if !connected && marker_rx.try_recv().is_ok() {
+            connected = true;
+            deadline = Instant::now() + work_timeout;
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => break status.code().unwrap_or(-1),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let phase = if connected { "after connecting" } else { "connecting" };
+                    let secs = if connected { work_timeout } else { connect_timeout };
+                    return Err(format!("timed out {phase} after {}s", secs.as_secs()));
                 }
                 thread::sleep(POLL_INTERVAL);
             }

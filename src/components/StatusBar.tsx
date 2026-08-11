@@ -2,7 +2,6 @@ import { memo, useEffect, useRef, useState } from "react";
 import { IconChevronUp, IconGitBranch } from "@tabler/icons-react";
 import {
   formatResetsIn,
-  formatTokenCount,
   harnessSupportsContextStatus,
 } from "../lib/contextUsage";
 import { gitListBranches } from "../lib/git";
@@ -11,7 +10,6 @@ import { useCenterViewStore } from "../store/centerViewStore";
 import { useChatStore } from "../store/chatStore";
 import {
   resolveViewingSession,
-  resolveViewingUsage,
   useContextUsageStore,
 } from "../store/contextUsageStore";
 import { useHarnessStore } from "../store/harnessStore";
@@ -87,8 +85,8 @@ function StatusBar() {
     return (tab?.selectedHarness as HarnessId | undefined) ?? null;
   });
 
-  const byHarness = useContextUsageStore((s) => s.byHarness);
   const sessionByHarness = useContextUsageStore((s) => s.sessionByHarness);
+  const lastError = useContextUsageStore((s) => s.lastError);
   const viewingHarnessId = useContextUsageStore((s) => s.viewingHarnessId);
   const setViewingHarness = useContextUsageStore((s) => s.setViewingHarness);
 
@@ -98,16 +96,11 @@ function StatusBar() {
 
   const activePath = useProjectStore((s) => s.activePath);
 
-  const usage = resolveViewingUsage(
-    byHarness,
-    viewingHarnessId,
-    preferredHarnessId,
-  );
   const session = resolveViewingSession(
     sessionByHarness,
     viewingHarnessId,
     preferredHarnessId,
-    usage?.harnessId ?? null,
+    null,
   );
 
   const statusHarnesses = connectedHarnesses.filter((h) =>
@@ -118,7 +111,6 @@ function StatusBar() {
     (h) =>
       harnessSupportsContextStatus(h.id) &&
       (statusHarnesses.some((c) => c.id === h.id) ||
-        byHarness[h.id] != null ||
         sessionByHarness[h.id] != null),
   );
 
@@ -199,12 +191,7 @@ function StatusBar() {
     void refreshUsage();
   }, [connectedHarnesses, activeTabId, activePath, refreshUsage]);
 
-  const showUsage =
-    usage != null || session != null || pickerEntries.length > 0;
-  const percent = usage?.percent ?? 0;
-  const usedLabel = usage
-    ? `${formatTokenCount(usage.usedTokens)} / ${formatTokenCount(usage.contextWindow)}`
-    : null;
+  const showUsage = session != null || pickerEntries.length > 0;
   const sessionWindow = session?.fiveHour ?? null;
   const sessionReset = formatResetsIn(sessionWindow?.resetsAt ?? null);
   const weekWindow = session?.sevenDay ?? null;
@@ -213,10 +200,7 @@ function StatusBar() {
     HARNESS_CATALOG.find(
       (h) =>
         h.id ===
-        (usage?.harnessId ??
-          session?.harnessId ??
-          viewingHarnessId ??
-          pickerEntries[0]?.id),
+        (session?.harnessId ?? viewingHarnessId ?? pickerEntries[0]?.id),
     ) ?? null;
 
   const sessionTitle = sessionWindow
@@ -232,7 +216,8 @@ function StatusBar() {
       ]
         .filter(Boolean)
         .join(" · ")
-    : "Session usage updates after the next agent turn (Pro/Max)";
+    : // Say why it's empty rather than promising numbers that may never come.
+      (lastError ?? "Fetching session usage…");
 
   const menuBranches =
     branches.length > 0
@@ -298,17 +283,6 @@ function StatusBar() {
           {activeMeta ? <HarnessIcon harness={activeMeta} size={16} /> : null}
 
           <UsageMeter
-            label="Ctx"
-            percent={usage ? percent : null}
-            detail={usedLabel}
-            title={
-              usedLabel
-                ? `Context ${percent}% · ${usedLabel}`
-                : "Context usage updates after the next agent turn"
-            }
-          />
-
-          <UsageMeter
             label="Session"
             percent={sessionWindow ? sessionWindow.percent : null}
             detail={sessionReset ? `↻ ${sessionReset}` : null}
@@ -334,12 +308,9 @@ function StatusBar() {
               {pickerOpen ? (
                 <div className="status-bar-picker-menu" role="menu">
                   {pickerEntries.map((h) => {
-                    const entry = byHarness[h.id];
                     const sess = sessionByHarness[h.id];
                     const selected =
-                      (usage?.harnessId ??
-                        session?.harnessId ??
-                        viewingHarnessId) === h.id;
+                      (session?.harnessId ?? viewingHarnessId) === h.id;
                     const sessionPct = sess?.fiveHour?.percent;
                     return (
                       <button
@@ -355,11 +326,6 @@ function StatusBar() {
                         <HarnessIcon harness={h} size={18} />
                         <span className="status-bar-picker-name">{h.name}</span>
                         <span className="status-bar-picker-stats">
-                          <span
-                            className={`status-bar-picker-pct${entry ? "" : " muted"}`}
-                          >
-                            Ctx {entry ? `${entry.percent}%` : "—"}
-                          </span>
                           <span
                             className={`status-bar-picker-pct${sessionPct != null ? "" : " muted"}`}
                           >
