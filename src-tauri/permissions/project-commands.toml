@@ -14,4 +14,7 @@ commands.allow = [
   "remove_project",
   "remove_worktree",
   "archive_worktree",
+  "get_setup_script",
+  "get_setup_terminal_info",
+  "set_setup_script",
 ]

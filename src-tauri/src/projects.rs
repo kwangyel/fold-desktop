@@ -70,6 +70,34 @@ pub struct Project {
     worktree_env_defaults: Option<WorktreeEnvDefaults>,
 }
 
+/// Paths needed to run a setup script in a worktree.
+pub struct SetupTarget {
+    pub project_path: String,
+    pub worktree_path: String,
+    pub worktree_name: String,
+    pub worktree_branch: String,
+}
+
+/// Resolve a worktree inside a project for setup script execution.
+pub fn resolve_setup_target(
+    app: &AppHandle,
+    project_id: &str,
+    worktree_id: &str,
+) -> Result<SetupTarget, String> {
+    let project = load_project(app, project_id)?;
+    let wt = project
+        .worktrees
+        .iter()
+        .find(|w| w.id == worktree_id)
+        .ok_or_else(|| "worktree not found".to_string())?;
+    Ok(SetupTarget {
+        project_path: project.path.clone(),
+        worktree_path: wt.path.clone(),
+        worktree_name: wt.name.clone(),
+        worktree_branch: wt.branch.clone(),
+    })
+}
+
 #[derive(Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectsFile {
@@ -363,6 +391,19 @@ fn workspaces_root(project_name: &str) -> Result<PathBuf, String> {
         .join(sanitize_slug(project_name));
     std::fs::create_dir_all(&root).map_err(|e| format!("failed to create workspaces dir: {e}"))?;
     Ok(root)
+}
+
+/// Public wrapper for setup / Fold data paths that need the project workspaces root.
+pub fn project_workspaces_root(project: &Project) -> Result<PathBuf, String> {
+    workspaces_root(&project.name)
+}
+
+/// Load a project by id from `projects.json`.
+pub fn load_project(app: &AppHandle, id: &str) -> Result<Project, String> {
+    let data = read_file(app)?;
+    find_project(&data, id)
+        .cloned()
+        .ok_or_else(|| "project not found".to_string())
 }
 
 /// Returns true when `rel` is ignored by git (via `.gitignore` or global excludes).
@@ -895,11 +936,17 @@ pub fn remove_project(
     state: State<'_, AppState>,
 ) -> Result<ProjectsFile, String> {
     let mut data = read_file(&app)?;
+    let removed = data.projects.iter().find(|p| p.id == id).cloned();
     data.projects.retain(|p| p.id != id);
     if data.active_id.as_deref() == Some(id.as_str()) {
         data.active_id = data.projects.first().map(|p| p.id.clone());
     }
     write_file(&app, &data)?;
+    if let Some(project) = removed {
+        if let Ok(root) = workspaces_root(&project.name) {
+            crate::fold_paths::remove_project_fold_data(&root);
+        }
+    }
     let path = data
         .active_id
         .as_ref()

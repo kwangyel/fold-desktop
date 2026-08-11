@@ -11,6 +11,7 @@ mod opencode;
 mod proc;
 mod projects;
 mod pty;
+mod setup;
 mod stream;
 
 use std::collections::HashMap;
@@ -72,13 +73,17 @@ fn pty_spawn(
     cols: u16,
     rows: u16,
     on_output: Channel,
+    cwd: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let cwd = state
-        .active_project
-        .lock()
-        .map_err(|e| e.to_string())?
-        .clone();
+    let cwd = match cwd.filter(|p| !p.is_empty()) {
+        Some(p) => Some(PathBuf::from(p)),
+        None => state
+            .active_project
+            .lock()
+            .map_err(|e| e.to_string())?
+            .clone(),
+    };
     let session = pty::PtySession::spawn(&pty::default_shell(), cols, rows, cwd, on_output)?;
     state
         .sessions
@@ -231,6 +236,9 @@ pub fn run() {
             projects::remove_project,
             projects::remove_worktree,
             projects::archive_worktree,
+            setup::get_setup_script,
+            setup::get_setup_terminal_info,
+            setup::set_setup_script,
             github::gh_auth_status,
             github::gh_auth_login,
             github::gh_auth_cancel,

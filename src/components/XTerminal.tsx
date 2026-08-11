@@ -10,6 +10,8 @@ interface XTerminalProps {
   active: boolean;
   /** Working directory; when it changes the PTY is respawned in place. */
   cwd: string | null;
+  /** Optional command to run once after the shell starts. */
+  initialCommand?: string;
 }
 
 function isTauri(): boolean {
@@ -17,8 +19,15 @@ function isTauri(): boolean {
 }
 
 const RESIZE_DEBOUNCE_MS = 80;
+/** Give the interactive shell a moment to print its prompt before injecting. */
+const INITIAL_COMMAND_DELAY_MS = 200;
 
-export default function XTerminal({ id, active, cwd }: XTerminalProps) {
+export default function XTerminal({
+  id,
+  active,
+  cwd,
+  initialCommand,
+}: XTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -34,6 +43,7 @@ export default function XTerminal({ id, active, cwd }: XTerminalProps) {
     let dataSub: { dispose: () => void } | undefined;
     let observer: ResizeObserver | undefined;
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+    let commandTimer: ReturnType<typeof setTimeout> | undefined;
     let lastCols = 0;
     let lastRows = 0;
 
@@ -97,12 +107,24 @@ export default function XTerminal({ id, active, cwd }: XTerminalProps) {
           id,
           cols: term.cols,
           rows: term.rows,
+          cwd,
           onOutput: output,
-        }).catch((e) => {
-          if (!disposed) {
-            term.write(`\r\n\x1b[31mFailed to start shell: ${e}\x1b[0m\r\n`);
-          }
-        });
+        })
+          .then(() => {
+            if (disposed || !initialCommand?.trim()) return;
+            commandTimer = setTimeout(() => {
+              if (disposed) return;
+              const cmd = initialCommand.endsWith("\n")
+                ? initialCommand
+                : `${initialCommand}\n`;
+              void invoke("pty_write", { id, data: cmd });
+            }, INITIAL_COMMAND_DELAY_MS);
+          })
+          .catch((e) => {
+            if (!disposed) {
+              term.write(`\r\n\x1b[31mFailed to start shell: ${e}\x1b[0m\r\n`);
+            }
+          });
 
         dataSub = term.onData((data) => {
           void invoke("pty_write", { id, data });
@@ -120,6 +142,7 @@ export default function XTerminal({ id, active, cwd }: XTerminalProps) {
       disposed = true;
       cancelAnimationFrame(raf);
       if (resizeTimer !== undefined) clearTimeout(resizeTimer);
+      if (commandTimer !== undefined) clearTimeout(commandTimer);
       observer?.disconnect();
       dataSub?.dispose();
       term.dispose();
@@ -129,7 +152,7 @@ export default function XTerminal({ id, active, cwd }: XTerminalProps) {
         void invoke("pty_kill", { id });
       }
     };
-  }, [id, cwd]);
+  }, [id, cwd, initialCommand]);
 
   useEffect(() => {
     if (!active) return;

@@ -17,7 +17,9 @@ import {
 import { useChangesStore } from "./changesStore";
 import { useChatSessionStore } from "./chatSessionStore";
 import { useAgentStatusStore } from "./agentStatusStore";
+import { useTerminalStore } from "./terminalStore";
 import { syncChatTabsForWorktree } from "../lib/chatTabs";
+import { buildSetupCommand, getSetupTerminalInfo } from "../lib/setup";
 
 type ProjectStore = {
   projects: Project[];
@@ -223,6 +225,23 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         activePath: workspacePath(updated),
       }));
       onWorkspaceSwitch();
+      // Fire-and-forget: run setup in a new right-panel terminal tab.
+      const worktreeId = updated.activeWorktreeId;
+      if (worktreeId) {
+        void (async () => {
+          try {
+            const info = await getSetupTerminalInfo(projectId, worktreeId);
+            if (!info) return;
+            useTerminalStore.getState().open({
+              label: `Setup · ${info.worktreeName}`,
+              cwd: info.worktreePath,
+              command: buildSetupCommand(info),
+            });
+          } catch {
+            // Setup is best-effort; worktree create already succeeded.
+          }
+        })();
+      }
     } catch (e) {
       set({ error: String(e) });
       throw e;

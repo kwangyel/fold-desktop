@@ -12,6 +12,7 @@ import {
   IconChevronRight,
   IconMessage,
   IconPencil,
+  IconTerminal2,
 } from "@tabler/icons-react";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { useProjectStore } from "../store/projectStore";
@@ -22,6 +23,7 @@ import { isTauri } from "../lib/git";
 import ProjectDialog from "./ProjectDialog";
 import CreateWorktreeDialog from "./CreateWorktreeDialog";
 import ConnectAppDialog from "./ConnectAppDialog";
+import SetupScriptDialog from "./SetupScriptDialog";
 import UserMenu from "./UserMenu";
 import ProjectGithubAvatar from "./ProjectGithubAvatar";
 import ResizeHandle from "./ResizeHandle";
@@ -204,6 +206,10 @@ export default function Sidebar({ width, topRatio = 0.38, onSplitDrag }: Props) 
 
   const [dialog, setDialog] = useState<DialogMode>(null);
   const [worktreeProjectId, setWorktreeProjectId] = useState<string | null>(null);
+  const [setupProject, setSetupProject] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
   const [menu, setMenu] = useState<ContextMenu | null>(null);
   const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
 
@@ -383,16 +389,28 @@ export default function Sidebar({ width, topRatio = 0.38, onSplitDrag }: Props) 
           onClick={(e) => e.stopPropagation()}
         >
           {menu.kind === "project" ? (
-            <button
-              className="context-menu-item danger"
-              onClick={() => {
-                remove(menu.id);
-                setMenu(null);
-              }}
-            >
-              <IconTrash size={14} stroke={1.75} />
-              Remove from list
-            </button>
+            <>
+              <button
+                className="context-menu-item"
+                onClick={() => {
+                  setSetupProject({ id: menu.id, name: menu.name });
+                  setMenu(null);
+                }}
+              >
+                <IconTerminal2 size={14} stroke={1.75} />
+                Setup script…
+              </button>
+              <button
+                className="context-menu-item danger"
+                onClick={() => {
+                  remove(menu.id);
+                  setMenu(null);
+                }}
+              >
+                <IconTrash size={14} stroke={1.75} />
+                Remove from list
+              </button>
+            </>
           ) : menu.kind === "chat" ? (
             <>
               <button
@@ -496,6 +514,15 @@ export default function Sidebar({ width, topRatio = 0.38, onSplitDrag }: Props) 
           onClose={() => setWorktreeProjectId(null)}
         />
       )}
+
+      {setupProject && (
+        <SetupScriptDialog
+          projectId={setupProject.id}
+          projectName={setupProject.name}
+          onClose={() => setSetupProject(null)}
+        />
+      )}
+
     </aside>
   );
 }

@@ -155,3 +155,19 @@ pub fn remove_fold_data_dir(worktree: &Path) {
         let _ = std::fs::remove_dir_all(&legacy);
     }
 }
+
+/// Project-level setup script path: `{workspaces_root}/.fold/setup.sh`.
+///
+/// Lives beside per-worktree `.fold/<slug>/` dirs and is never inside a git
+/// worktree, so it is not committed with the repo.
+pub fn project_setup_script(workspaces_root: &Path) -> PathBuf {
+    workspaces_root.join(FOLD_PREFIX).join("setup.sh")
+}
+
+/// Remove project-level Fold data (setup script) when a project is removed
+/// from Fold. Per-worktree `.fold/<slug>/` dirs are cleaned by
+/// [`remove_fold_data_dir`] when each worktree is removed.
+pub fn remove_project_fold_data(workspaces_root: &Path) {
+    let script = project_setup_script(workspaces_root);
+    let _ = std::fs::remove_file(&script);
+}
