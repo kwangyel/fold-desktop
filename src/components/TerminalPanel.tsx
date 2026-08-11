@@ -1,5 +1,6 @@
 import { memo, lazy, Suspense, useEffect, useState } from "react";
 import { useProjectStore } from "../store/projectStore";
+import { useTerminalStore } from "../store/terminalStore";
 import "./TerminalPanel.css";
 
 const XTerminal = lazy(() => import("./XTerminal"));
@@ -7,25 +8,40 @@ const XTerminal = lazy(() => import("./XTerminal"));
 interface TerminalTab {
   id: string;
   label: string;
+  /** When set, this tab stays in that directory instead of following activePath. */
+  pinnedCwd?: string;
+  /** Command to inject once after the PTY starts. */
+  initialCommand?: string;
 }
 
 let nextTerminalId = 1;
 
-function createTerminalTab(): TerminalTab {
-  const id = `term-${nextTerminalId}`;
-  const label = `Terminal ${nextTerminalId}`;
+function createTerminalTab(opts?: {
+  label?: string;
+  pinnedCwd?: string;
+  initialCommand?: string;
+  id?: string;
+}): TerminalTab {
+  const n = nextTerminalId;
   nextTerminalId += 1;
-  return { id, label };
+  return {
+    id: opts?.id ?? `term-${n}`,
+    label: opts?.label ?? `Terminal ${n}`,
+    pinnedCwd: opts?.pinnedCwd,
+    initialCommand: opts?.initialCommand,
+  };
 }
 
 const INITIAL_TERMINAL = createTerminalTab();
 
 function TerminalPanel() {
+  const activePath = useProjectStore((s) => s.activePath);
   const [terminals, setTerminals] = useState<TerminalTab[]>([INITIAL_TERMINAL]);
   const [activeId, setActiveId] = useState(INITIAL_TERMINAL.id);
   // Defer PTY spawn so it doesn't compete with auth/projects/harness startup.
   const [spawnReady, setSpawnReady] = useState(false);
-  const activePath = useProjectStore((s) => s.activePath);
+  const requests = useTerminalStore((s) => s.requests);
+  const acknowledge = useTerminalStore((s) => s.acknowledge);
 
   useEffect(() => {
     let cancelled = false;
@@ -55,6 +71,23 @@ function TerminalPanel() {
       }
     };
   }, []);
+
+  // Absorb external open requests (setup script, etc.) into local tabs.
+  useEffect(() => {
+    if (requests.length === 0) return;
+    const batch = [...requests];
+    for (const req of batch) acknowledge(req.id);
+    const tabs = batch.map((req) =>
+      createTerminalTab({
+        id: req.id,
+        label: req.label,
+        pinnedCwd: req.cwd,
+        initialCommand: req.command,
+      }),
+    );
+    setTerminals((prev) => [...prev, ...tabs]);
+    setActiveId(tabs[tabs.length - 1].id);
+  }, [requests, acknowledge]);
 
   const addTerminal = () => {
     const tab = createTerminalTab();
@@ -103,14 +136,18 @@ function TerminalPanel() {
       <div className="terminal-panel-body">
         {activePath && spawnReady ? (
           <Suspense fallback={<div className="terminal-empty">Starting terminal…</div>}>
-            {terminals.map((t) => (
-              <XTerminal
-                key={t.id}
-                id={t.id}
-                cwd={activePath}
-                active={t.id === activeId}
-              />
-            ))}
+            {terminals.map((t) => {
+              const cwd = t.pinnedCwd ?? activePath;
+              return (
+                <XTerminal
+                  key={t.id}
+                  id={t.id}
+                  cwd={cwd}
+                  active={t.id === activeId}
+                  initialCommand={t.initialCommand}
+                />
+              );
+            })}
           </Suspense>
         ) : activePath ? (
           <div className="terminal-empty">Starting terminal…</div>

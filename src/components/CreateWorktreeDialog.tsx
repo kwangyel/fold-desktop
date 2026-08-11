@@ -7,6 +7,7 @@ import {
   relativeToRoot,
   scanWorktreeEnv,
 } from "../lib/projects";
+import { getSetupScript } from "../lib/setup";
 import { pickWorktreeName } from "../lib/worktreeNames";
 import { useProjectStore } from "../store/projectStore";
 import "./ProjectDialog.css";
@@ -34,6 +35,7 @@ export default function CreateWorktreeDialog({ projectId, onClose }: Props) {
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const [customFiles, setCustomFiles] = useState<string[]>([]);
   const [saveDefaults, setSaveDefaults] = useState(true);
+  const [hasSetupScript, setHasSetupScript] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -52,10 +54,14 @@ export default function CreateWorktreeDialog({ projectId, onClose }: Props) {
       setLoading(true);
       setError(null);
       try {
-        const scan = await scanWorktreeEnv(projectId);
+        const [scan, setup] = await Promise.all([
+          scanWorktreeEnv(projectId),
+          getSetupScript(projectId),
+        ]);
         if (cancelled) return;
         setDirs(scan.dirs);
         setFiles(scan.files);
+        setHasSetupScript(Boolean(setup?.trim()));
 
         const defaults = scan.defaults;
         const hasDefaults = defaults != null;
@@ -316,6 +322,15 @@ export default function CreateWorktreeDialog({ projectId, onClose }: Props) {
                 />
                 <span>Remember for future worktrees</span>
               </label>
+
+              <div className="env-section">
+                <div className="env-section-label">Setup script</div>
+                <div className="env-empty">
+                  {hasSetupScript
+                    ? "Setup script will run after create."
+                    : "No setup script — configure in project settings (right-click project → Setup script…)."}
+                </div>
+              </div>
             </>
           )}
 
