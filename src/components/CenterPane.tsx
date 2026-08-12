@@ -1,4 +1,4 @@
-import { memo, lazy, Suspense, useEffect, useRef } from "react";
+import { memo, lazy, Suspense, useEffect, useRef, useState } from "react";
 import ChatInterface from "./ChatInterface";
 import CreatePrButton from "./CreatePrButton";
 import GlobalQuestionOverlay from "./GlobalQuestionOverlay";
@@ -9,8 +9,9 @@ import { newChatTab } from "../lib/chatTabs";
 import { useCenterViewStore, getLiveEditorContent, setLiveEditorContent } from "../store/centerViewStore";
 import { useChatStore } from "../store/chatStore";
 import { useProjectStore } from "../store/projectStore";
+import { useChangesStore } from "../store/changesStore";
 import { ghPrViewCached } from "../lib/github";
-import { gitGithubRemote } from "../lib/git";
+import { gitGithubRemote, writeFile } from "../lib/git";
 import "./CodeEditor.css";
 
 const CodeEditor = lazy(() => import("./CodeEditor"));
@@ -33,8 +34,21 @@ function CenterPane() {
   // tab doesn't cause it to pop back up.
   const autoOpened = useRef<Set<string>>(new Set());
   const contentDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId);
+
+  const flushEditorContent = (tabId: string) => {
+    if (contentDebounceRef.current) {
+      clearTimeout(contentDebounceRef.current);
+      contentDebounceRef.current = null;
+    }
+    const live = getLiveEditorContent(tabId);
+    if (live !== undefined) {
+      updateTabContent(tabId, live);
+    }
+    return getLiveEditorContent(tabId);
+  };
 
   const handleCloseTab = (tabId: string, tabType: string) => {
     if (tabs.length <= 1) return;
@@ -65,18 +79,33 @@ function CenterPane() {
     }, 200);
   };
 
+  const handleEditorSave = async () => {
+    if (!activeTab || activeTab.type !== "editor" || !activeTab.filePath) return;
+
+    const content =
+      flushEditorContent(activeTab.id) ?? activeTab.fileContent ?? "";
+
+    setSaveState("saving");
+    try {
+      await writeFile(activeTab.filePath, content);
+      updateTabContent(activeTab.id, content);
+      void useChangesStore.getState().refresh();
+      setSaveState("saved");
+      setTimeout(() => setSaveState("idle"), 1200);
+    } catch (err) {
+      setSaveState("idle");
+      window.alert(`Failed to save: ${err}`);
+    }
+  };
+
+  const saveRef = useRef(handleEditorSave);
+  saveRef.current = handleEditorSave;
+
   // Flush pending editor writes when leaving an editor tab.
   useEffect(() => {
     return () => {
-      if (contentDebounceRef.current) {
-        clearTimeout(contentDebounceRef.current);
-        contentDebounceRef.current = null;
-      }
       if (activeTab?.type === "editor") {
-        const live = getLiveEditorContent(activeTab.id);
-        if (live !== undefined) {
-          updateTabContent(activeTab.id, live);
-        }
+        flushEditorContent(activeTab.id);
       }
     };
     // Only flush when the active tab identity changes.
@@ -84,15 +113,32 @@ function CenterPane() {
   }, [activeTabId]);
 
   useEffect(() => {
+    setSaveState("idle");
+  }, [activeTabId]);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "w" || e.shiftKey) return;
-      if (closeActiveTab()) {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const key = e.key.toLowerCase();
+      if (key === "w" && !e.shiftKey) {
+        if (closeActiveTab()) {
+          e.preventDefault();
+        }
+        return;
+      }
+      if (
+        key === "s" &&
+        activeTab?.type === "editor" &&
+        activeTab.filePath &&
+        !activeTab.fileLoading
+      ) {
         e.preventDefault();
+        void saveRef.current();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [activeTab?.type, activeTab?.filePath, activeTab?.fileLoading]);
 
   // Detect a PR on the active worktree's branch and auto-open the PR tab the
   // first time one is found for this worktree. This covers PRs that already
@@ -160,7 +206,14 @@ function CenterPane() {
           <>
             <div className="center-editor-header">
               <span className="file-path">{activeTab.filePath}</span>
-              <span className="view-badge">Editor</span>
+              <div className="center-editor-header-actions">
+                {saveState !== "idle" && (
+                  <span className="diff-save-status">
+                    {saveState === "saving" ? "Saving…" : "Saved ✓"}
+                  </span>
+                )}
+                <span className="view-badge">Editor</span>
+              </div>
             </div>
             <Suspense fallback={<div className="center-editor-loading">Loading editor…</div>}>
               <CodeEditor

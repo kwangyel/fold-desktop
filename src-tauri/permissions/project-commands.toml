@@ -12,6 +12,7 @@ commands.allow = [
   "create_worktree",
   "set_active_worktree",
   "remove_project",
+  "assess_worktree_deletion",
   "remove_worktree",
   "archive_worktree",
   "get_setup_script",
