@@ -31,6 +31,22 @@ function withTimeout(promise, ms, label) {
   ]);
 }
 
+/** Retry an async fn up to `attempts` times with a pause between failures. */
+async function retryAsync(fn, attempts, delayMs = 1000) {
+  let lastErr;
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (i < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+  }
+  throw lastErr;
+}
+
 const cwd = process.argv[2] || process.cwd();
 
 const q = query({
@@ -64,9 +80,22 @@ try {
   if (!usageFn) {
     result.error = "SDK exposes no usage method";
   } else {
-    const usage = await withTimeout(usageFn(), 10000, "getUsage");
+    let usage = null;
+    let lastErr = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        usage = await withTimeout(usageFn(), 10000, "getUsage");
+        if (usage) break;
+        lastErr = "usage call returned nothing";
+      } catch (err) {
+        lastErr = err?.message ?? String(err);
+      }
+      if (!usage && attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+    }
     if (!usage) {
-      result.error = "usage call returned nothing";
+      result.error = lastErr ?? "usage call returned nothing";
     } else {
       const five = usage.rate_limits?.five_hour;
       const seven = usage.rate_limits?.seven_day;
