@@ -234,6 +234,7 @@ pub fn run() {
             projects::create_worktree,
             projects::set_active_worktree,
             projects::remove_project,
+            projects::assess_worktree_deletion,
             projects::remove_worktree,
             projects::archive_worktree,
             setup::get_setup_script,

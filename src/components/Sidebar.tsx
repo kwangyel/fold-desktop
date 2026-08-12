@@ -20,8 +20,10 @@ import { useCenterViewStore } from "../store/centerViewStore";
 import { useChatSessionStore } from "../store/chatSessionStore";
 import { deleteChatEverywhere, openChatTab } from "../lib/chatTabs";
 import { isTauri } from "../lib/git";
+import { worktreeNeedsArchiveRescue } from "../lib/projects";
 import ProjectDialog from "./ProjectDialog";
 import CreateWorktreeDialog from "./CreateWorktreeDialog";
+import ArchiveWorktreeDialog from "./ArchiveWorktreeDialog";
 import ConnectAppDialog from "./ConnectAppDialog";
 import SetupScriptDialog from "./SetupScriptDialog";
 import UserMenu from "./UserMenu";
@@ -201,13 +203,16 @@ export default function Sidebar({ width, topRatio = 0.38, onSplitDrag }: Props) 
   const select = useProjectStore((s) => s.select);
   const selectWorktree = useProjectStore((s) => s.selectWorktree);
   const remove = useProjectStore((s) => s.remove);
-  const removeWorktree = useProjectStore((s) => s.removeWorktree);
-  const archiveWorktree = useProjectStore((s) => s.archiveWorktree);
 
   const [dialog, setDialog] = useState<DialogMode>(null);
   const [worktreeProjectId, setWorktreeProjectId] = useState<string | null>(null);
   const [setupProject, setSetupProject] = useState<{
     id: string;
+    name: string;
+  } | null>(null);
+  const [archiveTarget, setArchiveTarget] = useState<{
+    projectId: string;
+    worktreeId: string;
     name: string;
   } | null>(null);
   const [menu, setMenu] = useState<ContextMenu | null>(null);
@@ -284,7 +289,7 @@ export default function Sidebar({ width, topRatio = 0.38, onSplitDrag }: Props) 
           projects.map((p) => {
             const isActiveProject = activeId === p.id;
             const activeWtId = isActiveProject ? p.activeWorktreeId : null;
-            // Archived worktrees are hidden here (shown in a separate section).
+            // Archived worktrees are hidden here (managed in a separate UI).
             const activeWorktrees = p.worktrees.filter((w) => !w.archived);
             return (
               <div key={p.id} className="project-group">
@@ -466,31 +471,33 @@ export default function Sidebar({ width, topRatio = 0.38, onSplitDrag }: Props) 
                 <button
                   className="context-menu-item"
                   onClick={() => {
-                    void archiveWorktree(menu.projectId, menu.worktreeId);
+                    const { projectId, worktreeId, name } = menu;
                     setMenu(null);
+                    void (async () => {
+                      try {
+                        const needsRescue = await worktreeNeedsArchiveRescue(
+                          projectId,
+                          worktreeId,
+                        );
+                        if (needsRescue) {
+                          setArchiveTarget({ projectId, worktreeId, name });
+                          return;
+                        }
+                        await useProjectStore
+                          .getState()
+                          .archiveWorktree(projectId, worktreeId, {
+                            createRescue: false,
+                          });
+                      } catch (e) {
+                        useProjectStore.setState({ error: String(e) });
+                      }
+                    })();
                   }}
                 >
                   <IconArchive size={14} stroke={1.75} />
                   Archive worktree
                 </button>
               )}
-              <button
-                className="context-menu-item danger"
-                onClick={() => {
-                  const { projectId, worktreeId, name } = menu;
-                  setMenu(null);
-                  void (async () => {
-                    const ok = await confirmDelete(
-                      `Delete worktree "${name}" and its branch? This cannot be undone.`,
-                      "Remove worktree",
-                    );
-                    if (ok) await removeWorktree(projectId, worktreeId);
-                  })();
-                }}
-              >
-                <IconTrash size={14} stroke={1.75} />
-                Remove worktree
-              </button>
             </>
           )}
         </div>
@@ -512,6 +519,15 @@ export default function Sidebar({ width, topRatio = 0.38, onSplitDrag }: Props) 
         <CreateWorktreeDialog
           projectId={worktreeProjectId}
           onClose={() => setWorktreeProjectId(null)}
+        />
+      )}
+
+      {archiveTarget && (
+        <ArchiveWorktreeDialog
+          projectId={archiveTarget.projectId}
+          worktreeId={archiveTarget.worktreeId}
+          name={archiveTarget.name}
+          onClose={() => setArchiveTarget(null)}
         />
       )}
 

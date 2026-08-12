@@ -57,7 +57,7 @@ export default function DiffPane({ tabId, filePath, original, modified }: DiffPa
     }
   };
 
-  // Auto-save on Cmd/Ctrl+S while editing. A ref keeps the handler fresh
+  // Save on Cmd/Ctrl+S while editing. A ref keeps the handler fresh
   // without re-registering the listener on every keystroke.
   const saveRef = useRef(handleSave);
   saveRef.current = handleSave;

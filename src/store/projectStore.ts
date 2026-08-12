@@ -2,6 +2,8 @@ import { create } from "zustand";
 import {
   Project,
   CreateWorktreeOptions,
+  ArchiveWorktreeOptions,
+  DeleteWorktreeOptions,
   archiveWorktree,
   cloneGithubProject,
   createProject,
@@ -49,8 +51,16 @@ type ProjectStore = {
     options?: CreateWorktreeOptions,
   ) => Promise<void>;
   remove: (id: string) => Promise<void>;
-  removeWorktree: (projectId: string, worktreeId: string) => Promise<void>;
-  archiveWorktree: (projectId: string, worktreeId: string) => Promise<void>;
+  removeWorktree: (
+    projectId: string,
+    worktreeId: string,
+    options?: DeleteWorktreeOptions,
+  ) => Promise<void>;
+  archiveWorktree: (
+    projectId: string,
+    worktreeId: string,
+    options?: ArchiveWorktreeOptions,
+  ) => Promise<string | null>;
 };
 
 function activePathFrom(projects: Project[], activeId: string | null): string | null {
@@ -262,7 +272,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }
   },
 
-  removeWorktree: async (projectId, worktreeId) => {
+  removeWorktree: async (projectId, worktreeId, options) => {
     try {
       const previous = get().projects.find((p) => p.id === projectId);
       const removedWasActive = previous?.activeWorktreeId === worktreeId;
@@ -271,7 +281,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       const removedPath = previous?.worktrees.find(
         (w) => w.id === worktreeId,
       )?.path;
-      const updated = await removeWorktree(projectId, worktreeId);
+      const { project: updated } = await removeWorktree(
+        projectId,
+        worktreeId,
+        options,
+      );
       if (removedPath) {
         useChatSessionStore.getState().forget(removedPath);
         useAgentStatusStore.getState().clearWorktree(removedPath);
@@ -285,17 +299,22 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       onWorkspaceSwitch();
     } catch (e) {
       set({ error: String(e) });
+      throw e;
     }
   },
 
-  archiveWorktree: async (projectId, worktreeId) => {
+  archiveWorktree: async (projectId, worktreeId, options) => {
     try {
       const previous = get().projects.find((p) => p.id === projectId);
       const archivedWasActive = previous?.activeWorktreeId === worktreeId;
       const archivedPath = previous?.worktrees.find(
         (w) => w.id === worktreeId,
       )?.path;
-      const updated = await archiveWorktree(projectId, worktreeId);
+      const { project: updated, rescueRef } = await archiveWorktree(
+        projectId,
+        worktreeId,
+        options,
+      );
       // Archiving deletes the worktree folder and its `.fold` data too.
       if (archivedPath) {
         useChatSessionStore.getState().forget(archivedPath);
@@ -308,8 +327,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         activePath: archivedWasActive ? null : workspacePath(updated),
       }));
       onWorkspaceSwitch();
+      return rescueRef ?? null;
     } catch (e) {
       set({ error: String(e) });
+      throw e;
     }
   },
 }));

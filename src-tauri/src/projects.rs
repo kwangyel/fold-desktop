@@ -956,14 +956,232 @@ pub fn remove_project(
     Ok(data)
 }
 
-/// Remove a worktree from the project list (and from git's worktree registry).
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeMutationResult {
+    project: Project,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rescue_ref: Option<String>,
+}
+
+/// Risks and requirements for permanently deleting an archived worktree/branch.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeDeletionRisk {
+    branch: String,
+    archived: bool,
+    /// Commits on the branch not present on its upstream / remotes.
+    unpushed_commits: u32,
+    has_upstream: bool,
+    /// Tracked files with uncommitted modifications (folder present only).
+    dirty: bool,
+    /// Untracked files present in the worktree folder.
+    untracked: bool,
+    /// True when `git branch -d` is expected to fail (needs explicit force).
+    requires_force: bool,
+    branch_exists: bool,
+}
+
+fn unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn sanitize_ref_component(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+/// `(dirty_tracked, has_untracked)` from `git status --porcelain` in a worktree.
+fn worktree_dirtiness(wt: &Path) -> (bool, bool) {
+    if !wt.is_dir() {
+        return (false, false);
+    }
+    let Ok(out) = git_stdout(wt, &["status", "--porcelain"]) else {
+        return (false, false);
+    };
+    let mut dirty = false;
+    let mut untracked = false;
+    for line in out.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with("??") {
+            untracked = true;
+        } else {
+            dirty = true;
+        }
+    }
+    (dirty, untracked)
+}
+
+/// Commits on `branch` not present on upstream (or any remote if none).
+fn unpushed_commit_count(repo: &Path, branch: &str) -> (u32, bool) {
+    if !git_ok(repo, &["show-ref", "--verify", "--quiet", &format!("refs/heads/{branch}")]) {
+        return (0, false);
+    }
+    let upstream = format!("{branch}@{{upstream}}");
+    if git_ok(repo, &["rev-parse", "--verify", "--quiet", &upstream]) {
+        let range = format!("{upstream}..{branch}");
+        let count = git_stdout(repo, &["rev-list", "--count", &range])
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        return (count, true);
+    }
+    let count = git_stdout(repo, &["rev-list", "--count", branch, "--not", "--remotes"])
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    (count, false)
+}
+
+fn is_ancestor(repo: &Path, branch: &str, into_ref: &str) -> bool {
+    git_ok(repo, &["merge-base", "--is-ancestor", branch, into_ref])
+}
+
+/// Whether `git branch -d` is expected to refuse (unmerged / unpushed tip).
+fn branch_requires_force(repo: &Path, branch: &str) -> bool {
+    if !git_ok(repo, &["show-ref", "--verify", "--quiet", &format!("refs/heads/{branch}")]) {
+        return false;
+    }
+    let upstream = format!("{branch}@{{upstream}}");
+    if git_ok(repo, &["rev-parse", "--verify", "--quiet", &upstream]) {
+        return !is_ancestor(repo, branch, &upstream);
+    }
+    if git_ok(repo, &["rev-parse", "--verify", "--quiet", "refs/remotes/origin/HEAD"]) {
+        if let Ok(sym) = git_stdout(repo, &["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]) {
+            if is_ancestor(repo, branch, &sym) {
+                return false;
+            }
+        }
+    }
+    for candidate in ["origin/main", "origin/master", "main", "master"] {
+        if git_ok(repo, &["rev-parse", "--verify", "--quiet", candidate])
+            && is_ancestor(repo, branch, candidate)
+        {
+            return false;
+        }
+    }
+    true
+}
+
+fn create_rescue_ref(repo: &Path, branch: &str, kind: &str, sha: &str) -> Result<String, String> {
+    let name = format!(
+        "refs/fold/rescue/{}-{}-{}",
+        sanitize_ref_component(branch),
+        kind,
+        unix_secs()
+    );
+    let output = git_in(repo, &["update-ref", &name, sha])?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            format!("failed to create rescue ref {name}")
+        } else {
+            stderr
+        });
+    }
+    Ok(name)
+}
+
+fn rescue_branch_tip(repo: &Path, branch: &str) -> Option<String> {
+    let sha = git_stdout(repo, &["rev-parse", branch]).ok()?;
+    if sha.is_empty() {
+        return None;
+    }
+    create_rescue_ref(repo, branch, "tip", &sha).ok()
+}
+
+/// Stash dirty/untracked work into `refs/fold/rescue/…-wip-…` before the folder is removed.
+fn rescue_dirty_worktree(repo: &Path, wt: &Path, branch: &str) -> Option<String> {
+    let (dirty, untracked) = worktree_dirtiness(wt);
+    if !dirty && !untracked {
+        return None;
+    }
+    let msg = format!("fold rescue: {branch}");
+    let pushed = if untracked {
+        git_ok(wt, &["stash", "push", "-u", "-m", &msg])
+    } else {
+        git_ok(wt, &["stash", "push", "-m", &msg])
+    };
+    if !pushed {
+        return None;
+    }
+    let sha = git_stdout(wt, &["rev-parse", "stash@{0}"]).ok()?;
+    let refname = create_rescue_ref(repo, branch, "wip", &sha).ok()?;
+    let _ = git_in(wt, &["stash", "drop", "stash@{0}"]);
+    Some(refname)
+}
+
+fn assess_worktree(repo: &Path, wt: &Worktree) -> WorktreeDeletionRisk {
+    let branch_exists =
+        git_ok(repo, &["show-ref", "--verify", "--quiet", &format!("refs/heads/{}", wt.branch)]);
+    let (unpushed_commits, has_upstream) = if branch_exists {
+        unpushed_commit_count(repo, &wt.branch)
+    } else {
+        (0, false)
+    };
+    let (dirty, untracked) = if wt.archived {
+        (false, false)
+    } else {
+        worktree_dirtiness(Path::new(&wt.path))
+    };
+    let requires_force = branch_exists && branch_requires_force(repo, &wt.branch);
+    WorktreeDeletionRisk {
+        branch: wt.branch.clone(),
+        archived: wt.archived,
+        unpushed_commits,
+        has_upstream,
+        dirty,
+        untracked,
+        requires_force,
+        branch_exists,
+    }
+}
+
+/// Inspect deletion risks for a worktree (used by the permanent-delete dialog).
+#[tauri::command(async)]
+pub fn assess_worktree_deletion(
+    app: AppHandle,
+    project_id: String,
+    worktree_id: String,
+) -> Result<WorktreeDeletionRisk, String> {
+    let data = read_file(&app)?;
+    let project = find_project(&data, &project_id).ok_or_else(|| "project not found".to_string())?;
+    let wt = project
+        .worktrees
+        .iter()
+        .find(|w| w.id == worktree_id)
+        .ok_or_else(|| "worktree not found".to_string())?;
+    Ok(assess_worktree(Path::new(&project.path), wt))
+}
+
+/// Permanently delete an **archived** worktree entry and its branch.
+///
+/// Never uses `git branch -D` unless `force` is true (UI requires typed confirm).
+/// When `create_rescue` is true (default), saves the tip under `refs/fold/rescue/…`.
 #[tauri::command(async)]
 pub fn remove_worktree(
     app: AppHandle,
     project_id: String,
     worktree_id: String,
+    create_rescue: Option<bool>,
+    force: Option<bool>,
     state: State<'_, AppState>,
-) -> Result<Project, String> {
+) -> Result<WorktreeMutationResult, String> {
+    let create_rescue = create_rescue.unwrap_or(true);
+    let force = force.unwrap_or(false);
+
     let mut data = read_file(&app)?;
     let project = find_project_mut(&mut data, &project_id)
         .ok_or_else(|| "project not found".to_string())?;
@@ -973,25 +1191,52 @@ pub fn remove_worktree(
         .iter()
         .position(|w| w.id == worktree_id)
         .ok_or_else(|| "worktree not found".to_string())?;
-    let removed = project.worktrees.remove(idx);
+    if !project.worktrees[idx].archived {
+        return Err(
+            "archive the worktree before permanently deleting it".to_string(),
+        );
+    }
+    let removed = project.worktrees[idx].clone();
+    let repo = PathBuf::from(&project.path);
+    let risk = assess_worktree(&repo, &removed);
 
+    if risk.branch_exists && risk.requires_force && !force {
+        return Err(
+            "branch is not fully merged; confirm force delete to permanently remove it"
+                .to_string(),
+        );
+    }
+
+    let mut rescue_ref = None;
+    if create_rescue && risk.branch_exists {
+        rescue_ref = rescue_branch_tip(&repo, &removed.branch);
+    }
+
+    if risk.branch_exists {
+        let flag = if force { "-D" } else { "-d" };
+        let output = git_in(&repo, &["branch", flag, &removed.branch])?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if stderr.is_empty() {
+                format!("failed to delete branch {}", removed.branch)
+            } else {
+                stderr
+            });
+        }
+    }
+
+    project.worktrees.remove(idx);
     let removed_was_active = project.active_worktree_id.as_deref() == Some(worktree_id.as_str());
     if removed_was_active {
-        // Do not fall back to main or another worktree — clear selection.
         project.active_worktree_id = None;
     }
 
-    // Best-effort: unregister + delete the worktree folder, then delete the
-    // branch (force, since it may hold unmerged commits). This also handles
-    // removing an already-archived worktree — the folder is gone, but the
-    // `branch -D` still fires. Also drop the sibling Fold data dir (plans/asks).
-    let repo = PathBuf::from(&project.path);
+    // Folder should already be gone after archive; clean up leftovers best-effort.
     let wt_path = PathBuf::from(&removed.path);
     crate::fold_paths::remove_fold_data_dir(&wt_path);
     let _ = git_in(&repo, &["worktree", "remove", "--force", &removed.path]);
     let _ = std::fs::remove_dir_all(&wt_path);
     let _ = git_in(&repo, &["worktree", "prune"]);
-    let _ = git_in(&repo, &["branch", "-D", &removed.branch]);
 
     let updated = project.clone();
     write_file(&app, &data)?;
@@ -1003,18 +1248,25 @@ pub fn remove_worktree(
             workspace_path(&updated)
         },
     )?;
-    Ok(updated)
+    Ok(WorktreeMutationResult {
+        project: updated,
+        rescue_ref,
+    })
 }
 
 /// Archive a worktree: keep the entry and its git branch, but delete the
-/// isolated folder and unregister it from git. One-way (no restore in the UI).
+/// isolated folder. When `create_rescue` is true (default), dirty/untracked
+/// files are stashed into a rescue ref before the folder is removed.
 #[tauri::command(async)]
 pub fn archive_worktree(
     app: AppHandle,
     project_id: String,
     worktree_id: String,
+    create_rescue: Option<bool>,
     state: State<'_, AppState>,
-) -> Result<Project, String> {
+) -> Result<WorktreeMutationResult, String> {
+    let create_rescue = create_rescue.unwrap_or(true);
+
     let mut data = read_file(&app)?;
     let project = find_project_mut(&mut data, &project_id)
         .ok_or_else(|| "project not found".to_string())?;
@@ -1024,19 +1276,28 @@ pub fn archive_worktree(
         .iter_mut()
         .find(|w| w.id == worktree_id)
         .ok_or_else(|| "worktree not found".to_string())?;
+    if wt.archived {
+        return Err("worktree is already archived".to_string());
+    }
     wt.archived = true;
     let path = wt.path.clone();
+    let branch = wt.branch.clone();
 
     let removed_was_active = project.active_worktree_id.as_deref() == Some(worktree_id.as_str());
     if removed_was_active {
-        // Do not fall back to main or another worktree — clear selection.
         project.active_worktree_id = None;
     }
 
-    // Best-effort: unregister + delete the worktree folder, but KEEP the branch.
-    // Also drop the sibling Fold data dir (plans/asks) for this worktree.
     let repo = PathBuf::from(&project.path);
     let wt_path = PathBuf::from(&path);
+
+    // Preserve uncommitted work before the folder is deleted (unless opted out).
+    let rescue_ref = if create_rescue {
+        rescue_dirty_worktree(&repo, &wt_path, &branch)
+    } else {
+        None
+    };
+
     crate::fold_paths::remove_fold_data_dir(&wt_path);
     let _ = git_in(&repo, &["worktree", "remove", "--force", &path]);
     let _ = std::fs::remove_dir_all(&wt_path);
@@ -1052,5 +1313,8 @@ pub fn archive_worktree(
             workspace_path(&updated)
         },
     )?;
-    Ok(updated)
+    Ok(WorktreeMutationResult {
+        project: updated,
+        rescue_ref,
+    })
 }

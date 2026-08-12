@@ -112,6 +112,13 @@
   text-overflow: ellipsis;
 }
 
+.center-editor-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .center-editor-header .view-badge {
   font-size: 10px;
   font-weight: 600;
@@ -122,7 +129,6 @@
   border-radius: 4px;
   background: var(--panel-2);
   flex-shrink: 0;
-  margin-left: 8px;
 }
 
 .center-editor-loading {

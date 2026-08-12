@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import AssistantMarkdown from "./AssistantMarkdown";
+import ArchiveWorktreeDialog from "./ArchiveWorktreeDialog";
 import { useCenterViewStore } from "../store/centerViewStore";
 import { useProjectStore } from "../store/projectStore";
+import { worktreeNeedsArchiveRescue } from "../lib/projects";
 import {
   ghPrMerge,
   ghPrMergeMethod,
@@ -27,12 +29,18 @@ export default function PrView({ tabId }: { tabId: string }) {
     const proj = s.projects.find((p) => p.id === s.activeId);
     return proj?.activeWorktreeId ?? null;
   });
+  const activeWorktreeName = useProjectStore((s) => {
+    const proj = s.projects.find((p) => p.id === s.activeId);
+    const wt = proj?.worktrees.find((w) => w.id === proj.activeWorktreeId);
+    return wt?.name ?? "worktree";
+  });
   const archiveWorktree = useProjectStore((s) => s.archiveWorktree);
 
   const [method, setMethod] = useState<PrMergeMethod>("squash");
   const [merging, setMerging] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [archiveOpen, setArchiveOpen] = useState(false);
 
   const worktreePath = tab?.prWorktreePath;
 
@@ -74,19 +82,32 @@ export default function PrView({ tabId }: { tabId: string }) {
     }
   };
 
-  const handleArchive = async () => {
+  const handleArchive = () => {
     if (!activeId || !activeWorktreeId) {
       setActionError("No active worktree to archive.");
       return;
     }
-    setArchiving(true);
     setActionError(null);
-    try {
-      await archiveWorktree(activeId, activeWorktreeId);
-    } catch (e) {
-      setActionError(String(e));
-      setArchiving(false);
-    }
+    void (async () => {
+      setArchiving(true);
+      try {
+        const needsRescue = await worktreeNeedsArchiveRescue(
+          activeId,
+          activeWorktreeId,
+        );
+        if (needsRescue) {
+          setArchiveOpen(true);
+          return;
+        }
+        await archiveWorktree(activeId, activeWorktreeId, {
+          createRescue: false,
+        });
+      } catch (e) {
+        setActionError(String(e));
+      } finally {
+        setArchiving(false);
+      }
+    })();
   };
 
   return (
@@ -153,6 +174,15 @@ export default function PrView({ tabId }: { tabId: string }) {
 
         <ChangedFiles files={info.files} />
       </div>
+
+      {archiveOpen && activeId && activeWorktreeId && (
+        <ArchiveWorktreeDialog
+          projectId={activeId}
+          worktreeId={activeWorktreeId}
+          name={activeWorktreeName}
+          onClose={() => setArchiveOpen(false)}
+        />
+      )}
     </div>
   );
 }

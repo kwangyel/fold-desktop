@@ -47,6 +47,34 @@ export interface Project {
   worktreeEnvDefaults?: WorktreeEnvDefaults | null;
 }
 
+export interface WorktreeMutationResult {
+  project: Project;
+  rescueRef?: string | null;
+}
+
+export interface WorktreeDeletionRisk {
+  branch: string;
+  archived: boolean;
+  unpushedCommits: number;
+  hasUpstream: boolean;
+  dirty: boolean;
+  untracked: boolean;
+  requiresForce: boolean;
+  branchExists: boolean;
+}
+
+export interface DeleteWorktreeOptions {
+  /** Save branch tip under refs/fold/rescue/… (default true). */
+  createRescue?: boolean;
+  /** Allow `git branch -D` after typed confirm (default false). */
+  force?: boolean;
+}
+
+export interface ArchiveWorktreeOptions {
+  /** Stash dirty/untracked work under refs/fold/rescue/… (default true). */
+  createRescue?: boolean;
+}
+
 export interface ProjectsState {
   projects: Project[];
   activeId: string | null;
@@ -316,37 +344,93 @@ export async function setActiveWorktree(
 export async function removeWorktree(
   projectId: string,
   worktreeId: string,
-): Promise<Project> {
+  options: DeleteWorktreeOptions = {},
+): Promise<WorktreeMutationResult> {
+  const createRescue = options.createRescue ?? true;
+  const force = options.force ?? false;
   if (!isTauri()) {
     const project = mockState.projects.find((p) => p.id === projectId);
     if (!project) throw new Error("project not found");
+    const target = project.worktrees.find((w) => w.id === worktreeId);
+    if (!target) throw new Error("worktree not found");
+    if (!target.archived) {
+      throw new Error("archive the worktree before permanently deleting it");
+    }
     const worktrees = project.worktrees.filter((w) => w.id !== worktreeId);
     const updated: Project = {
       ...project,
       worktrees,
       activeWorktreeId:
         project.activeWorktreeId === worktreeId
-          ? worktrees[0]?.id ?? null
+          ? null
           : project.activeWorktreeId,
     };
     mockState = {
       projects: mockState.projects.map((p) => (p.id === projectId ? updated : p)),
       activeId: mockState.activeId,
     };
-    return updated;
+    return {
+      project: updated,
+      rescueRef: createRescue ? `refs/fold/rescue/${target.branch}-tip-mock` : null,
+    };
   }
-  return normalizeProject(
-    await invoke<Project>("remove_worktree", { projectId, worktreeId }),
-  );
+  const result = await invoke<WorktreeMutationResult>("remove_worktree", {
+    projectId,
+    worktreeId,
+    createRescue,
+    force,
+  });
+  return {
+    project: normalizeProject(result.project),
+    rescueRef: result.rescueRef ?? null,
+  };
+}
+
+export async function assessWorktreeDeletion(
+  projectId: string,
+  worktreeId: string,
+): Promise<WorktreeDeletionRisk> {
+  if (!isTauri()) {
+    const project = mockState.projects.find((p) => p.id === projectId);
+    const wt = project?.worktrees.find((w) => w.id === worktreeId);
+    if (!wt) throw new Error("worktree not found");
+    return {
+      branch: wt.branch,
+      archived: wt.archived,
+      unpushedCommits: 0,
+      hasUpstream: false,
+      dirty: false,
+      untracked: false,
+      requiresForce: false,
+      branchExists: true,
+    };
+  }
+  return invoke<WorktreeDeletionRisk>("assess_worktree_deletion", {
+    projectId,
+    worktreeId,
+  });
+}
+
+/** True when archive would stash dirty/untracked work (needs user confirm). */
+export async function worktreeNeedsArchiveRescue(
+  projectId: string,
+  worktreeId: string,
+): Promise<boolean> {
+  const risk = await assessWorktreeDeletion(projectId, worktreeId);
+  return risk.dirty || risk.untracked;
 }
 
 export async function archiveWorktree(
   projectId: string,
   worktreeId: string,
-): Promise<Project> {
+  options: ArchiveWorktreeOptions = {},
+): Promise<WorktreeMutationResult> {
+  const createRescue = options.createRescue ?? true;
   if (!isTauri()) {
     const project = mockState.projects.find((p) => p.id === projectId);
     if (!project) throw new Error("project not found");
+    const target = project.worktrees.find((w) => w.id === worktreeId);
+    if (!target) throw new Error("worktree not found");
     const worktrees = project.worktrees.map((w) =>
       w.id === worktreeId ? { ...w, archived: true } : w,
     );
@@ -360,11 +444,22 @@ export async function archiveWorktree(
       projects: mockState.projects.map((p) => (p.id === projectId ? updated : p)),
       activeId: mockState.activeId,
     };
-    return updated;
+    return {
+      project: updated,
+      rescueRef: createRescue
+        ? `refs/fold/rescue/${target.branch}-wip-mock`
+        : null,
+    };
   }
-  return normalizeProject(
-    await invoke<Project>("archive_worktree", { projectId, worktreeId }),
-  );
+  const result = await invoke<WorktreeMutationResult>("archive_worktree", {
+    projectId,
+    worktreeId,
+    createRescue,
+  });
+  return {
+    project: normalizeProject(result.project),
+    rescueRef: result.rescueRef ?? null,
+  };
 }
 
 export async function removeProject(id: string): Promise<ProjectsState> {

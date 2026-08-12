@@ -4,6 +4,7 @@ import ChangesList from "./ChangesList";
 import PlansList from "./PlansList";
 import TerminalPanel from "./TerminalPanel";
 import ResizeHandle from "./ResizeHandle";
+import { useChangesStore } from "../store/changesStore";
 import "./RightPane.css";
 
 type TopTab = "explorer" | "changes" | "plans";
@@ -22,6 +23,7 @@ type Props = {
 
 export default function RightPane({ width, topRatio, onSplitDrag }: Props) {
   const [activeTab, setActiveTab] = useState<TopTab>("explorer");
+  const changeCount = useChangesStore((s) => s.changes.length);
   const paneRef = useRef<HTMLElement>(null);
 
   const handleSplitDrag = useCallback(
@@ -44,6 +46,9 @@ export default function RightPane({ width, topRatio, onSplitDrag }: Props) {
               onClick={() => setActiveTab(t.id)}
             >
               <span>{t.label}</span>
+              {t.id === "changes" && changeCount > 0 && (
+                <span className="tab-count-badge">{changeCount}</span>
+              )}
             </div>
           ))}
         </div>

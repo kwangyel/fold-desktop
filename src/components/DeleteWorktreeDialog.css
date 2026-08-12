@@ -1,0 +1,99 @@
+.delete-risk-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+
+.delete-risk-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.delete-risk-label {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.delete-risk-value {
+  color: var(--text);
+  text-align: right;
+}
+
+.delete-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.delete-check input {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.delete-check code {
+  font-size: 11px;
+}
+
+.delete-check-default {
+  color: var(--muted);
+}
+
+.delete-force-block {
+  margin-top: 4px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, #e35d6a 45%, var(--border));
+  border-radius: 7px;
+  background: color-mix(in srgb, #e35d6a 8%, var(--bg));
+}
+
+.delete-type-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.delete-type-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 10px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.delete-type-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.primary-btn.danger-btn {
+  background: #c43c4b;
+  border-color: #c43c4b;
+}
+
+.primary-btn.danger-btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.dialog-error {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #e35d6a;
+}
