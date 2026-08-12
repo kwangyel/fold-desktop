@@ -153,12 +153,31 @@ async function main() {
     ]);
   }
 
+  /** Retry an async fn up to `attempts` times with a pause between failures. */
+  async function retryAsync(fn, attempts, delayMs = 1000) {
+    let lastErr;
+    for (let i = 1; i <= attempts; i++) {
+      try {
+        return await fn();
+      } catch (err) {
+        lastErr = err;
+        if (i < attempts) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+      }
+    }
+    throw lastErr;
+  }
+
   /** Push Claude Code's `/context` occupancy to the app for the status bar. */
   async function emitContextUsage() {
-    if (typeof q.getContextUsage !== "function") return;
+    if (typeof q.getContextUsage !== "function") return false;
     try {
-      const usage = await withTimeout(q.getContextUsage(), 10000, "getContextUsage");
-      if (!usage || typeof usage.totalTokens !== "number") return;
+      const usage = await retryAsync(
+        () => withTimeout(q.getContextUsage(), 10000, "getContextUsage"),
+        3,
+      );
+      if (!usage || typeof usage.totalTokens !== "number") return false;
       emit({
         type: "fold_context_usage",
         harnessId: "claudecode",
@@ -167,8 +186,9 @@ async function main() {
         percentage: usage.percentage,
         model: usage.model,
       });
+      return true;
     } catch {
-      // Control channel may already be closed — ignore.
+      return false;
     }
   }
 
@@ -184,10 +204,13 @@ async function main() {
         : typeof q.getUsage === "function"
           ? q.getUsage.bind(q)
           : null;
-    if (!usageFn) return;
+    if (!usageFn) return false;
     try {
-      const usage = await withTimeout(usageFn(), 10000, "getUsage");
-      if (!usage) return;
+      const usage = await retryAsync(
+        () => withTimeout(usageFn(), 10000, "getUsage"),
+        3,
+      );
+      if (!usage) return false;
       const five = usage.rate_limits?.five_hour;
       const seven = usage.rate_limits?.seven_day;
       emit({
@@ -208,21 +231,31 @@ async function main() {
             ? usage.session.total_cost_usd
             : null,
       });
+      return true;
     } catch {
-      // Experimental API / closed channel — ignore.
+      return false;
     }
   }
 
   // Control-channel usage APIs need initialization first (same as supportedModels).
   async function emitUsageAfterInit() {
-    try {
-      if (typeof q.supportedModels === "function") {
-        await withTimeout(q.supportedModels(), 20000, "supportedModels");
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        if (typeof q.supportedModels === "function") {
+          await retryAsync(
+            () => withTimeout(q.supportedModels(), 20000, "supportedModels"),
+            3,
+          );
+        }
+        const gotContext = await emitContextUsage();
+        const gotSession = await emitSessionUsage();
+        if (gotContext || gotSession) return;
+      } catch {
+        // Init / control channel not ready — retry.
       }
-      await emitContextUsage();
-      await emitSessionUsage();
-    } catch {
-      // Init / control channel not ready — mid-turn refresh will retry.
+      if (attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
     }
   }
 

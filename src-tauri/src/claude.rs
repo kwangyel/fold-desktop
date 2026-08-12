@@ -401,19 +401,68 @@ fn usage_status_blocking(worktree: Option<String>) -> Result<ClaudeUsageStatus, 
         "Node.js not found (required to query Claude Agent SDK)".to_string()
     })?;
 
-    let mut cmd = Command::new(&node);
-    cmd.arg(&script).current_dir(&root).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut cwd_used = root.display().to_string();
-    if let Some(wt) = worktree.filter(|s| !s.is_empty()) {
+    let worktree_arg = if let Some(wt) = worktree.filter(|s| !s.is_empty()) {
         let worktree_path = PathBuf::from(&wt);
         if worktree_path.is_dir() {
             cwd_used = wt.clone();
-            cmd.arg(wt);
+            Some(wt)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let mut last_err = String::new();
+    let mut last_status: Option<ClaudeUsageStatus> = None;
+
+    for attempt in 1..=USAGE_MAX_ATTEMPTS {
+        if attempt > 1 {
+            eprintln!(
+                "[fold][usage] retry {attempt}/{USAGE_MAX_ATTEMPTS} after: {last_err}"
+            );
+            thread::sleep(USAGE_RETRY_DELAY);
+        }
+
+        match run_usage_script_once(&node, &script, &root, worktree_arg.as_deref(), &cwd_used) {
+            Ok(status) if status.session.is_some() => return Ok(status),
+            Ok(status) => {
+                last_err = status
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "no session usage returned".to_string());
+                last_status = Some(status);
+            }
+            Err(e) => last_err = e,
         }
     }
 
-    // This path is invisible from the UI (a failure just leaves the meters
-    // empty), so trace every run — root, target cwd, timing and outcome.
+    if let Some(status) = last_status {
+        return Ok(status);
+    }
+
+    Err(format!(
+        "failed after {USAGE_MAX_ATTEMPTS} attempts: {last_err}"
+    ))
+}
+
+fn run_usage_script_once(
+    node: &Path,
+    script: &Path,
+    root: &Path,
+    worktree: Option<&str>,
+    cwd_used: &str,
+) -> Result<ClaudeUsageStatus, String> {
+    let mut cmd = Command::new(node);
+    cmd.arg(script)
+        .current_dir(root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(wt) = worktree {
+        cmd.arg(wt);
+    }
+
     let started = std::time::Instant::now();
     eprintln!("[fold][usage] spawn {} in {cwd_used}", script.display());
 
@@ -476,8 +525,15 @@ const SDK_SCRIPT_TIMEOUT: Duration = Duration::from_secs(10);
 /// `SDK_SCRIPT_TIMEOUT` used to kill it mid-connect, every time.
 const USAGE_CONNECT_TIMEOUT: Duration = Duration::from_secs(45);
 
-/// Budget for `getContextUsage` + `getUsage` once the control channel is live.
-const USAGE_QUERY_TIMEOUT: Duration = Duration::from_secs(15);
+/// Budget for `getUsage` once the control channel is live. Matches three 10s
+/// attempts plus retry pauses inside `claude-usage.mjs`.
+const USAGE_QUERY_TIMEOUT: Duration = Duration::from_secs(35);
+
+/// How many times to retry a failed usage fetch (timeout, crash, or empty result).
+const USAGE_MAX_ATTEMPTS: u32 = 3;
+
+/// Pause between usage fetch retries so a slow-but-progressing boot can finish.
+const USAGE_RETRY_DELAY: Duration = Duration::from_secs(1);
 
 /// Handshake line the usage script prints when its SDK session is ready.
 const USAGE_READY_MARKER: &str = "fold_usage_ready";
