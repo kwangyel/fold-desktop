@@ -30,6 +30,11 @@ import UserMenu from "./UserMenu";
 import ProjectGithubAvatar from "./ProjectGithubAvatar";
 import ResizeHandle from "./ResizeHandle";
 import { ChatStatusDot, WorktreeStatusDot } from "./AgentStatusDot";
+import ConflictChip from "./ConflictChip";
+import {
+  selectTargetBranch,
+  useTargetBranchStore,
+} from "../store/targetBranchStore";
 
 const ConnectHarnessDialog = lazy(() => import("./ConnectHarnessDialog"));
 
@@ -203,6 +208,7 @@ export default function Sidebar({ width, topRatio = 0.38, onSplitDrag }: Props) 
   const select = useProjectStore((s) => s.select);
   const selectWorktree = useProjectStore((s) => s.selectWorktree);
   const remove = useProjectStore((s) => s.remove);
+  const targetBranches = useTargetBranchStore((s) => s.byProjectId);
 
   const [dialog, setDialog] = useState<DialogMode>(null);
   const [worktreeProjectId, setWorktreeProjectId] = useState<string | null>(null);
@@ -291,6 +297,7 @@ export default function Sidebar({ width, topRatio = 0.38, onSplitDrag }: Props) 
             const activeWtId = isActiveProject ? p.activeWorktreeId : null;
             // Archived worktrees are hidden here (managed in a separate UI).
             const activeWorktrees = p.worktrees.filter((w) => !w.archived);
+            const projectTarget = selectTargetBranch(targetBranches, p.id);
             return (
               <div key={p.id} className="project-group">
                 <div
@@ -364,6 +371,10 @@ export default function Sidebar({ width, topRatio = 0.38, onSplitDrag }: Props) 
                               <div className="name">{wt.name}</div>
                               <div className="sub">{wt.branch}</div>
                             </div>
+                            <ConflictChip
+                              worktreeId={wt.id}
+                              targetBranch={projectTarget}
+                            />
                             <WorktreeStatusDot worktreePath={wt.path} />
                           </div>
                           <WorktreeChats

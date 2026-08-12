@@ -14,6 +14,7 @@ commands.allow = [
   "git_staged_diff",
   "git_list_branches",
   "git_merge_readiness",
+  "git_conflict_radar",
   "git_merge_to_target",
   "git_rebase_onto_target",
   "git_head_commit",

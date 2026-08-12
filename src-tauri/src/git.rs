@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::AppState;
@@ -645,6 +645,177 @@ pub fn git_merge_readiness(
     })
 }
 
+/// One worktree the frontend wants scanned by the conflict radar.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RadarWorktree {
+    id: String,
+    path: String,
+    branch: String,
+}
+
+/// A sibling worktree that touches at least one of the same files.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeCollision {
+    other_id: String,
+    /// Sibling branch name (shown in the chip tooltip and Conflicts panel).
+    other_name: String,
+    /// Files touched in both worktrees (committed vs target-base, or uncommitted).
+    shared_files: Vec<String>,
+    /// Whether merging the two branches' committed state would actually conflict.
+    will_conflict: bool,
+}
+
+/// Conflict-radar result for a single worktree.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeRadar {
+    worktree_id: String,
+    /// Whether merging this worktree into the target would conflict.
+    conflicts_with_target: bool,
+    collisions: Vec<WorktreeCollision>,
+}
+
+/// Files a worktree has "touched" relative to `target`: committed changes since the
+/// merge-base plus any uncommitted (modified / staged / untracked) working-tree paths.
+/// Missing base refs degrade to just the uncommitted set rather than erroring — the
+/// radar should keep working even when the target only exists as `origin/<target>`.
+fn touched_files(root: &Path, target: &str) -> std::collections::HashSet<String> {
+    let mut files: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    // Committed changes vs the merge-base with the target (or its remote-tracking ref).
+    let base = git_stdout_trim(root, &["merge-base", target, "HEAD"])
+        .ok()
+        .filter(|b| !b.is_empty())
+        .or_else(|| {
+            let remote = format!("origin/{target}");
+            git_stdout_trim(root, &["merge-base", &remote, "HEAD"])
+                .ok()
+                .filter(|b| !b.is_empty())
+        });
+    if let Some(base) = base {
+        if let Ok(out) = git_stdout_trim(root, &["diff", "--name-only", &base, "HEAD"]) {
+            for line in out.lines() {
+                let p = line.trim();
+                if !p.is_empty() {
+                    files.insert(p.to_string());
+                }
+            }
+        }
+    }
+
+    // Uncommitted work (staged, unstaged, untracked) — surfaces collisions before commit.
+    if let Ok(status) = git_in_root(root, &["status", "--porcelain"]) {
+        if status.status.success() {
+            for line in String::from_utf8_lossy(&status.stdout).lines() {
+                let p = porcelain_path(line);
+                if !p.is_empty() {
+                    files.insert(p.to_string());
+                }
+            }
+        }
+    }
+
+    files
+}
+
+/// Continuously-callable conflict radar: for every active worktree, report whether it
+/// conflicts with `target_branch` and which sibling worktrees are heading for the same
+/// files (with whether that collision is an actual textual conflict).
+#[tauri::command(async)]
+pub fn git_conflict_radar(
+    target_branch: String,
+    worktrees: Vec<RadarWorktree>,
+) -> Result<Vec<WorktreeRadar>, String> {
+    let target = target_branch.trim().to_string();
+
+    // Precompute each worktree's touched-file set and its target-conflict flag.
+    struct Scanned<'a> {
+        wt: &'a RadarWorktree,
+        files: std::collections::HashSet<String>,
+        conflicts_with_target: bool,
+    }
+    let mut scanned: Vec<Scanned> = Vec::with_capacity(worktrees.len());
+    for wt in &worktrees {
+        let root = Path::new(&wt.path);
+        if !root.is_dir() {
+            scanned.push(Scanned {
+                wt,
+                files: std::collections::HashSet::new(),
+                conflicts_with_target: false,
+            });
+            continue;
+        }
+        let files = touched_files(root, &target);
+        // Only bother with the target merge-tree when the branch is ahead.
+        let conflicts_with_target = if target.is_empty() || !branch_exists(root, &target) {
+            false
+        } else {
+            let ahead = git_stdout_trim(root, &["rev-list", "--count", &format!("{target}..HEAD")])
+                .ok()
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(0);
+            if ahead > 0 {
+                merge_would_conflict(root, &target, "HEAD").unwrap_or(false)
+            } else {
+                false
+            }
+        };
+        scanned.push(Scanned {
+            wt,
+            files,
+            conflicts_with_target,
+        });
+    }
+
+    let mut result: Vec<WorktreeRadar> = scanned
+        .iter()
+        .map(|s| WorktreeRadar {
+            worktree_id: s.wt.id.clone(),
+            conflicts_with_target: s.conflicts_with_target,
+            collisions: Vec::new(),
+        })
+        .collect();
+
+    // Pairwise sibling collisions — record on both worktrees.
+    for i in 0..scanned.len() {
+        for j in (i + 1)..scanned.len() {
+            let shared: Vec<String> = {
+                let mut v: Vec<String> = scanned[i]
+                    .files
+                    .intersection(&scanned[j].files)
+                    .cloned()
+                    .collect();
+                v.sort();
+                v
+            };
+            if shared.is_empty() {
+                continue;
+            }
+            // Committed textual conflict between the two branches (shared refs).
+            let will_conflict =
+                merge_would_conflict(Path::new(&scanned[i].wt.path), &scanned[i].wt.branch, &scanned[j].wt.branch)
+                    .unwrap_or(false);
+
+            result[i].collisions.push(WorktreeCollision {
+                other_id: scanned[j].wt.id.clone(),
+                other_name: scanned[j].wt.branch.clone(),
+                shared_files: shared.clone(),
+                will_conflict,
+            });
+            result[j].collisions.push(WorktreeCollision {
+                other_id: scanned[i].wt.id.clone(),
+                other_name: scanned[i].wt.branch.clone(),
+                shared_files: shared,
+                will_conflict,
+            });
+        }
+    }
+
+    Ok(result)
+}
+
 /// Merge `source_branch` into `target_branch` in the main checkout at `repo_path`.
 ///
 /// Worktrees keep the feature branch checked out, so the merge must run against
@@ -842,4 +1013,60 @@ pub fn git_rebase_onto_target(path: String, target_branch: String) -> Result<(),
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod conflict_radar_tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn touched_files_includes_unstaged_cli_py() {
+        let root = Path::new("/Users/kinleywangyel/fold/workspaces/rently/beijing");
+        if !root.is_dir() {
+            return;
+        }
+        let files = touched_files(root, "main");
+        assert!(
+            files.contains("cli.py"),
+            "expected cli.py in touched set, got: {files:?}"
+        );
+    }
+
+    #[test]
+    fn conflict_radar_detects_beijing_birmingham_overlap() {
+        let worktrees = vec![
+            RadarWorktree {
+                id: "beijing".into(),
+                path: "/Users/kinleywangyel/fold/workspaces/rently/beijing".into(),
+                branch: "ws/beijing".into(),
+            },
+            RadarWorktree {
+                id: "birmingham".into(),
+                path: "/Users/kinleywangyel/fold/workspaces/rently/birmingham".into(),
+                branch: "ws/birmingham".into(),
+            },
+        ];
+        if !Path::new(&worktrees[0].path).is_dir() {
+            return;
+        }
+        let result = git_conflict_radar("main".into(), worktrees).expect("radar scan");
+        assert_eq!(result.len(), 2);
+        for radar in &result {
+            assert!(
+                !radar.collisions.is_empty(),
+                "worktree {} should have collisions",
+                radar.worktree_id,
+            );
+            let shared: Vec<_> = radar
+                .collisions
+                .iter()
+                .flat_map(|c| c.shared_files.iter())
+                .collect();
+            assert!(
+                shared.iter().any(|f| *f == "cli.py"),
+                "expected cli.py collision, got: {shared:?}"
+            );
+        }
+    }
 }

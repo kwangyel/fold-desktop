@@ -408,6 +408,30 @@ select {
   }
 }
 
+/* Conflict radar chip: overlap (amber) vs confirmed conflict (red). */
+.conflict-chip {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  transform: rotate(45deg);
+}
+
+.conflict-chip.overlap {
+  background: var(--warn);
+}
+
+.conflict-chip.conflict {
+  background: #e35d6a;
+  animation: agent-dot-pulse 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conflict-chip.conflict {
+    animation: none;
+  }
+}
+
 .chat-rename-input {
   flex: 1;
   min-width: 0;
