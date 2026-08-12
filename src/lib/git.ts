@@ -250,6 +250,40 @@ export async function gitMergeReadiness(
   return invoke<MergeReadiness>("git_merge_readiness", { path, targetBranch });
 }
 
+/** A sibling worktree heading for at least one of the same files. */
+export interface WorktreeCollision {
+  otherId: string;
+  otherName: string;
+  sharedFiles: string[];
+  willConflict: boolean;
+}
+
+/** Conflict-radar result for a single worktree. */
+export interface WorktreeRadar {
+  worktreeId: string;
+  conflictsWithTarget: boolean;
+  collisions: WorktreeCollision[];
+}
+
+/** One worktree to scan — matches the Rust `RadarWorktree` input. */
+export interface RadarWorktree {
+  id: string;
+  path: string;
+  branch: string;
+}
+
+/**
+ * Conflict radar: for each worktree, whether it conflicts with `targetBranch` and
+ * which sibling worktrees are heading for the same files.
+ */
+export async function gitConflictRadar(
+  targetBranch: string,
+  worktrees: RadarWorktree[],
+): Promise<WorktreeRadar[]> {
+  if (!isTauri()) return [];
+  return invoke<WorktreeRadar[]>("git_conflict_radar", { targetBranch, worktrees });
+}
+
 /**
  * Merge `sourceBranch` into `targetBranch` in the main checkout at `repoPath`.
  * Must run in the main repo because worktrees keep the feature branch checked out.

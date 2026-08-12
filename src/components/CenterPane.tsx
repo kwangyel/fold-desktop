@@ -4,6 +4,7 @@ import CreatePrButton from "./CreatePrButton";
 import GlobalQuestionOverlay from "./GlobalQuestionOverlay";
 import BackgroundAskWatchers from "./BackgroundAskWatchers";
 import AgentNotifications from "./AgentNotifications";
+import ConflictRadarWatcher from "./ConflictRadarWatcher";
 import { closeActiveTab } from "../lib/closeActiveTab";
 import { newChatTab } from "../lib/chatTabs";
 import { useCenterViewStore, getLiveEditorContent, setLiveEditorContent } from "../store/centerViewStore";
@@ -309,6 +310,7 @@ function CenterPane() {
         <GlobalQuestionOverlay />
         <BackgroundAskWatchers />
         <AgentNotifications />
+        <ConflictRadarWatcher />
       </div>
     </section>
   );

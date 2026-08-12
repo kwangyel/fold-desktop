@@ -206,6 +206,7 @@ pub fn run() {
             pty_kill,
             git::git_list_branches,
             git::git_merge_readiness,
+            git::git_conflict_radar,
             git::git_merge_to_target,
             git::git_rebase_onto_target,
             git::git_changes,
