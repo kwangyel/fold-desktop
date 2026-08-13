@@ -396,6 +396,139 @@ pub fn gh_pr_view(worktree_path: String) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+/// A GitHub issue flattened for the frontend picker.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhIssue {
+    number: u64,
+    title: String,
+    body: Option<String>,
+    url: String,
+    state: String,
+    labels: Vec<String>,
+    assignees: Vec<String>,
+}
+
+fn parse_gh_issues(json: &str) -> Result<Vec<GhIssue>, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| e.to_string())?;
+    let arr = value.as_array().cloned().unwrap_or_default();
+    let issues = arr
+        .into_iter()
+        .map(|item| {
+            let labels = item
+                .get("labels")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|l| {
+                            l.get("name").and_then(|n| n.as_str()).map(String::from)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let assignees = item
+                .get("assignees")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|l| {
+                            l.get("login").and_then(|n| n.as_str()).map(String::from)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            GhIssue {
+                number: item.get("number").and_then(|v| v.as_u64()).unwrap_or(0),
+                title: item
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                body: item
+                    .get("body")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(String::from),
+                url: item
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                state: item
+                    .get("state")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                labels,
+                assignees,
+            }
+        })
+        .collect();
+    Ok(issues)
+}
+
+/// List open issues for the repo at `repo_path`. When `query` is set it is
+/// passed to `gh issue list --search`; otherwise the most recently updated open
+/// issues are returned. A repo with no issues yields an empty list, not an error.
+#[tauri::command(async)]
+pub fn gh_list_issues(
+    repo_path: String,
+    query: Option<String>,
+    first: Option<u32>,
+) -> Result<Vec<GhIssue>, String> {
+    let limit = first.unwrap_or(30).to_string();
+    let mut args: Vec<String> = vec![
+        "issue".into(),
+        "list".into(),
+        "--state".into(),
+        "open".into(),
+        "--limit".into(),
+        limit,
+        "--json".into(),
+        "number,title,body,url,state,labels,assignees".into(),
+    ];
+    if let Some(q) = query.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        args.push("--search".into());
+        args.push(q.to_string());
+    }
+    let output = Command::new(gh_bin())
+        .args(&args)
+        .current_dir(&repo_path)
+        .output()
+        .map_err(|e| format!("failed to run gh issue list: {e}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    parse_gh_issues(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Fetch a single issue by number from the repo at `repo_path`.
+#[tauri::command(async)]
+pub fn gh_get_issue(repo_path: String, number: u64) -> Result<GhIssue, String> {
+    let output = Command::new(gh_bin())
+        .args([
+            "issue",
+            "view",
+            &number.to_string(),
+            "--json",
+            "number,title,body,url,state,labels,assignees",
+        ])
+        .current_dir(&repo_path)
+        .output()
+        .map_err(|e| format!("failed to run gh issue view: {e}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    // `gh issue view --json` returns a single object; wrap it so we can reuse
+    // the array parser.
+    let single = String::from_utf8_lossy(&output.stdout);
+    let mut parsed = parse_gh_issues(&format!("[{single}]"))?;
+    parsed
+        .pop()
+        .ok_or_else(|| "issue not found".to_string())
+}
+
 /// Resolve the repository's preferred merge method, preferring squash, then a
 /// merge commit, then rebase — mirroring the repo's actual GitHub settings.
 #[tauri::command(async)]

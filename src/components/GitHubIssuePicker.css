@@ -1,0 +1,146 @@
+.github-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.github-picker-popover {
+  width: min(420px, calc(100vw - 48px));
+  padding: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+}
+
+.github-picker-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--muted);
+}
+
+.github-picker-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+}
+
+.github-picker-error {
+  font-size: 12px;
+  color: var(--danger, #e5484d);
+}
+
+.github-picker-empty {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 8px 2px;
+}
+
+.github-issue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.github-issue-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.github-issue-row:hover {
+  background: var(--panel-2);
+}
+
+.github-issue-id {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: "SF Mono", Menlo, monospace;
+  color: var(--muted);
+}
+
+.github-issue-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.github-issue-state {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.github-issue-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.github-issue-chip:hover {
+  border-color: var(--accent);
+}
+
+.github-issue-chip-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: var(--text);
+  color: var(--bg);
+  flex-shrink: 0;
+}
+
+.github-issue-chip .github-issue-title {
+  color: var(--muted);
+}
+
+.github-issue-chip svg:last-child {
+  margin-left: auto;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.github-picker .spin {
+  animation: github-spin 0.9s linear infinite;
+}
+
+@keyframes github-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

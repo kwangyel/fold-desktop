@@ -15,6 +15,8 @@ commands.allow = [
   "default_clone_parent",
   "gh_pr_create_web",
   "gh_pr_view",
+  "gh_list_issues",
+  "gh_get_issue",
   "gh_pr_merge_method",
   "gh_pr_merge",
   "open_external",

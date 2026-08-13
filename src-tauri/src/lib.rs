@@ -259,6 +259,8 @@ pub fn run() {
             github::default_clone_parent,
             github::gh_pr_create_web,
             github::gh_pr_view,
+            github::gh_list_issues,
+            github::gh_get_issue,
             github::gh_pr_merge_method,
             github::gh_pr_merge,
             github::open_external,

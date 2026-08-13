@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { IconPlus, IconX } from "@tabler/icons-react";
+import { IconBrandGithub, IconPlus, IconX } from "@tabler/icons-react";
 import {
   EnvTransfer,
   TransferMode,
@@ -9,15 +9,25 @@ import {
 } from "../lib/projects";
 import { getSetupScript } from "../lib/setup";
 import { pickWorktreeName } from "../lib/worktreeNames";
-import { makeLinearIssueAttachment } from "../lib/attachments";
+import {
+  makeGitHubIssueAttachment,
+  makeLinearIssueAttachment,
+} from "../lib/attachments";
 import { queueNewChatAttachments, syncChatTabsForWorktree } from "../lib/chatTabs";
+import type { Attachment } from "../store/chatStore";
+import type { GhIssue } from "../lib/github";
 import type { LinearIssue } from "../lib/linear";
 import { useChatStore } from "../store/chatStore";
 import { useCenterViewStore } from "../store/centerViewStore";
+import { useGithubStore } from "../store/githubStore";
 import { useLinearStore } from "../store/linearStore";
 import { useProjectStore } from "../store/projectStore";
+import GitHubIssuePicker from "./GitHubIssuePicker";
 import LinearIssuePicker from "./LinearIssuePicker";
+import LinearLogo from "./icons/LinearLogo";
 import "./ProjectDialog.css";
+
+type IssueTab = "github" | "linear";
 
 type Props = {
   projectId: string;
@@ -47,7 +57,10 @@ export default function CreateWorktreeDialog({ projectId, onClose }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [linearIssue, setLinearIssue] = useState<LinearIssue | null>(null);
+  const [githubIssue, setGithubIssue] = useState<GhIssue | null>(null);
+  const [issueTab, setIssueTab] = useState<IssueTab>("github");
   const linearConnected = useLinearStore((s) => s.authenticated);
+  const githubConnected = useGithubStore((s) => s.authenticated);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -59,7 +72,14 @@ export default function CreateWorktreeDialog({ projectId, onClose }: Props) {
 
   useEffect(() => {
     void useLinearStore.getState().refresh();
+    void useGithubStore.getState().refresh();
   }, []);
+
+  // Default the active issue tab to whichever provider is connected.
+  useEffect(() => {
+    if (githubConnected) setIssueTab("github");
+    else if (linearConnected) setIssueTab("linear");
+  }, [githubConnected, linearConnected]);
 
   useEffect(() => {
     let cancelled = false;
@@ -202,22 +222,30 @@ export default function CreateWorktreeDialog({ projectId, onClose }: Props) {
         symlinkEnvs,
         saveDefaults,
       });
+      const attachments: Attachment[] = [];
+      if (githubIssue) {
+        attachments.push(await makeGitHubIssueAttachment(githubIssue));
+      }
       if (linearIssue) {
+        attachments.push(await makeLinearIssueAttachment(linearIssue));
+      }
+      if (attachments.length > 0) {
         const path = useProjectStore.getState().activePath;
         if (path) {
-          const attachment = await makeLinearIssueAttachment(linearIssue);
-          queueNewChatAttachments(path, [attachment]);
+          queueNewChatAttachments(path, attachments);
           await syncChatTabsForWorktree(path);
           const tab = useCenterViewStore
             .getState()
             .tabs.find((t) => t.type === "chat" && t.worktreePath === path);
           if (tab) {
-            const existing = useChatStore.getState().tabs[tab.id];
-            const already = existing?.attachments.some(
-              (a) => a.name === attachment.name && a.path === attachment.path,
-            );
-            if (!already) {
-              useChatStore.getState().addAttachment(tab.id, attachment);
+            for (const attachment of attachments) {
+              const existing = useChatStore.getState().tabs[tab.id];
+              const already = existing?.attachments.some(
+                (a) => a.name === attachment.name && a.path === attachment.path,
+              );
+              if (!already) {
+                useChatStore.getState().addAttachment(tab.id, attachment);
+              }
             }
           }
         }
@@ -241,13 +269,42 @@ export default function CreateWorktreeDialog({ projectId, onClose }: Props) {
         <div className="dialog-header">New worktree</div>
 
         <div className="dialog-body dialog-body-scroll">
-          {linearConnected && (
+          {(githubConnected || linearConnected) && (
             <div className="field">
-              <label>Linear issue</label>
-              <LinearIssuePicker
-                selected={linearIssue}
-                onSelect={setLinearIssue}
-              />
+              <label>Attach issue</label>
+              {githubConnected && linearConnected && (
+                <div className="source-tabs">
+                  <button
+                    type="button"
+                    className={`source-tab ${issueTab === "github" ? "active" : ""}`}
+                    onClick={() => setIssueTab("github")}
+                  >
+                    <IconBrandGithub size={14} stroke={1.75} />
+                    GitHub
+                  </button>
+                  <button
+                    type="button"
+                    className={`source-tab ${issueTab === "linear" ? "active" : ""}`}
+                    onClick={() => setIssueTab("linear")}
+                  >
+                    <LinearLogo size={14} />
+                    Linear
+                  </button>
+                </div>
+              )}
+              {githubConnected && (issueTab === "github" || !linearConnected) && (
+                <GitHubIssuePicker
+                  repoPath={project.path}
+                  selected={githubIssue}
+                  onSelect={setGithubIssue}
+                />
+              )}
+              {linearConnected && (issueTab === "linear" || !githubConnected) && (
+                <LinearIssuePicker
+                  selected={linearIssue}
+                  onSelect={setLinearIssue}
+                />
+              )}
             </div>
           )}
 
