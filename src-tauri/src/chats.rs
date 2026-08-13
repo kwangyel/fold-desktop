@@ -73,6 +73,9 @@ pub struct ChatMessage {
     /// JSON array of attachment chips.
     pub attachments: Option<String>,
     pub timestamp: i64,
+    /// Git commit SHA of the worktree snapshot taken before this user turn.
+    #[serde(default)]
+    pub checkpoint_sha: Option<String>,
 }
 
 /// Everything needed to rehydrate a chat tab.
@@ -132,16 +135,36 @@ fn open(worktree: &str) -> Result<Connection, String> {
            tool_status TEXT,
            detail      TEXT,
            tool_output TEXT,
-           file_paths  TEXT,
-           attachments TEXT,
-           timestamp   INTEGER NOT NULL,
+           file_paths      TEXT,
+           attachments     TEXT,
+           timestamp       INTEGER NOT NULL,
+           checkpoint_sha  TEXT,
            PRIMARY KEY (chat_id, id),
            FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
          );
          CREATE INDEX IF NOT EXISTS idx_messages_chat_seq ON messages(chat_id, seq);",
     )
     .map_err(|e| format!("failed to initialise chat store: {e}"))?;
+    ensure_checkpoint_column(&conn)?;
     Ok(conn)
+}
+
+/// Existing databases were created before checkpoints; add the column if needed.
+fn ensure_checkpoint_column(conn: &Connection) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(messages)")
+        .map_err(|e| e.to_string())?;
+    let names = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    if names.iter().any(|n| n == "checkpoint_sha") {
+        return Ok(());
+    }
+    conn.execute("ALTER TABLE messages ADD COLUMN checkpoint_sha TEXT", [])
+        .map_err(|e| format!("failed to migrate chat store: {e}"))?;
+    Ok(())
 }
 
 /// Chats for a worktree, newest first. Returns empty when the worktree has no
@@ -226,7 +249,7 @@ pub fn chat_load(worktree: String, chat_id: String) -> Result<Option<ChatRecord>
     let mut msg_stmt = conn
         .prepare(
             "SELECT id, seq, role, content, tool_name, tool_status, detail,
-                    tool_output, file_paths, attachments, timestamp
+                    tool_output, file_paths, attachments, timestamp, checkpoint_sha
              FROM messages WHERE chat_id = ?1 ORDER BY seq ASC",
         )
         .map_err(|e| e.to_string())?;
@@ -244,6 +267,7 @@ pub fn chat_load(worktree: String, chat_id: String) -> Result<Option<ChatRecord>
                 file_paths: row.get(8)?,
                 attachments: row.get(9)?,
                 timestamp: row.get(10)?,
+                checkpoint_sha: row.get(11)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -305,8 +329,8 @@ pub fn chat_save_messages(
             .prepare(
                 "INSERT INTO messages (chat_id, id, seq, role, content, tool_name,
                                        tool_status, detail, tool_output, file_paths,
-                                       attachments, timestamp)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                                       attachments, timestamp, checkpoint_sha)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
                  ON CONFLICT(chat_id, id) DO UPDATE SET
                    seq = excluded.seq,
                    role = excluded.role,
@@ -317,7 +341,8 @@ pub fn chat_save_messages(
                    tool_output = excluded.tool_output,
                    file_paths = excluded.file_paths,
                    attachments = excluded.attachments,
-                   timestamp = excluded.timestamp",
+                   timestamp = excluded.timestamp,
+                   checkpoint_sha = excluded.checkpoint_sha",
             )
             .map_err(|e| e.to_string())?;
         for m in &messages {
@@ -333,7 +358,8 @@ pub fn chat_save_messages(
                 m.tool_output,
                 m.file_paths,
                 m.attachments,
-                m.timestamp
+                m.timestamp,
+                m.checkpoint_sha
             ])
             .map_err(|e| format!("failed to save message: {e}"))?;
         }
@@ -384,6 +410,68 @@ pub fn chat_clear_session(
     )
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Drop transcript rows after `message_id` and forget harness sessions so the
+/// next prompt cannot resume a conversation that no longer exists in the UI.
+///
+/// Returns checkpoint SHAs that belonged to the removed turns, so the caller
+/// can drop the corresponding git refs.
+pub fn truncate_after(
+    worktree: &str,
+    chat_id: &str,
+    message_id: &str,
+) -> Result<Vec<String>, String> {
+    if !db_path(worktree)?.is_file() {
+        return Ok(Vec::new());
+    }
+    let mut conn = open(worktree)?;
+    let seq: i64 = conn
+        .query_row(
+            "SELECT seq FROM messages WHERE chat_id = ?1 AND id = ?2",
+            params![chat_id, message_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("checkpoint turn not found: {e}"))?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT checkpoint_sha FROM messages
+             WHERE chat_id = ?1 AND seq > ?2 AND checkpoint_sha IS NOT NULL",
+        )
+        .map_err(|e| e.to_string())?;
+    let dropped = stmt
+        .query_map(params![chat_id, seq], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    drop(stmt);
+
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    tx.execute(
+        "DELETE FROM messages WHERE chat_id = ?1 AND seq > ?2",
+        params![chat_id, seq],
+    )
+    .map_err(|e| format!("failed to truncate chat: {e}"))?;
+    tx.execute(
+        "DELETE FROM chat_sessions WHERE chat_id = ?1",
+        params![chat_id],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.execute(
+        "UPDATE chats SET updated_at = ?2 WHERE id = ?1",
+        params![chat_id, chrono_now()],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(dropped)
+}
+
+fn chrono_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 #[tauri::command(async)]

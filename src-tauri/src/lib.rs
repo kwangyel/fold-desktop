@@ -1,6 +1,7 @@
 mod auth;
 mod bin_cache;
 mod chats;
+mod checkpoints;
 mod claude;
 mod codex;
 mod cursor;
@@ -294,6 +295,8 @@ pub fn run() {
             chats::chat_clear_session,
             chats::chat_rename,
             chats::chat_delete,
+            checkpoints::checkpoint_create,
+            checkpoints::checkpoint_rollback,
             auth::auth_save_token,
             auth::auth_get_token,
             auth::auth_clear_token

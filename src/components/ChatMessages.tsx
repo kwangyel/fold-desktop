@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  IconArrowBackUp,
   IconBrain,
   IconCheck,
   IconChevronRight,
@@ -11,6 +12,8 @@ import {
   IconPencil,
   IconBook,
 } from "@tabler/icons-react";
+import { confirm } from "@tauri-apps/plugin-dialog";
+import { isTauri } from "../lib/git";
 import {
   activityKindFromToolName,
   activityLabel,
@@ -304,15 +307,44 @@ function sameMessages(a: Message[], b: Message[]): boolean {
  */
 const ChatTurn = memo(
   function ChatTurn({
+    tabId,
     turn,
     streaming,
+    canRestore,
   }: {
+    tabId: string;
     turn: Turn;
     streaming: boolean;
+    canRestore: boolean;
   }) {
     const files = collectTurnFiles(turn.activities);
     const copyText = assistantCopyText(turn.assistants);
     const showAssistantCopy = !streaming && Boolean(copyText.trim());
+    const [restoring, setRestoring] = useState(false);
+
+    const onRestore = async () => {
+      const userId = turn.user?.id;
+      if (!userId || restoring) return;
+      const message =
+        "Restore files to how they were before this turn? Later chat messages will be removed.";
+      const ok = isTauri()
+        ? await confirm(message, {
+            title: "Restore checkpoint",
+            kind: "warning",
+          })
+        : window.confirm(message);
+      if (!ok) return;
+      setRestoring(true);
+      try {
+        await useChatStore.getState().rollbackTurn(tabId, userId);
+      } catch (e) {
+        window.alert(
+          e instanceof Error ? e.message : "Failed to restore checkpoint.",
+        );
+      } finally {
+        setRestoring(false);
+      }
+    };
 
     return (
       <div className="chat-turn">
@@ -373,9 +405,22 @@ const ChatTurn = memo(
           <ChangedFilesLine paths={files} />
         ) : null}
 
-        {showAssistantCopy ? (
+        {showAssistantCopy || canRestore ? (
           <div className="turn-actions assistant">
-            <CopyButton text={copyText} />
+            {canRestore ? (
+              <button
+                type="button"
+                className="chat-restore-btn"
+                onClick={() => void onRestore()}
+                disabled={restoring}
+                title="Restore checkpoint"
+                aria-label="Restore checkpoint"
+              >
+                <IconArrowBackUp size={14} stroke={1.75} />
+                <span>{restoring ? "Restoring…" : "Restore"}</span>
+              </button>
+            ) : null}
+            {showAssistantCopy ? <CopyButton text={copyText} /> : null}
           </div>
         ) : null}
       </div>
@@ -383,6 +428,8 @@ const ChatTurn = memo(
   },
   (prev, next) =>
     prev.streaming === next.streaming &&
+    prev.canRestore === next.canRestore &&
+    prev.tabId === next.tabId &&
     prev.turn.user === next.turn.user &&
     sameMessages(prev.turn.activities, next.turn.activities) &&
     sameMessages(prev.turn.assistants, next.turn.assistants),
@@ -450,13 +497,28 @@ export default function ChatMessages({ tabId }: ChatMessagesProps) {
           <p className="text-muted">Type a message below to begin</p>
         </div>
       ) : (
-        turns.map((turn, turnIndex) => (
-          <ChatTurn
-            key={turn.user?.id ?? `turn-${turnIndex}`}
-            turn={turn}
-            streaming={Boolean(tab.loading) && turnIndex === lastTurnIndex}
-          />
-        ))
+        turns.map((turn, turnIndex) => {
+          const userId = turn.user?.id;
+          const userIdx = userId
+            ? (messages?.findIndex((m) => m.id === userId) ?? -1)
+            : -1;
+          const hasLater =
+            userIdx >= 0 && userIdx < (messages?.length ?? 0) - 1;
+          const canRestore =
+            Boolean(turn.user?.checkpointSha) &&
+            !(tab.loading && turnIndex === lastTurnIndex) &&
+            hasLater;
+
+          return (
+            <ChatTurn
+              key={turn.user?.id ?? `turn-${turnIndex}`}
+              tabId={tabId}
+              turn={turn}
+              streaming={Boolean(tab.loading) && turnIndex === lastTurnIndex}
+              canRestore={canRestore}
+            />
+          );
+        })
       )}
       {tab.loading && (
         <div className="message assistant">

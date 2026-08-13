@@ -62,6 +62,7 @@ import { contextUsageFromClaudeEvent, sessionUsageFromFoldEvent } from '../lib/c
 import { useProjectStore } from './projectStore';
 import { useChangesStore } from './changesStore';
 import { usePlanStore } from './planStore';
+import { createCheckpoint, rollbackCheckpoint } from '../lib/checkpoints';
 import { useContextUsageStore } from './contextUsageStore';
 import {
   newPlanId,
@@ -123,6 +124,8 @@ export type Message = {
   filePaths?: string[];
   attachments?: Attachment[];
   timestamp: number;
+  /** Worktree snapshot taken before this user turn, used to roll it back. */
+  checkpointSha?: string;
 };
 
 export type ChatTabState = {
@@ -248,6 +251,11 @@ type ChatStore = {
   ) => Promise<void>;
   /** Cancel an in-flight agent for this tab. */
   cancelAgent: (tabId: string) => Promise<void>;
+  /**
+   * Restore the worktree to the snapshot taken before this user turn and
+   * drop every chat message after it.
+   */
+  rollbackTurn: (tabId: string, userMessageId: string) => Promise<void>;
 };
 
 /** Sentinel emitted by the Rust monitor when the Claude child exits. */
@@ -941,7 +949,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     get().addMessage(tabId, userMessage);
     // Write the prompt straight through rather than waiting on the streaming
     // debounce, so a crash mid-turn can't lose what the user actually asked.
-    void flushChatMessages(tabId);
+    await flushChatMessages(tabId);
     set((state) => {
       const t = state.tabs[tabId];
       if (!t) return state;
@@ -952,6 +960,17 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         },
       };
     });
+    // Snapshot before the agent starts so this turn can be rolled back even
+    // when the edits never become git commits. Failure just means no restore.
+    const checkpointReady = createCheckpoint(worktree)
+      .then((sha) => {
+        if (!sha) return;
+        get().updateMessage(tabId, userMessage.id, { checkpointSha: sha });
+        return flushChatMessages(tabId);
+      })
+      .catch(() => {
+        // Best-effort: the turn still runs, it just cannot be restored.
+      });
     // A cancel that never reached its exit sentinel must not swallow this run.
     cancelledTabs.delete(tabId);
     useAgentStatusStore
@@ -960,6 +979,25 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
     // Use the composed agent prompt (user text + attachment path refs) from here on.
     let promptForAgent = agentPrompt;
+    // After a rollback the harness session is gone. Carry remaining turns as
+    // a transcript so the next prompt is not a blank conversation.
+    const existingSession = get().tabs[tabId]?.sessions?.[harnessId] ?? null;
+    if (!existingSession) {
+      const prior =
+        get().tabs[tabId]?.messages.filter((m) => m.id !== userMessage.id) ?? [];
+      if (prior.length > 0) {
+        try {
+          const markdown = renderTranscriptMarkdown(prior, harnessId);
+          const attachment = await makeTranscriptAttachment(
+            transcriptAttachmentName(harnessId),
+            markdown,
+          );
+          promptForAgent = composeAgentPrompt(agentPrompt, [attachment]);
+        } catch {
+          // Fall back to the bare prompt rather than dropping the turn.
+        }
+      }
+    }
     let lineBuffer = '';
     let assistantId: string | null = null;
     let finished = false;
@@ -1885,7 +1923,52 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       }
     };
 
+    await checkpointReady;
+    if (cancelledTabs.has(tabId)) return;
     await dispatch();
+  },
+
+  rollbackTurn: async (tabId, userMessageId) => {
+    const tab = get().tabs[tabId];
+    if (!tab || tab.loading) return;
+
+    const worktree = tab.worktreePath;
+    if (!worktree) return;
+
+    const index = tab.messages.findIndex((m) => m.id === userMessageId);
+    if (index < 0) return;
+    const userMessage = tab.messages[index];
+    const sha = userMessage.checkpointSha;
+    if (!sha) return;
+
+    get().setLoading(tabId, true);
+    try {
+      await rollbackCheckpoint(worktree, tabId, userMessageId, sha);
+
+      dirtyMessages.delete(tabId);
+      set((state) => {
+        const current = state.tabs[tabId];
+        if (!current) return state;
+        const keepUntil = current.messages.findIndex((m) => m.id === userMessageId);
+        const kept =
+          keepUntil >= 0
+            ? current.messages.slice(0, keepUntil + 1)
+            : current.messages;
+        return {
+          tabs: {
+            ...state.tabs,
+            [tabId]: { ...current, messages: kept, sessions: {}, loading: false },
+          },
+        };
+      });
+
+      void useChangesStore.getState().refresh();
+      useCenterViewStore.getState().reloadEditorTabs();
+      void useChatSessionStore.getState().refresh(worktree);
+    } catch (e) {
+      get().setLoading(tabId, false);
+      throw e;
+    }
   },
 
   cancelAgent: async (tabId) => {

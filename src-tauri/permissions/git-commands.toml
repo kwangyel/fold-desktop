@@ -19,6 +19,8 @@ commands.allow = [
   "git_rebase_onto_target",
   "git_head_commit",
   "git_changed_since",
+  "checkpoint_create",
+  "checkpoint_rollback",
   "list_dir",
   "read_file",
   "write_file",

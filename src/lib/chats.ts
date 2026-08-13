@@ -53,6 +53,7 @@ export type ChatMessageRow = {
   filePaths: string | null;
   attachments: string | null;
   timestamp: number;
+  checkpointSha: string | null;
 };
 
 export type ChatRecord = {
@@ -96,6 +97,7 @@ export function messageFromRow(row: ChatMessageRow): Message {
     filePaths: parseJsonArray<string>(row.filePaths),
     attachments: parseJsonArray<Attachment>(row.attachments),
     timestamp: row.timestamp,
+    checkpointSha: row.checkpointSha ?? undefined,
   };
 }
 
@@ -115,6 +117,7 @@ export function rowFromMessage(message: Message, seq: number): ChatMessageRow {
       ? JSON.stringify(message.attachments)
       : null,
     timestamp: message.timestamp,
+    checkpointSha: message.checkpointSha ?? null,
   };
 }
 

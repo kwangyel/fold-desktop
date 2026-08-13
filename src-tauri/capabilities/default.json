@@ -12,6 +12,7 @@
     "core:window:allow-set-badge-count",
     "pty-commands",
     "git-commands",
+    "chat-commands",
     "project-commands",
     "github-commands",
     "claude-commands",
