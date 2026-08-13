@@ -6,6 +6,39 @@ export interface GhStatus {
   username: string | null;
 }
 
+export interface GhIssue {
+  number: number;
+  title: string;
+  body: string | null;
+  url: string;
+  state: string;
+  labels: string[];
+  assignees: string[];
+}
+
+/** Open issues for the repo at `repoPath`; searches when `query` is set. */
+export async function ghListIssues(
+  repoPath: string,
+  query?: string,
+  first?: number,
+): Promise<GhIssue[]> {
+  if (!isTauri()) return [];
+  return invoke<GhIssue[]>("gh_list_issues", {
+    repoPath,
+    query: query?.trim() || null,
+    first: first ?? null,
+  });
+}
+
+/** Fetch one issue by number from the repo at `repoPath`. */
+export async function ghGetIssue(
+  repoPath: string,
+  number: number,
+): Promise<GhIssue | null> {
+  if (!isTauri()) return null;
+  return invoke<GhIssue | null>("gh_get_issue", { repoPath, number });
+}
+
 /** Raw output chunk from the streamed `gh auth login` process. */
 export type GhOutput = Uint8Array | number[];
 

@@ -1,4 +1,5 @@
 import type { Attachment, AttachmentKind } from '../store/chatStore';
+import type { GhIssue } from './github';
 import type { LinearIssue } from './linear';
 import { writeBytes, writeFile } from './git';
 
@@ -204,6 +205,33 @@ export async function makeLinearIssueAttachment(
   return makePromptAttachment(
     issue.identifier,
     formatLinearIssueMarkdown(issue),
+  );
+}
+
+/** Markdown body the agent reads when a GitHub issue is attached. */
+export function formatGitHubIssueMarkdown(issue: GhIssue): string {
+  const lines = [`# #${issue.number}: ${issue.title}`, ""];
+  lines.push(`**URL:** ${issue.url}`);
+  if (issue.state) lines.push(`**Status:** ${issue.state}`);
+  if (issue.labels.length) lines.push(`**Labels:** ${issue.labels.join(", ")}`);
+  if (issue.assignees.length) {
+    lines.push(`**Assignees:** ${issue.assignees.join(", ")}`);
+  }
+  const body = issue.body?.trim();
+  if (body) {
+    lines.push("", "## Description", "", body);
+  }
+  lines.push("", "Implement this GitHub issue in the current worktree.");
+  return lines.join("\n");
+}
+
+/** Prompt chip for a GitHub issue (Conductor-style attach-from-+). */
+export async function makeGitHubIssueAttachment(
+  issue: GhIssue,
+): Promise<Attachment> {
+  return makePromptAttachment(
+    `#${issue.number}`,
+    formatGitHubIssueMarkdown(issue),
   );
 }
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
+  IconBrandGithub,
   IconChecklist,
   IconFile,
   IconFileText,
@@ -11,7 +12,9 @@ import {
 } from '@tabler/icons-react';
 import { useChatStore, type Attachment } from '../store/chatStore';
 import { findHarnessModel, useHarnessStore } from '../store/harnessStore';
+import { useGithubStore } from '../store/githubStore';
 import { useLinearStore } from '../store/linearStore';
+import { useProjectStore } from '../store/projectStore';
 import { resolveEffortLevels } from '../lib/effort';
 import {
   harnessSupportsPlanMode,
@@ -20,12 +23,15 @@ import {
 } from '../lib/harnesses';
 import {
   attachmentFromFile,
+  makeGitHubIssueAttachment,
   makeLinearIssueAttachment,
   makeTextAttachment,
 } from '../lib/attachments';
+import type { GhIssue } from '../lib/github';
 import type { LinearIssue } from '../lib/linear';
 import { startHarnessHandoff } from '../lib/chatTabs';
 import EffortDial from './EffortDial';
+import GitHubIssuePicker from './GitHubIssuePicker';
 import LinearIssuePicker from './LinearIssuePicker';
 import LinearLogo from './icons/LinearLogo';
 import ModelPicker from './ModelPicker';
@@ -60,10 +66,13 @@ export default function ChatInput({
   const [message, setMessage] = useState('');
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const [linearPickerOpen, setLinearPickerOpen] = useState(false);
+  const [githubPickerOpen, setGithubPickerOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const attachWrapRef = useRef<HTMLDivElement>(null);
 
   const linearConnected = useLinearStore((s) => s.authenticated);
+  const githubConnected = useGithubStore((s) => s.authenticated);
+  const activePath = useProjectStore((s) => s.activePath);
 
   // Everything except `messages` — subscribing to the whole tab would re-render
   // the composer (and the model picker) on every streamed token.
@@ -79,6 +88,7 @@ export default function ChatInput({
         planMode: t.planMode,
         attachments: t.attachments,
         loading: t.loading,
+        worktreePath: t.worktreePath,
       };
     }),
   );
@@ -128,18 +138,20 @@ export default function ChatInput({
 
   useEffect(() => {
     void useLinearStore.getState().refresh();
+    void useGithubStore.getState().refresh();
   }, []);
 
   useEffect(() => {
-    if (!attachMenuOpen && !linearPickerOpen) return;
+    if (!attachMenuOpen && !linearPickerOpen && !githubPickerOpen) return;
     const onPointer = (e: MouseEvent) => {
       if (attachWrapRef.current?.contains(e.target as Node)) return;
       setAttachMenuOpen(false);
       setLinearPickerOpen(false);
+      setGithubPickerOpen(false);
     };
     window.addEventListener('mousedown', onPointer);
     return () => window.removeEventListener('mousedown', onPointer);
-  }, [attachMenuOpen, linearPickerOpen]);
+  }, [attachMenuOpen, linearPickerOpen, githubPickerOpen]);
 
   function applyModelCapabilities(
     model: HarnessModel,
@@ -191,8 +203,9 @@ export default function ChatInput({
   };
 
   const handleAttachmentClick = () => {
-    if (linearConnected) {
+    if (linearConnected || githubConnected) {
       setLinearPickerOpen(false);
+      setGithubPickerOpen(false);
       setAttachMenuOpen((open) => !open);
       return;
     }
@@ -213,6 +226,19 @@ export default function ChatInput({
     setLinearPickerOpen(false);
     if (!issue) return;
     void makeLinearIssueAttachment(issue).then((attachment) => {
+      addAttachment(tabId, attachment);
+    });
+  };
+
+  const handlePickGithub = () => {
+    setAttachMenuOpen(false);
+    setGithubPickerOpen(true);
+  };
+
+  const handleGithubIssue = (issue: GhIssue | null) => {
+    setGithubPickerOpen(false);
+    if (!issue) return;
+    void makeGitHubIssueAttachment(issue).then((attachment) => {
       addAttachment(tabId, attachment);
     });
   };
@@ -409,9 +435,19 @@ export default function ChatInput({
                 className="attach-btn"
                 onClick={handleAttachmentClick}
                 disabled={tab.loading}
-                title={linearConnected ? 'Attach file or Linear issue' : 'Attach file'}
-                aria-label={linearConnected ? 'Attach file or Linear issue' : 'Attach file'}
-                aria-expanded={attachMenuOpen || linearPickerOpen}
+                title={
+                  linearConnected || githubConnected
+                    ? 'Attach file or issue'
+                    : 'Attach file'
+                }
+                aria-label={
+                  linearConnected || githubConnected
+                    ? 'Attach file or issue'
+                    : 'Attach file'
+                }
+                aria-expanded={
+                  attachMenuOpen || linearPickerOpen || githubPickerOpen
+                }
               >
                 <IconPaperclip size={16} stroke={2} />
               </button>
@@ -426,15 +462,28 @@ export default function ChatInput({
                     <IconFile size={14} stroke={2} />
                     File
                   </button>
-                  <button
-                    type="button"
-                    className="attach-menu-item"
-                    role="menuitem"
-                    onClick={handlePickLinear}
-                  >
-                    <LinearLogo size={14} />
-                    Linear issue
-                  </button>
+                  {githubConnected && (
+                    <button
+                      type="button"
+                      className="attach-menu-item"
+                      role="menuitem"
+                      onClick={handlePickGithub}
+                    >
+                      <IconBrandGithub size={14} stroke={1.75} />
+                      GitHub issue
+                    </button>
+                  )}
+                  {linearConnected && (
+                    <button
+                      type="button"
+                      className="attach-menu-item"
+                      role="menuitem"
+                      onClick={handlePickLinear}
+                    >
+                      <LinearLogo size={14} />
+                      Linear issue
+                    </button>
+                  )}
                 </div>
               )}
               {linearPickerOpen && (
@@ -444,6 +493,17 @@ export default function ChatInput({
                     variant="popover"
                     onSelect={handleLinearIssue}
                     onClose={() => setLinearPickerOpen(false)}
+                  />
+                </div>
+              )}
+              {githubPickerOpen && (tab.worktreePath ?? activePath) && (
+                <div className="attach-linear-popover">
+                  <GitHubIssuePicker
+                    repoPath={(tab.worktreePath ?? activePath) as string}
+                    selected={null}
+                    variant="popover"
+                    onSelect={handleGithubIssue}
+                    onClose={() => setGithubPickerOpen(false)}
                   />
                 </div>
               )}
