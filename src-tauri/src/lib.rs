@@ -8,6 +8,7 @@ mod cursor;
 mod fold_paths;
 mod git;
 mod github;
+mod linear;
 mod opencode;
 mod proc;
 mod projects;
@@ -31,6 +32,8 @@ pub struct AppState {
     /// Cancel flag for an in-progress `gh auth login`; setting it stops the
     /// monitored child. `None` when no login flow is running.
     pub gh_login: Mutex<Option<Arc<AtomicBool>>>,
+    /// Cancel flag for an in-progress Linear OAuth loopback wait.
+    pub linear_login: Mutex<Option<Arc<AtomicBool>>>,
     /// Interactive Claude Code login PTY (dropped to cancel / kill).
     pub claude_login: Mutex<Option<pty::PtySession>>,
     /// Per-session cancel flags for concurrent Claude Code agent runs.
@@ -56,6 +59,7 @@ impl Default for AppState {
             sessions: Mutex::new(HashMap::new()),
             active_project: Mutex::new(None),
             gh_login: Mutex::new(None),
+            linear_login: Mutex::new(None),
             claude_login: Mutex::new(None),
             claude_agents: Mutex::new(HashMap::new()),
             claude_agent_stdin: Mutex::new(HashMap::new()),
@@ -258,6 +262,12 @@ pub fn run() {
             github::gh_pr_merge_method,
             github::gh_pr_merge,
             github::open_external,
+            linear::linear_status,
+            linear::linear_connect,
+            linear::linear_connect_cancel,
+            linear::linear_disconnect,
+            linear::linear_list_issues,
+            linear::linear_get_issue,
             claude::claude_status,
             claude::claude_login,
             claude::claude_login_write,

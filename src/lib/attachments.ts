@@ -1,4 +1,5 @@
 import type { Attachment, AttachmentKind } from '../store/chatStore';
+import type { LinearIssue } from './linear';
 import { writeBytes, writeFile } from './git';
 
 const ATTACHMENTS_DIR = '.fold/attachments';
@@ -176,6 +177,34 @@ export async function makePromptAttachment(
       content,
     };
   }
+}
+
+/** Markdown body the agent reads when a Linear issue is attached. */
+export function formatLinearIssueMarkdown(issue: LinearIssue): string {
+  const lines = [`# ${issue.identifier}: ${issue.title}`, ""];
+  lines.push(`**URL:** ${issue.url}`);
+  if (issue.stateName) lines.push(`**Status:** ${issue.stateName}`);
+  if (issue.teamName) lines.push(`**Team:** ${issue.teamName}`);
+  if (issue.assigneeName) lines.push(`**Assignee:** ${issue.assigneeName}`);
+  if (issue.priorityLabel && issue.priorityLabel !== "No priority") {
+    lines.push(`**Priority:** ${issue.priorityLabel}`);
+  }
+  const description = issue.description?.trim();
+  if (description) {
+    lines.push("", "## Description", "", description);
+  }
+  lines.push("", "Implement this Linear issue in the current worktree.");
+  return lines.join("\n");
+}
+
+/** Prompt chip for a Linear issue (Conductor-style attach-from-+). */
+export async function makeLinearIssueAttachment(
+  issue: LinearIssue,
+): Promise<Attachment> {
+  return makePromptAttachment(
+    issue.identifier,
+    formatLinearIssueMarkdown(issue),
+  );
 }
 
 /**

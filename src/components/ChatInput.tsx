@@ -11,6 +11,7 @@ import {
 } from '@tabler/icons-react';
 import { useChatStore, type Attachment } from '../store/chatStore';
 import { findHarnessModel, useHarnessStore } from '../store/harnessStore';
+import { useLinearStore } from '../store/linearStore';
 import { resolveEffortLevels } from '../lib/effort';
 import {
   harnessSupportsPlanMode,
@@ -19,10 +20,14 @@ import {
 } from '../lib/harnesses';
 import {
   attachmentFromFile,
+  makeLinearIssueAttachment,
   makeTextAttachment,
 } from '../lib/attachments';
+import type { LinearIssue } from '../lib/linear';
 import { startHarnessHandoff } from '../lib/chatTabs';
 import EffortDial from './EffortDial';
+import LinearIssuePicker from './LinearIssuePicker';
+import LinearLogo from './icons/LinearLogo';
 import ModelPicker from './ModelPicker';
 import './ChatInput.css';
 
@@ -53,7 +58,12 @@ export default function ChatInput({
   onSend,
 }: ChatInputProps) {
   const [message, setMessage] = useState('');
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
+  const [linearPickerOpen, setLinearPickerOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const attachWrapRef = useRef<HTMLDivElement>(null);
+
+  const linearConnected = useLinearStore((s) => s.authenticated);
 
   // Everything except `messages` — subscribing to the whole tab would re-render
   // the composer (and the model picker) on every streamed token.
@@ -116,6 +126,21 @@ export default function ChatInput({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [models, harnessLoading, tabId]);
 
+  useEffect(() => {
+    void useLinearStore.getState().refresh();
+  }, []);
+
+  useEffect(() => {
+    if (!attachMenuOpen && !linearPickerOpen) return;
+    const onPointer = (e: MouseEvent) => {
+      if (attachWrapRef.current?.contains(e.target as Node)) return;
+      setAttachMenuOpen(false);
+      setLinearPickerOpen(false);
+    };
+    window.addEventListener('mousedown', onPointer);
+    return () => window.removeEventListener('mousedown', onPointer);
+  }, [attachMenuOpen, linearPickerOpen]);
+
   function applyModelCapabilities(
     model: HarnessModel,
     effort: EffortLevel,
@@ -166,7 +191,30 @@ export default function ChatInput({
   };
 
   const handleAttachmentClick = () => {
+    if (linearConnected) {
+      setLinearPickerOpen(false);
+      setAttachMenuOpen((open) => !open);
+      return;
+    }
     fileInputRef.current?.click();
+  };
+
+  const handlePickFile = () => {
+    setAttachMenuOpen(false);
+    fileInputRef.current?.click();
+  };
+
+  const handlePickLinear = () => {
+    setAttachMenuOpen(false);
+    setLinearPickerOpen(true);
+  };
+
+  const handleLinearIssue = (issue: LinearIssue | null) => {
+    setLinearPickerOpen(false);
+    if (!issue) return;
+    void makeLinearIssueAttachment(issue).then((attachment) => {
+      addAttachment(tabId, attachment);
+    });
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -356,15 +404,50 @@ export default function ChatInput({
           </div>
 
           <div className="input-actions">
-            <button
-              className="attach-btn"
-              onClick={handleAttachmentClick}
-              disabled={tab.loading}
-              title="Attach file"
-              aria-label="Attach file"
-            >
-              <IconPaperclip size={16} stroke={2} />
-            </button>
+            <div className="attach-wrap" ref={attachWrapRef}>
+              <button
+                className="attach-btn"
+                onClick={handleAttachmentClick}
+                disabled={tab.loading}
+                title={linearConnected ? 'Attach file or Linear issue' : 'Attach file'}
+                aria-label={linearConnected ? 'Attach file or Linear issue' : 'Attach file'}
+                aria-expanded={attachMenuOpen || linearPickerOpen}
+              >
+                <IconPaperclip size={16} stroke={2} />
+              </button>
+              {attachMenuOpen && (
+                <div className="attach-menu" role="menu">
+                  <button
+                    type="button"
+                    className="attach-menu-item"
+                    role="menuitem"
+                    onClick={handlePickFile}
+                  >
+                    <IconFile size={14} stroke={2} />
+                    File
+                  </button>
+                  <button
+                    type="button"
+                    className="attach-menu-item"
+                    role="menuitem"
+                    onClick={handlePickLinear}
+                  >
+                    <LinearLogo size={14} />
+                    Linear issue
+                  </button>
+                </div>
+              )}
+              {linearPickerOpen && (
+                <div className="attach-linear-popover">
+                  <LinearIssuePicker
+                    selected={null}
+                    variant="popover"
+                    onSelect={handleLinearIssue}
+                    onClose={() => setLinearPickerOpen(false)}
+                  />
+                </div>
+              )}
+            </div>
 
             {tab.loading ? (
               <button

@@ -9,7 +9,14 @@ import {
 } from "../lib/projects";
 import { getSetupScript } from "../lib/setup";
 import { pickWorktreeName } from "../lib/worktreeNames";
+import { makeLinearIssueAttachment } from "../lib/attachments";
+import { queueNewChatAttachments, syncChatTabsForWorktree } from "../lib/chatTabs";
+import type { LinearIssue } from "../lib/linear";
+import { useChatStore } from "../store/chatStore";
+import { useCenterViewStore } from "../store/centerViewStore";
+import { useLinearStore } from "../store/linearStore";
 import { useProjectStore } from "../store/projectStore";
+import LinearIssuePicker from "./LinearIssuePicker";
 import "./ProjectDialog.css";
 
 type Props = {
@@ -39,6 +46,8 @@ export default function CreateWorktreeDialog({ projectId, onClose }: Props) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [linearIssue, setLinearIssue] = useState<LinearIssue | null>(null);
+  const linearConnected = useLinearStore((s) => s.authenticated);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -47,6 +56,10 @@ export default function CreateWorktreeDialog({ projectId, onClose }: Props) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  useEffect(() => {
+    void useLinearStore.getState().refresh();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -189,6 +202,26 @@ export default function CreateWorktreeDialog({ projectId, onClose }: Props) {
         symlinkEnvs,
         saveDefaults,
       });
+      if (linearIssue) {
+        const path = useProjectStore.getState().activePath;
+        if (path) {
+          const attachment = await makeLinearIssueAttachment(linearIssue);
+          queueNewChatAttachments(path, [attachment]);
+          await syncChatTabsForWorktree(path);
+          const tab = useCenterViewStore
+            .getState()
+            .tabs.find((t) => t.type === "chat" && t.worktreePath === path);
+          if (tab) {
+            const existing = useChatStore.getState().tabs[tab.id];
+            const already = existing?.attachments.some(
+              (a) => a.name === attachment.name && a.path === attachment.path,
+            );
+            if (!already) {
+              useChatStore.getState().addAttachment(tab.id, attachment);
+            }
+          }
+        }
+      }
       onClose();
     } catch (e) {
       setError(String(e));
@@ -208,6 +241,16 @@ export default function CreateWorktreeDialog({ projectId, onClose }: Props) {
         <div className="dialog-header">New worktree</div>
 
         <div className="dialog-body dialog-body-scroll">
+          {linearConnected && (
+            <div className="field">
+              <label>Linear issue</label>
+              <LinearIssuePicker
+                selected={linearIssue}
+                onSelect={setLinearIssue}
+              />
+            </div>
+          )}
+
           <div className="field">
             <label>Worktree name</label>
             <input

@@ -1,6 +1,6 @@
 import { useCenterViewStore } from "../store/centerViewStore";
 import { useChatSessionStore } from "../store/chatSessionStore";
-import { useChatStore, type NewTabOptions } from "../store/chatStore";
+import { useChatStore, type Attachment, type NewTabOptions } from "../store/chatStore";
 import { useAgentStatusStore } from "../store/agentStatusStore";
 import { loadChat, newChatId } from "./chats";
 import { makeTranscriptAttachment } from "./attachments";
@@ -43,13 +43,37 @@ export async function openChatTab(
     .openChatTab(chatId, worktreePath, record?.meta.title ?? label);
 }
 
+/** Attachments to seed onto the next draft chat for a worktree. */
+const pendingChatAttachments = new Map<string, Attachment[]>();
+
+/** Queue chips that `newChatTab` should attach when that worktree opens. */
+export function queueNewChatAttachments(
+  worktreePath: string,
+  attachments: Attachment[],
+): void {
+  if (!worktreePath || attachments.length === 0) return;
+  pendingChatAttachments.set(worktreePath, attachments);
+}
+
+function takePendingChatAttachments(worktreePath: string | null): Attachment[] {
+  if (!worktreePath) return [];
+  const pending = pendingChatAttachments.get(worktreePath) ?? [];
+  pendingChatAttachments.delete(worktreePath);
+  return pending;
+}
+
 /** Open a fresh, unsaved chat in the given worktree. */
 export function newChatTab(
   worktreePath: string | null,
   options?: NewTabOptions,
 ): string {
   const id = newChatId();
-  useChatStore.getState().initializeTab(id, options);
+  const queued = takePendingChatAttachments(worktreePath);
+  const attachments = [...(options?.attachments ?? []), ...queued];
+  useChatStore.getState().initializeTab(id, {
+    ...options,
+    attachments: attachments.length > 0 ? attachments : undefined,
+  });
   useCenterViewStore.getState().addChatTab({ id, worktreePath });
   return id;
 }
