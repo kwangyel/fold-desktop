@@ -14,6 +14,7 @@
     "git-commands",
     "project-commands",
     "github-commands",
+    "linear-commands",
     "claude-commands",
     "cursor-commands",
     "codex-commands",
@@ -27,7 +28,8 @@
       "allow": [
         { "url": "https://api.optulus.com/*" },
         { "url": "https://avatars.githubusercontent.com/*" },
-        { "url": "https://github.com/*" }
+        { "url": "https://github.com/*" },
+        { "url": "https://api.linear.app/*" }
       ]
     }
   ]

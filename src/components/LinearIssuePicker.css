@@ -1,0 +1,146 @@
+.linear-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.linear-picker-popover {
+  width: min(420px, calc(100vw - 48px));
+  padding: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+}
+
+.linear-picker-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--muted);
+}
+
+.linear-picker-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+}
+
+.linear-picker-error {
+  font-size: 12px;
+  color: var(--danger, #e5484d);
+}
+
+.linear-picker-empty {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 8px 2px;
+}
+
+.linear-issue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.linear-issue-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.linear-issue-row:hover {
+  background: var(--panel-2);
+}
+
+.linear-issue-id {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: "SF Mono", Menlo, monospace;
+  color: #5e6ad2;
+}
+
+.linear-issue-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.linear-issue-state {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.linear-issue-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.linear-issue-chip:hover {
+  border-color: var(--accent);
+}
+
+.linear-issue-chip-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: #5e6ad2;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.linear-issue-chip .linear-issue-title {
+  color: var(--muted);
+}
+
+.linear-issue-chip svg:last-child {
+  margin-left: auto;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.linear-picker .spin {
+  animation: linear-spin 0.9s linear infinite;
+}
+
+@keyframes linear-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import {
   IconBrandGithub,
-  IconBrandGitlab,
   IconCheck,
   IconCopy,
   IconLoader2,
 } from "@tabler/icons-react";
 import { useGithubStore } from "../store/githubStore";
+import { useLinearStore } from "../store/linearStore";
+import LinearLogo from "./icons/LinearLogo";
 import "./ConnectAppDialog.css";
 
 export default function ConnectAppDialog({ onClose }: { onClose: () => void }) {
@@ -22,10 +23,15 @@ export default function ConnectAppDialog({ onClose }: { onClose: () => void }) {
   const cancelLogin = useGithubStore((s) => s.cancelLogin);
   const logout = useGithubStore((s) => s.logout);
 
+  const linearConnecting = useLinearStore((s) => s.connecting);
+  const cancelLinearLogin = useLinearStore((s) => s.cancelLogin);
+
   const [copied, setCopied] = useState(false);
+  const anyConnecting = connecting || linearConnecting;
 
   useEffect(() => {
     void refresh();
+    void useLinearStore.getState().refresh();
   }, [refresh]);
 
   // Close on Escape (cancels any in-flight login first).
@@ -40,6 +46,7 @@ export default function ConnectAppDialog({ onClose }: { onClose: () => void }) {
 
   function handleClose() {
     if (connecting) void cancelLogin();
+    if (linearConnecting) void cancelLinearLogin();
     onClose();
   }
 
@@ -56,12 +63,12 @@ export default function ConnectAppDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="dialog-overlay" onMouseDown={handleClose}>
-      <div className="dialog" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="dialog dialog-wide" onMouseDown={(e) => e.stopPropagation()}>
         <div className="dialog-header">Connect App</div>
 
         <div className="dialog-body">
           <div className="app-list">
-            {/* GitHub — the one actionable integration for now. */}
+            {/* GitHub — repos, PRs, and clone. */}
             <div className="app-row">
               <div className="app-icon github">
                 <IconBrandGithub size={20} stroke={1.75} />
@@ -137,34 +144,87 @@ export default function ConnectAppDialog({ onClose }: { onClose: () => void }) {
               </div>
             )}
 
-            {/* Coming-soon integrations. */}
-            <div className="app-row disabled">
-              <div className="app-icon gitlab">
-                <IconBrandGitlab size={20} stroke={1.75} />
-              </div>
-              <div className="app-meta">
-                <div className="app-name">GitLab</div>
-                <div className="app-sub">Coming soon</div>
-              </div>
-            </div>
-            <div className="app-row disabled">
-              <div className="app-icon linear">L</div>
-              <div className="app-meta">
-                <div className="app-name">Linear</div>
-                <div className="app-sub">Coming soon</div>
-              </div>
-            </div>
-          </div>
+            {error && <div className="dialog-error">{error}</div>}
 
-          {error && <div className="dialog-error">{error}</div>}
+            <LinearRow />
+          </div>
         </div>
 
         <div className="dialog-footer">
           <button className="ghost-btn" type="button" onClick={handleClose}>
-            {connecting ? "Cancel" : "Close"}
+            {anyConnecting ? "Cancel" : "Close"}
           </button>
         </div>
       </div>
     </div>
+  );
+}
+
+function LinearRow() {
+  const authenticated = useLinearStore((s) => s.authenticated);
+  const userName = useLinearStore((s) => s.userName);
+  const userEmail = useLinearStore((s) => s.userEmail);
+  const organizationName = useLinearStore((s) => s.organizationName);
+  const checking = useLinearStore((s) => s.checking);
+  const connecting = useLinearStore((s) => s.connecting);
+  const disconnecting = useLinearStore((s) => s.disconnecting);
+  const error = useLinearStore((s) => s.error);
+  const startLogin = useLinearStore((s) => s.startLogin);
+  const disconnect = useLinearStore((s) => s.disconnect);
+
+  let subtitle = "Attach issues when creating worktrees and chatting";
+  if (authenticated) {
+    const parts = [userName || userEmail, organizationName].filter(Boolean);
+    subtitle = parts.length > 0 ? `Connected as ${parts.join(" · ")}` : "Connected";
+  }
+
+  return (
+    <>
+      <div className="app-row">
+        <div className="app-icon linear">
+          <LinearLogo size={18} />
+        </div>
+        <div className="app-meta">
+          <div className="app-name">Linear</div>
+          <div className="app-sub">{subtitle}</div>
+        </div>
+        {authenticated ? (
+          <div className="app-connected-actions">
+            <span className="app-connected">
+              <IconCheck size={15} stroke={2.25} />
+              Connected
+            </span>
+            <button
+              className="ghost-btn app-connect-btn"
+              type="button"
+              disabled={disconnecting}
+              onClick={() => void disconnect()}
+            >
+              {disconnecting ? "Disconnecting…" : "Disconnect"}
+            </button>
+          </div>
+        ) : (
+          <button
+            className="primary-btn app-connect-btn"
+            type="button"
+            disabled={checking || connecting}
+            onClick={() => void startLogin()}
+          >
+            {connecting ? "Connecting…" : "Connect"}
+          </button>
+        )}
+      </div>
+
+      {connecting && (
+        <div className="device-panel">
+          <div className="device-hint">
+            <IconLoader2 size={14} className="spin" />
+            Waiting for Linear authorization in your browser…
+          </div>
+        </div>
+      )}
+
+      {error && <div className="dialog-error">{error}</div>}
+    </>
   );
 }
