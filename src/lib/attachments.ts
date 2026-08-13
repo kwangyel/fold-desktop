@@ -323,8 +323,10 @@ export async function materializeAttachments(
 }
 
 /**
- * Build the agent prompt: user text + path references to attachment files
- * (Conductor-style — do not inline attachment bodies).
+ * Build the agent prompt: user text + attachments.
+ * When an attachment still has in-memory `content` (review comments), inline
+ * it so the agent sees the line and the note. Otherwise point at the on-disk
+ * path (Conductor-style for files/images).
  */
 export function composeAgentPrompt(
   userText: string,
@@ -335,6 +337,15 @@ export function composeAgentPrompt(
   if (trimmed) parts.push(trimmed);
 
   for (const att of attachments) {
+    if (att.content?.trim() && att.kind !== "image" && att.kind !== "transcript") {
+      if (att.kind === "prompt") {
+        parts.push(att.content.trim());
+      } else {
+        parts.push(`The user attached "${att.name}":\n\`\`\`\n${att.content}\n\`\`\``);
+      }
+      continue;
+    }
+
     if (att.path) {
       if (att.kind === 'prompt') {
         parts.push(
@@ -357,17 +368,6 @@ export function composeAgentPrompt(
       continue;
     }
 
-    // Fallback when disk write failed (e.g. no active worktree).
-    if (att.kind === 'prompt' && att.content?.trim()) {
-      parts.push(att.content.trim());
-      continue;
-    }
-    if (att.content != null) {
-      parts.push(
-        `Attached "${att.name}":\n\`\`\`\n${att.content}\n\`\`\``,
-      );
-      continue;
-    }
     parts.push(
       `The user attached "${att.name}" but it could not be saved to disk.`,
     );

@@ -4,6 +4,15 @@
   overflow: hidden;
 }
 
+/* Wraps the diff editor so an absolutely-positioned inline comment composer can
+   be anchored over it without interfering with CodeMirror's own DOM. */
+.code-diff-viewer-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
 .code-editor .cm-editor {
   height: 100%;
 }
@@ -18,6 +27,91 @@
 
 .code-diff-viewer .cm-mergeView .cm-editor {
   height: 100%;
+}
+
+/* Lines carrying a review comment get a left accent bar + faint tint. */
+.code-diff-viewer .cm-line.cm-comment-line {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.code-diff-viewer .cm-comment-plus-gutter {
+  width: 16px;
+}
+
+.code-diff-viewer .cm-comment-plus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--muted);
+  opacity: 0.4;
+  cursor: pointer;
+  border-radius: 3px;
+  user-select: none;
+}
+
+.code-diff-viewer .cm-gutterElement:hover .cm-comment-plus,
+.code-diff-viewer .cm-comment-plus:hover {
+  opacity: 1;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.code-diff-viewer .cm-review-comment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 8px 8px 8px;
+}
+
+.code-diff-viewer .cm-review-comment {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+}
+
+.code-diff-viewer .cm-review-comment-body {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.code-diff-viewer .cm-review-comment-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+}
+
+.code-diff-viewer .cm-review-comment-btn {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.code-diff-viewer .cm-review-comment-btn:hover {
+  color: var(--text);
+  background: var(--panel);
 }
 
 .diff-toolbar {
@@ -146,6 +240,17 @@
   display: flex;
   flex-direction: column;
   position: relative;
+}
+
+.diff-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.diff-pane .chat-input-container {
+  flex-shrink: 0;
 }
 
 .center-content .chat-interface {

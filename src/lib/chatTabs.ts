@@ -1,6 +1,6 @@
 import { useCenterViewStore } from "../store/centerViewStore";
 import { useChatSessionStore } from "../store/chatSessionStore";
-import { useChatStore } from "../store/chatStore";
+import { useChatStore, type NewTabOptions } from "../store/chatStore";
 import { useAgentStatusStore } from "../store/agentStatusStore";
 import { loadChat, newChatId } from "./chats";
 import { makeTranscriptAttachment } from "./attachments";
@@ -46,7 +46,7 @@ export async function openChatTab(
 /** Open a fresh, unsaved chat in the given worktree. */
 export function newChatTab(
   worktreePath: string | null,
-  options?: { harnessId?: string; model?: string },
+  options?: NewTabOptions,
 ): string {
   const id = newChatId();
   useChatStore.getState().initializeTab(id, options);

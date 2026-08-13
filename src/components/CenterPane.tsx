@@ -19,6 +19,7 @@ const CodeEditor = lazy(() => import("./CodeEditor"));
 const DiffPane = lazy(() => import("./DiffPane"));
 const PrView = lazy(() => import("./PrView"));
 const PlanView = lazy(() => import("./PlanView"));
+const ReviewQueue = lazy(() => import("./ReviewQueue"));
 
 function CenterPane() {
   const tabs = useCenterViewStore((state) => state.tabs);
@@ -255,6 +256,12 @@ function CenterPane() {
         return (
           <Suspense fallback={<div className="center-editor-loading">Loading…</div>}>
             <PlanView key={activeTab.id} tabId={activeTab.id} />
+          </Suspense>
+        );
+      case "review":
+        return (
+          <Suspense fallback={<div className="center-editor-loading">Loading…</div>}>
+            <ReviewQueue key={activeTab.id} />
           </Suspense>
         );
       default:

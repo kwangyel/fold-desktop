@@ -918,13 +918,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     // Persist path-only chips in the transcript (drop bulky in-memory bodies).
     const messageAttachments =
       preparedAttachments.length > 0
-        ? preparedAttachments.map(({ id, name, size, type, kind, path, dataUrl }) => ({
+        ? preparedAttachments.map(({ id, name, size, type, kind, path, dataUrl, content }) => ({
             id,
             name,
             size,
             type,
             kind,
             path,
+            // Keep review-comment bodies so the transcript still has the note.
+            content: kind === 'prompt' ? content : undefined,
             // Keep a small preview URL for images in the chat UI.
             dataUrl: kind === 'image' ? dataUrl : undefined,
           }))

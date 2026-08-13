@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import FileExplorer from "./FileExplorer";
 import ChangesList from "./ChangesList";
 import ConflictRadarPanel from "./ConflictRadarPanel";
+import ReviewCommentsPanel from "./ReviewCommentsPanel";
 import PlansList from "./PlansList";
 import TerminalPanel from "./TerminalPanel";
 import ResizeHandle from "./ResizeHandle";
@@ -11,14 +12,19 @@ import {
   selectCollisionFileCount,
   useConflictRadarStore,
 } from "../store/conflictRadarStore";
+import {
+  selectUnresolvedCount,
+  useReviewCommentsStore,
+} from "../store/reviewCommentsStore";
 import "./RightPane.css";
 
-type TopTab = "explorer" | "changes" | "conflicts" | "plans";
+type TopTab = "explorer" | "changes" | "conflicts" | "comments" | "plans";
 
 const TOP_TABS: { id: TopTab; label: string }[] = [
   { id: "explorer", label: "Explorer" },
   { id: "changes", label: "Changes" },
   { id: "conflicts", label: "Conflicts" },
+  { id: "comments", label: "Comments" },
   { id: "plans", label: "Plans" },
 ];
 
@@ -38,6 +44,9 @@ export default function RightPane({ width, topRatio, onSplitDrag }: Props) {
     selectCollisionFileCount(
       activeWorktreeId ? s.byWorktreeId[activeWorktreeId] : undefined,
     ),
+  );
+  const commentCount = useReviewCommentsStore((s) =>
+    selectUnresolvedCount(s.comments),
   );
   const paneRef = useRef<HTMLElement>(null);
 
@@ -67,6 +76,9 @@ export default function RightPane({ width, topRatio, onSplitDrag }: Props) {
               {t.id === "conflicts" && conflictCount > 0 && (
                 <span className="tab-count-badge">{conflictCount}</span>
               )}
+              {t.id === "comments" && commentCount > 0 && (
+                <span className="tab-count-badge">{commentCount}</span>
+              )}
             </div>
           ))}
         </div>
@@ -74,6 +86,7 @@ export default function RightPane({ width, topRatio, onSplitDrag }: Props) {
           {activeTab === "explorer" && <FileExplorer />}
           {activeTab === "changes" && <ChangesList />}
           {activeTab === "conflicts" && <ConflictRadarPanel />}
+          {activeTab === "comments" && <ReviewCommentsPanel />}
           {activeTab === "plans" && <PlansList />}
         </div>
       </div>

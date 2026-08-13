@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { readFile } from "../lib/git";
 import { ghPrViewCached, type PrInfo } from "../lib/github";
 
-export type CenterTabType = "chat" | "editor" | "diff" | "pr" | "plan";
+export type CenterTabType = "chat" | "editor" | "diff" | "pr" | "plan" | "review";
 
 export type CenterTab = {
   id: string;
@@ -78,6 +78,8 @@ type CenterViewStore = {
   setPrMerged: (id: string) => void;
   /** Open (or focus) the review tab for a captured plan. */
   openPlanTab: (planId: string, label?: string) => void;
+  /** Open (or focus) the single review-queue tab. */
+  openReviewTab: () => void;
   /**
    * Drop editor/diff/pr/plan tabs, plus chat tabs belonging to another
    * worktree, when switching projects or worktrees.
@@ -355,6 +357,18 @@ export const useCenterViewStore = create<CenterViewStore>((set, get) => ({
       label: label ?? "Plan",
       planId,
     };
+    set({ tabs: [...state.tabs, tab], activeTabId: id });
+  },
+
+  openReviewTab: () => {
+    const state = get();
+    const existing = state.tabs.find((tab) => tab.type === "review");
+    if (existing) {
+      set({ activeTabId: existing.id });
+      return;
+    }
+    const id = `review-${Date.now()}`;
+    const tab: CenterTab = { id, type: "review", label: "Review" };
     set({ tabs: [...state.tabs, tab], activeTabId: id });
   },
 
