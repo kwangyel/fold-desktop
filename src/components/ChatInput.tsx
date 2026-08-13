@@ -28,6 +28,9 @@ import './ChatInput.css';
 
 interface ChatInputProps {
   tabId: string;
+  placeholder?: string;
+  /** If set, Send calls this instead of sending on `tabId`. */
+  onSend?: (prompt: string) => void | Promise<void>;
 }
 
 /** Effort options for a model (API levels merged with harness docs). */
@@ -44,7 +47,11 @@ function AttachmentIcon({ kind }: { kind: Attachment['kind'] }) {
   return <IconFile {...props} />;
 }
 
-export default function ChatInput({ tabId }: ChatInputProps) {
+export default function ChatInput({
+  tabId,
+  placeholder,
+  onSend,
+}: ChatInputProps) {
   const [message, setMessage] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -151,6 +158,10 @@ export default function ChatInput({ tabId }: ChatInputProps) {
     if (!message.trim() && tab.attachments.length === 0) return;
     const prompt = message.trim();
     setMessage('');
+    if (onSend) {
+      void onSend(prompt);
+      return;
+    }
     void sendPrompt(tabId, prompt);
   };
 
@@ -237,7 +248,7 @@ export default function ChatInput({ tabId }: ChatInputProps) {
               <div
                 key={att.id}
                 className={`attachment-badge kind-${att.kind}`}
-                title={att.path ?? att.content ?? att.name}
+                title={att.content ?? att.path ?? att.name}
               >
                 {att.kind === 'image' && att.dataUrl ? (
                   <img
@@ -268,7 +279,10 @@ export default function ChatInput({ tabId }: ChatInputProps) {
           onChange={(e) => setMessage(e.target.value)}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
-          placeholder="Type your message... (paste text or images as attachments)"
+          placeholder={
+            placeholder ??
+            "Type your message... (paste text or images as attachments)"
+          }
           className="message-input"
           disabled={tab.loading}
           rows={3}

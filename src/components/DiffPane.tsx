@@ -1,10 +1,19 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import CodeDiffViewer, { DiffLayout } from "./CodeDiffViewer";
 import CodeEditor from "./CodeEditor";
+import ReviewComposer from "./ReviewComposer";
 import { getFileDiff, writeFile } from "../lib/git";
 import { markReadAndAdvance } from "../lib/diffActions";
 import { useCenterViewStore } from "../store/centerViewStore";
 import { useChangesStore } from "../store/changesStore";
+import {
+  selectCommentsForFile,
+  useReviewCommentsStore,
+} from "../store/reviewCommentsStore";
+import {
+  attachCommentToComposer,
+  snippetForRange,
+} from "../lib/reviewComments";
 import "./CodeEditor.css";
 
 interface DiffPaneProps {
@@ -25,6 +34,14 @@ export default function DiffPane({ tabId, filePath, original, modified }: DiffPa
 
   const updateDiffContent = useCenterViewStore((state) => state.updateDiffContent);
   const isRead = useChangesStore((state) => state.readPaths.has(filePath));
+
+  const comments = useReviewCommentsStore((state) => state.comments);
+  const addComment = useReviewCommentsStore((state) => state.add);
+  const removeComment = useReviewCommentsStore((state) => state.remove);
+  const fileComments = useMemo(
+    () => selectCommentsForFile(comments, filePath),
+    [comments, filePath],
+  );
 
   // Reset local edit buffer whenever the underlying file/content changes.
   useEffect(() => {
@@ -74,7 +91,7 @@ export default function DiffPane({ tabId, filePath, original, modified }: DiffPa
   }, [viewMode]);
 
   return (
-    <>
+    <div className="diff-pane">
       <div className="center-editor-header diff-toolbar">
         <span className="file-path" title={filePath}>
           {filePath}
@@ -148,8 +165,32 @@ export default function DiffPane({ tabId, filePath, original, modified }: DiffPa
           original={original}
           modified={modified}
           layout={layout}
+          comments={fileComments}
+          onDeleteComment={(id) => void removeComment(id)}
+          onReattachComment={(id) => {
+            const comment = fileComments.find((c) => c.id === id);
+            if (!comment) return;
+            void attachCommentToComposer(
+              comment,
+              comment.snippet ??
+                snippetForRange(modified, comment.line, comment.endLine),
+            );
+          }}
+          onAddComment={(selection, body) =>
+            void (async () => {
+              const comment = await addComment({
+                file: filePath,
+                line: selection.startLine,
+                endLine: selection.endLine,
+                body,
+                snippet: selection.snippet,
+              });
+              await attachCommentToComposer(comment, selection.snippet);
+            })()
+          }
         />
       )}
-    </>
+      <ReviewComposer />
+    </div>
   );
 }

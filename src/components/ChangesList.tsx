@@ -4,6 +4,7 @@ import { generateCommitMessage } from "../lib/generateCommitMessage";
 import { openDiffForPath } from "../lib/diffActions";
 import { useChangesStore } from "../store/changesStore";
 import { useCenterViewStore } from "../store/centerViewStore";
+import { useReviewStore } from "../store/reviewStore";
 import "./ChangesList.css";
 
 const STATUS_LABELS: Record<ChangedFile["status"], string> = {
@@ -41,6 +42,13 @@ function ChangesList() {
     return tab?.type === "diff" ? tab.filePath : undefined;
   });
   const closeDiffTab = useCenterViewStore((state) => state.closeDiffTab);
+  const openReviewTab = useCenterViewStore((state) => state.openReviewTab);
+  const startReview = useReviewStore((state) => state.start);
+
+  const handleStartReview = () => {
+    startReview();
+    openReviewTab();
+  };
 
   const staged = changes.filter((c) => c.staged);
   const unstaged = changes.filter((c) => !c.staged);
@@ -262,6 +270,15 @@ function ChangesList() {
                 : `Changes · ${unstaged.length}`}
           </span>
           <div className="changes-header-actions">
+            {changes.length > 0 && (
+              <button
+                className="changes-review-btn"
+                onClick={handleStartReview}
+                title="Walk through changes one at a time"
+              >
+                Review
+              </button>
+            )}
             {unstaged.length > 0 && (
               <button
                 className="changes-refresh"

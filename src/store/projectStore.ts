@@ -17,6 +17,7 @@ import {
   workspacePath,
 } from "../lib/projects";
 import { useChangesStore } from "./changesStore";
+import { useReviewCommentsStore } from "./reviewCommentsStore";
 import { useChatSessionStore } from "./chatSessionStore";
 import { useAgentStatusStore } from "./agentStatusStore";
 import { useTerminalStore } from "./terminalStore";
@@ -79,6 +80,8 @@ function onWorkspaceSwitch() {
   // Chats are stored per worktree, so the open tabs follow the switch.
   void syncChatTabsForWorktree(activePath);
   refreshChanges();
+  // Review comments live beside each worktree; reload for the new one.
+  void useReviewCommentsStore.getState().refresh();
 }
 
 /** Chat lists for every live worktree, so the sidebar can show counts. */

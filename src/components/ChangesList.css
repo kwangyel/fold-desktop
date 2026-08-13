@@ -204,6 +204,22 @@
   color: var(--text);
 }
 
+.changes-review-btn {
+  background: var(--accent-button);
+  border: none;
+  border-radius: 4px;
+  color: #fff;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  line-height: 1.4;
+}
+
+.changes-review-btn:hover {
+  background: var(--accent-button-hover, var(--accent-button));
+}
+
 .changes-error {
   padding: 8px 12px;
   color: #f87171;

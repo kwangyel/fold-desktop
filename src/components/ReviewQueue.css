@@ -1,0 +1,139 @@
+.review-queue {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.review-queue .chat-input-container {
+  flex-shrink: 0;
+}
+
+.review-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  flex-shrink: 0;
+}
+
+.review-progress {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.review-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.review-reviewed {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.review-file-path {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.review-check {
+  color: var(--success);
+  flex-shrink: 0;
+}
+
+.review-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.review-nav {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.review-nav:hover:not(:disabled) {
+  background: var(--panel);
+}
+
+.review-nav:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.review-mark {
+  background: var(--accent-button);
+  border: 1px solid var(--accent-button);
+  border-radius: 5px;
+  color: #fff;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  line-height: 1.4;
+}
+
+.review-mark:hover {
+  background: var(--accent-button-hover, var(--accent-button));
+}
+
+.review-send {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  line-height: 1.4;
+}
+
+.review-send:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.review-send:not(:disabled):hover {
+  background: var(--panel);
+}
+
+.review-empty,
+.review-loading,
+.review-error {
+  padding: 24px 16px;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+  flex: 1;
+}
+
+.review-error {
+  color: var(--warn);
+}
