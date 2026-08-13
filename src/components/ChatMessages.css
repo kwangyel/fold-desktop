@@ -129,6 +129,33 @@
 .turn-actions.assistant {
   justify-content: flex-start;
   padding-left: 2px;
+  gap: 4px;
+}
+
+.chat-restore-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.chat-restore-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
+
+.chat-restore-btn:disabled {
+  cursor: default;
 }
 
 .chat-copy-btn {

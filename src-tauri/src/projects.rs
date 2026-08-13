@@ -1234,6 +1234,7 @@ pub fn remove_worktree(
     // Folder should already be gone after archive; clean up leftovers best-effort.
     let wt_path = PathBuf::from(&removed.path);
     crate::fold_paths::remove_fold_data_dir(&wt_path);
+    crate::checkpoints::drop_worktree_checkpoint_refs(&repo, &wt_path);
     let _ = git_in(&repo, &["worktree", "remove", "--force", &removed.path]);
     let _ = std::fs::remove_dir_all(&wt_path);
     let _ = git_in(&repo, &["worktree", "prune"]);
@@ -1299,6 +1300,7 @@ pub fn archive_worktree(
     };
 
     crate::fold_paths::remove_fold_data_dir(&wt_path);
+    crate::checkpoints::drop_worktree_checkpoint_refs(&repo, &wt_path);
     let _ = git_in(&repo, &["worktree", "remove", "--force", &path]);
     let _ = std::fs::remove_dir_all(&wt_path);
     let _ = git_in(&repo, &["worktree", "prune"]);

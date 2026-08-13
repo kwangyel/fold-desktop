@@ -91,6 +91,8 @@ type CenterViewStore = {
   closeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
   updateTabContent: (id: string, content: string) => void;
+  /** Re-read open editor tabs from disk (after a checkpoint restore). */
+  reloadEditorTabs: () => void;
 };
 
 function loadFileContent(
@@ -446,5 +448,13 @@ export const useCenterViewStore = create<CenterViewStore>((set, get) => ({
         tab.id === id ? { ...tab, fileContent: content } : tab,
       ),
     }));
+  },
+
+  reloadEditorTabs: () => {
+    for (const tab of get().tabs) {
+      if (tab.type === "editor" && tab.filePath) {
+        loadFileContent(set, tab.id, tab.filePath);
+      }
+    }
   },
 }));

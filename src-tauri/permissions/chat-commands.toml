@@ -1,0 +1,13 @@
+[[permission]]
+identifier = "chat-commands"
+description = "Per-worktree chat transcript persistence"
+commands.allow = [
+  "chat_list",
+  "chat_load",
+  "chat_upsert",
+  "chat_save_messages",
+  "chat_set_session",
+  "chat_clear_session",
+  "chat_rename",
+  "chat_delete",
+]
