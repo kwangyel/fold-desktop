@@ -247,6 +247,7 @@ export default function CreateWorktreeDialog({ projectId, onClose }: Props) {
                 useChatStore.getState().addAttachment(tab.id, attachment);
               }
             }
+            await useChatStore.getState().sendPrompt(tab.id, "");
           }
         }
       }
