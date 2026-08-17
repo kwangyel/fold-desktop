@@ -7,7 +7,7 @@ import {
   selectTargetBranch,
   useTargetBranchStore,
 } from '../store/targetBranchStore';
-import { ghPrCreateWeb, ghPrViewCached, type PrInfo } from '../lib/github';
+import { ghPrCreateWeb, ghPrViewCached, invalidatePrCache, type PrInfo } from '../lib/github';
 import {
   gitGithubRemote,
   gitMergeReadiness,
@@ -17,6 +17,10 @@ import {
 } from '../lib/git';
 import { commitChangesPrompt, prCreationPrompt } from '../lib/prPrompt';
 import { makePromptAttachment } from '../lib/attachments';
+import {
+  closeLinkedIssuesIfPrOpen,
+  listLinkedIssues,
+} from '../lib/linkedIssues';
 import './CreatePrButton.css';
 
 export default function CreatePrButton() {
@@ -80,7 +84,10 @@ export default function CreatePrButton() {
     const check = () => {
       ghPrViewCached(path)
         .then((info) => {
-          if (!cancelled && path === activePath) setExistingPr(info);
+          if (!cancelled && path === activePath) {
+            setExistingPr(info);
+            if (info) void closeLinkedIssuesIfPrOpen(info, path);
+          }
         })
         .catch(() => {});
     };
@@ -139,13 +146,24 @@ export default function CreatePrButton() {
   useEffect(() => {
     const wasLoading = prevChatLoading.current;
     prevChatLoading.current = chatLoading;
-    if (hasGithubRemote || !activePath) return;
-    if (wasLoading && !chatLoading) {
-      void refreshChanges();
-      void gitMergeReadiness(activePath, targetBranch)
-        .then(setReadiness)
+    if (!activePath) return;
+    if (!(wasLoading && !chatLoading)) return;
+
+    if (hasGithubRemote) {
+      invalidatePrCache(activePath);
+      void ghPrViewCached(activePath, { force: true })
+        .then((info) => {
+          setExistingPr(info);
+          if (info) void closeLinkedIssuesIfPrOpen(info, activePath);
+        })
         .catch(() => {});
+      return;
     }
+
+    void refreshChanges();
+    void gitMergeReadiness(activePath, targetBranch)
+      .then(setReadiness)
+      .catch(() => {});
   }, [chatLoading, hasGithubRemote, activePath, targetBranch, refreshChanges]);
 
   useEffect(() => {
@@ -193,7 +211,12 @@ export default function CreatePrButton() {
     })();
   };
 
-  const createPrPrompt = prCreationPrompt(targetBranch);
+  const attachAndSendPrPrompt = () => {
+    void (async () => {
+      const linked = (await listLinkedIssues(activePath)).filter((issue) => !issue.closed);
+      attachAndSendPrompt('Create PR', prCreationPrompt(targetBranch, linked));
+    })();
+  };
 
   // --- GitHub remote: PR flow ---
   if (hasGithubRemote) {
@@ -212,7 +235,7 @@ export default function CreatePrButton() {
           ) : (
             <button
               className="create-pr-main"
-              onClick={() => attachAndSendPrompt('Create PR', createPrPrompt)}
+              onClick={() => void attachAndSendPrPrompt()}
               title={`Create PR into ${targetBranch}`}
             >
               Create PR
@@ -234,7 +257,7 @@ export default function CreatePrButton() {
                 onClick={(e) => {
                   e.stopPropagation();
                   setOpen(false);
-                  attachAndSendPrompt('Create PR', createPrPrompt);
+                  attachAndSendPrPrompt();
                 }}
               >
                 Create new PR

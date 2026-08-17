@@ -32,7 +32,9 @@ import {
   composeAgentPrompt,
   makeTranscriptAttachment,
   materializeAttachments,
+  resolveIssueAttachment,
 } from '../lib/attachments';
+import { linkWorktreeIssue } from '../lib/linkedIssues';
 import { abandonQuestions } from '../lib/answerQuestions';
 import {
   chatTitleFromPrompt,
@@ -95,6 +97,16 @@ export type AttachmentKind =
   /** Transcript of an earlier chat, carried over on a harness switch. */
   | 'transcript';
 
+export type LinkedIssueRef = {
+  source: 'github' | 'linear';
+  /** GitHub issue number as a string, or Linear issue UUID. */
+  id: string;
+  /** Display id (`#42` or `KIN-28`). */
+  identifier: string;
+  title: string;
+  url: string;
+};
+
 export type Attachment = {
   id: string;
   name: string;
@@ -107,6 +119,8 @@ export type Attachment = {
   dataUrl?: string;
   /** Worktree-relative path after an image is written to disk. */
   path?: string;
+  /** Present when this chip is a linked GitHub or Linear issue. */
+  issue?: LinkedIssueRef;
 };
 
 export type Message = {
@@ -878,8 +892,20 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const preparedAttachments = hasAttachments
       ? await materializeAttachments(tab.attachments)
       : [];
+    const preparedWithIssues: Attachment[] = [];
+    for (const att of preparedAttachments) {
+      if (att.issue) {
+        preparedWithIssues.push(att);
+        continue;
+      }
+      const issue = await resolveIssueAttachment(att);
+      preparedWithIssues.push(issue ? { ...att, issue } : att);
+    }
+    for (const att of preparedWithIssues) {
+      if (att.issue) await linkWorktreeIssue(att.issue);
+    }
     const displayContent = prompt.trim();
-    const agentPrompt = composeAgentPrompt(displayContent, preparedAttachments);
+    const agentPrompt = composeAgentPrompt(displayContent, preparedWithIssues, worktree);
     if (!agentPrompt.trim()) return;
 
     // First prompt promotes the draft tab into a real chat. Until this point
@@ -925,8 +951,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
     // Persist path-only chips in the transcript (drop bulky in-memory bodies).
     const messageAttachments =
-      preparedAttachments.length > 0
-        ? preparedAttachments.map(({ id, name, size, type, kind, path, dataUrl, content }) => ({
+      preparedWithIssues.length > 0
+        ? preparedWithIssues.map(({ id, name, size, type, kind, path, dataUrl, content, issue }) => ({
             id,
             name,
             size,
@@ -937,6 +963,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             content: kind === 'prompt' ? content : undefined,
             // Keep a small preview URL for images in the chat UI.
             dataUrl: kind === 'image' ? dataUrl : undefined,
+            issue,
           }))
         : undefined;
     const userMessage: Message = {
@@ -992,7 +1019,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             transcriptAttachmentName(harnessId),
             markdown,
           );
-          promptForAgent = composeAgentPrompt(agentPrompt, [attachment]);
+          promptForAgent = composeAgentPrompt(agentPrompt, [attachment], worktree);
         } catch {
           // Fall back to the bare prompt rather than dropping the turn.
         }
@@ -1298,7 +1325,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             transcriptAttachmentName(harnessId),
             markdown,
           );
-          promptForAgent = composeAgentPrompt(agentPrompt, [attachment]);
+          promptForAgent = composeAgentPrompt(agentPrompt, [attachment], worktree);
         } catch {
           // Fall back to the bare prompt rather than dropping the turn.
         }

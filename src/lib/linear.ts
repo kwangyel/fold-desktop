@@ -73,3 +73,9 @@ export async function linearGetIssue(id: string): Promise<LinearIssue | null> {
   if (!isTauri()) return null;
   return invoke<LinearIssue | null>("linear_get_issue", { id });
 }
+
+/** Move a Linear issue to its team's completed workflow state. */
+export async function linearCloseIssue(id: string): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("linear_close_issue", { id });
+}

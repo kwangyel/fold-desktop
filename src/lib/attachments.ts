@@ -1,7 +1,8 @@
-import type { Attachment, AttachmentKind } from '../store/chatStore';
+import type { Attachment, AttachmentKind, LinkedIssueRef } from '../store/chatStore';
 import type { GhIssue } from './github';
 import type { LinearIssue } from './linear';
-import { writeBytes, writeFile } from './git';
+import { readFile, writeBytes, writeFile } from './git';
+import { absoluteFoldPath } from './plans';
 
 const ATTACHMENTS_DIR = '.fold/attachments';
 
@@ -53,6 +54,20 @@ function extForMime(mime: string): string {
 
 function attachmentPath(id: string, filename: string): string {
   return `${ATTACHMENTS_DIR}/${id}/${filename}`;
+}
+
+/**
+ * `.fold/...` is stored beside the git worktree, not inside it. Agents whose
+ * cwd is the worktree cannot read the logical path — give them the absolute
+ * sibling path instead (same pattern as plans / review comments).
+ */
+function pathForAgent(path: string, worktreePath?: string | null): string {
+  if (!worktreePath) return path;
+  const norm = path.replace(/\\/g, '/');
+  if (norm === '.fold' || norm.startsWith('.fold/')) {
+    return absoluteFoldPath(worktreePath, path);
+  }
+  return path;
 }
 
 function chipLabelFromText(text: string, fallback: string): string {
@@ -128,6 +143,7 @@ export async function makeTextAttachment(
       type: 'text/plain',
       size: text.length,
       path,
+      content: text,
     };
   } catch {
     return {
@@ -167,6 +183,9 @@ export async function makePromptAttachment(
       type: 'text/markdown',
       size: content.length,
       path,
+      // Keep the body so send inlines it. The on-disk `.fold/` copy lives
+      // outside the git worktree, so a path-only chip is unreadable to agents.
+      content,
     };
   } catch {
     return {
@@ -202,10 +221,20 @@ export function formatLinearIssueMarkdown(issue: LinearIssue): string {
 export async function makeLinearIssueAttachment(
   issue: LinearIssue,
 ): Promise<Attachment> {
-  return makePromptAttachment(
+  const attachment = await makePromptAttachment(
     issue.identifier,
     formatLinearIssueMarkdown(issue),
   );
+  return {
+    ...attachment,
+    issue: {
+      source: 'linear',
+      id: issue.id,
+      identifier: issue.identifier,
+      title: issue.title,
+      url: issue.url,
+    },
+  };
 }
 
 /** Markdown body the agent reads when a GitHub issue is attached. */
@@ -225,14 +254,86 @@ export function formatGitHubIssueMarkdown(issue: GhIssue): string {
   return lines.join("\n");
 }
 
+const GH_ISSUE_URL = /https?:\/\/github\.com\/[^/\s]+\/[^/\s]+\/issues\/(\d+)/i;
+const LINEAR_ISSUE_URL = /https?:\/\/linear\.app\/\S+\/issue\/([A-Z][A-Z0-9]+-\d+)/i;
+const GH_ISSUE_HEADING = /^#\s+#(\d+):\s*(.*)$/m;
+const LINEAR_ISSUE_HEADING = /^#\s+([A-Z][A-Z0-9]+-\d+):\s*(.*)$/m;
+
+function firstLine(text: string | undefined, fallback: string): string {
+  const line = text?.trim().split('\n')[0]?.trim();
+  return line || fallback;
+}
+
+/** Recover a GitHub/Linear issue from a chip, including older prompt files with no `issue` field. */
+export function parseIssueAttachment(
+  att: Pick<Attachment, 'name' | 'content' | 'issue'>,
+  body?: string,
+): LinkedIssueRef | null {
+  if (att.issue) return att.issue;
+
+  const text = body ?? att.content ?? '';
+  const ghUrl = GH_ISSUE_URL.exec(text);
+  if (ghUrl) {
+    const number = ghUrl[1]!;
+    const heading = GH_ISSUE_HEADING.exec(text);
+    return {
+      source: 'github',
+      id: number,
+      identifier: `#${number}`,
+      title: firstLine(heading?.[2], att.name.replace(/^#/, '') || `#${number}`),
+      url: ghUrl[0].replace(/[).,;]+$/, ''),
+    };
+  }
+
+  const linearUrl = LINEAR_ISSUE_URL.exec(text);
+  if (linearUrl) {
+    const identifier = linearUrl[1]!;
+    const heading = LINEAR_ISSUE_HEADING.exec(text);
+    return {
+      source: 'linear',
+      id: identifier,
+      identifier,
+      title: firstLine(heading?.[2], att.name || identifier),
+      url: linearUrl[0].replace(/[).,;]+$/, ''),
+    };
+  }
+
+  return null;
+}
+
+/** Like `parseIssueAttachment`, but reads the on-disk prompt when the chip only has a path. */
+export async function resolveIssueAttachment(
+  att: Attachment,
+): Promise<LinkedIssueRef | null> {
+  if (att.issue) return att.issue;
+  if (att.content?.trim()) return parseIssueAttachment(att);
+  if (!att.path) return parseIssueAttachment(att);
+  try {
+    const body = await readFile(att.path);
+    return parseIssueAttachment(att, body);
+  } catch {
+    return parseIssueAttachment(att);
+  }
+}
+
 /** Prompt chip for a GitHub issue (Conductor-style attach-from-+). */
 export async function makeGitHubIssueAttachment(
   issue: GhIssue,
 ): Promise<Attachment> {
-  return makePromptAttachment(
+  const attachment = await makePromptAttachment(
     `#${issue.number}`,
     formatGitHubIssueMarkdown(issue),
   );
+  return {
+    ...attachment,
+    issue: {
+      source: 'github',
+      id: String(issue.number),
+      identifier: `#${issue.number}`,
+      title: issue.title,
+      url: issue.url,
+    },
+  };
 }
 
 /**
@@ -255,6 +356,7 @@ export async function makeTranscriptAttachment(
       type: 'text/markdown',
       size: markdown.length,
       path,
+      content: markdown,
     };
   } catch {
     return {
@@ -313,6 +415,7 @@ export async function attachmentFromFile(file: File): Promise<Attachment> {
         type: file.type || 'text/plain',
         size: file.size,
         path,
+        content,
       };
     }
 
@@ -371,7 +474,9 @@ export async function materializeAttachments(
               : sanitizeFilename(`${att.name}.md`, 'instructions.md')
             : pastedTextFilename();
       const path = await writeTextAttachmentFile(id, filename, att.content);
-      out.push({ ...att, id, path, content: undefined });
+      // Keep `content` so composeAgentPrompt can inline text chips. `.fold/`
+      // files live outside the worktree and agents cannot read the logical path.
+      out.push({ ...att, id, path });
       continue;
     }
     out.push(att);
@@ -381,22 +486,27 @@ export async function materializeAttachments(
 
 /**
  * Build the agent prompt: user text + attachments.
- * When an attachment still has in-memory `content` (review comments), inline
- * it so the agent sees the line and the note. Otherwise point at the on-disk
- * path (Conductor-style for files/images).
+ * Text chips are inlined when we still have `content` — Fold stores `.fold/`
+ * files beside the worktree, so a logical path is not readable to the agent.
+ * Remaining path refs (images, files) are rewritten to the absolute Fold path.
  */
 export function composeAgentPrompt(
   userText: string,
   attachments: Attachment[],
+  worktreePath?: string | null,
 ): string {
   const parts: string[] = [];
   const trimmed = userText.trim();
   if (trimmed) parts.push(trimmed);
 
   for (const att of attachments) {
-    if (att.content?.trim() && att.kind !== "image" && att.kind !== "transcript") {
-      if (att.kind === "prompt") {
+    if (att.content?.trim() && att.kind !== 'image') {
+      if (att.kind === 'prompt') {
         parts.push(att.content.trim());
+      } else if (att.kind === 'transcript') {
+        parts.push(
+          `This conversation continues an earlier chat with a different agent.\n\n${att.content.trim()}`,
+        );
       } else {
         parts.push(`The user attached "${att.name}":\n\`\`\`\n${att.content}\n\`\`\``);
       }
@@ -404,22 +514,23 @@ export function composeAgentPrompt(
     }
 
     if (att.path) {
+      const visible = pathForAgent(att.path, worktreePath);
       if (att.kind === 'prompt') {
         parts.push(
-          `The user attached instructions "${att.name}". Read and follow the file at: ${att.path}`,
+          `The user attached instructions "${att.name}". Read and follow the file at: ${visible}`,
         );
       } else if (att.kind === 'image') {
         parts.push(
-          `The user attached an image "${att.name}". Read and examine the file at: ${att.path}`,
+          `The user attached an image "${att.name}". Read and examine the file at: ${visible}`,
         );
       } else if (att.kind === 'transcript') {
         parts.push(
           `This conversation continues an earlier chat with a different agent. ` +
-            `Read the transcript at: ${att.path} for context before responding.`,
+            `Read the transcript at: ${visible} for context before responding.`,
         );
       } else {
         parts.push(
-          `The user attached "${att.name}". Read the file at: ${att.path}`,
+          `The user attached "${att.name}". Read the file at: ${visible}`,
         );
       }
       continue;

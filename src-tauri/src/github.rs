@@ -529,6 +529,43 @@ pub fn gh_get_issue(repo_path: String, number: u64) -> Result<GhIssue, String> {
         .ok_or_else(|| "issue not found".to_string())
 }
 
+fn gh_issue_already_closed(stderr: &str) -> bool {
+    let lower = stderr.to_ascii_lowercase();
+    lower.contains("already closed") || lower.contains("is closed")
+}
+
+/// Close a GitHub issue in the repo at `repo_path`. Already-closed issues are
+/// treated as success so callers can retry after a PR is detected.
+#[tauri::command(async)]
+pub fn gh_close_issue(
+    repo_path: String,
+    number: u64,
+    comment: Option<String>,
+) -> Result<(), String> {
+    let mut args: Vec<String> = vec!["issue".into(), "close".into(), number.to_string()];
+    if let Some(text) = comment
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        args.push("--comment".into());
+        args.push(text.to_string());
+    }
+    let output = Command::new(gh_bin())
+        .args(&args)
+        .current_dir(&repo_path)
+        .output()
+        .map_err(|e| format!("failed to run gh issue close: {e}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if gh_issue_already_closed(&stderr) {
+        return Ok(());
+    }
+    Err(stderr.trim().to_string())
+}
+
 /// Resolve the repository's preferred merge method, preferring squash, then a
 /// merge commit, then rebase — mirroring the repo's actual GitHub settings.
 #[tauri::command(async)]
@@ -1121,4 +1158,16 @@ pub fn open_external(url: String) -> Result<(), String> {
     cmd.spawn()
         .map_err(|e| format!("failed to open browser: {e}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::gh_issue_already_closed;
+
+    #[test]
+    fn already_closed_detects_gh_stderr() {
+        assert!(gh_issue_already_closed("X already closed"));
+        assert!(gh_issue_already_closed("Issue #12 is closed"));
+        assert!(!gh_issue_already_closed("HTTP 403: Resource not accessible"));
+    }
 }

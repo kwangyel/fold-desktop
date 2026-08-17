@@ -30,6 +30,12 @@ import {
 import type { GhIssue } from '../lib/github';
 import type { LinearIssue } from '../lib/linear';
 import { startHarnessHandoff } from '../lib/chatTabs';
+import {
+  linkAndCloseIfPrExists,
+  linkedIssueFromGithub,
+  linkedIssueFromLinear,
+  unlinkWorktreeIssue,
+} from '../lib/linkedIssues';
 import EffortDial from './EffortDial';
 import GitHubIssuePicker from './GitHubIssuePicker';
 import LinearIssuePicker from './LinearIssuePicker';
@@ -227,6 +233,7 @@ export default function ChatInput({
     if (!issue) return;
     void makeLinearIssueAttachment(issue).then((attachment) => {
       addAttachment(tabId, attachment);
+      void linkAndCloseIfPrExists(linkedIssueFromLinear(issue));
     });
   };
 
@@ -240,6 +247,7 @@ export default function ChatInput({
     if (!issue) return;
     void makeGitHubIssueAttachment(issue).then((attachment) => {
       addAttachment(tabId, attachment);
+      void linkAndCloseIfPrExists(linkedIssueFromGithub(issue));
     });
   };
 
@@ -338,7 +346,13 @@ export default function ChatInput({
                 <span className="attachment-name">{att.name}</span>
                 <button
                   className="attachment-remove"
-                  onClick={() => removeAttachment(tabId, att.id)}
+                  onClick={() => {
+                    const linked = att.issue;
+                    removeAttachment(tabId, att.id);
+                    if (linked) {
+                      void unlinkWorktreeIssue(linked.source, linked.id);
+                    }
+                  }}
                   aria-label="Remove attachment"
                 >
                   ×
