@@ -1,0 +1,32 @@
+.smart-handoff-usage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.smart-handoff-usage span {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 8px;
+}
+
+.smart-handoff-usage span.hot {
+  color: var(--warn);
+  border-color: rgba(251, 191, 36, 0.45);
+  background: rgba(251, 191, 36, 0.12);
+}
+
+.smart-handoff-dialog-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dialog-hint strong {
+  color: var(--text);
+  font-weight: 600;
+}
