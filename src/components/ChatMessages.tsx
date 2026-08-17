@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   IconArrowBackUp,
   IconBrain,
@@ -21,6 +21,7 @@ import {
 } from "../lib/chatActivity";
 import { useChatStore, type Message } from "../store/chatStore";
 import AssistantMarkdown from "./AssistantMarkdown";
+import GearsSpinner from "./icons/GearsSpinner";
 import "./ChatMessages.css";
 
 interface ChatMessagesProps {
@@ -438,48 +439,79 @@ const ChatTurn = memo(
 /** Treat the view as "following" the stream while within this many px of the end. */
 const FOLLOW_THRESHOLD_PX = 80;
 
+function distanceFromBottom(el: HTMLDivElement) {
+  return el.scrollHeight - el.scrollTop - el.clientHeight;
+}
+
 export default function ChatMessages({ tabId }: ChatMessagesProps) {
   const tab = useChatStore((state) => state.tabs[tabId]);
   const containerRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   // Stop yanking the view back down once the user scrolls up to read.
   const followRef = useRef(true);
-  const scrollRafRef = useRef<number | null>(null);
+  const ignoreScrollRef = useRef(false);
+  const lastForcedUserIdRef = useRef<string | null>(null);
+  const prevTabIdRef = useRef(tabId);
 
-  const onScroll = useCallback(() => {
+  const scrollToBottom = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
-    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-    followRef.current = distance <= FOLLOW_THRESHOLD_PX;
+    ignoreScrollRef.current = true;
+    el.scrollTop = el.scrollHeight;
+    requestAnimationFrame(() => {
+      if (containerRef.current) {
+        containerRef.current.scrollTop = containerRef.current.scrollHeight;
+      }
+      requestAnimationFrame(() => {
+        ignoreScrollRef.current = false;
+      });
+    });
+  }, []);
+
+  const onScroll = useCallback(() => {
+    if (ignoreScrollRef.current) return;
+    const el = containerRef.current;
+    if (!el) return;
+    followRef.current = distanceFromBottom(el) <= FOLLOW_THRESHOLD_PX;
   }, []);
 
   const messages = tab?.messages;
   const loading = tab?.loading;
+  const lastMessage = messages?.[messages.length - 1];
+  const lastUserId =
+    lastMessage?.role === "user" ? lastMessage.id : null;
 
   useEffect(() => {
-    // Sending a prompt always brings the view back down, even if the user had
-    // scrolled up to read earlier output.
-    const last = messages?.[messages.length - 1];
-    if (last?.role === "user") followRef.current = true;
+    if (prevTabIdRef.current === tabId) return;
+    prevTabIdRef.current = tabId;
+    followRef.current = true;
+    lastForcedUserIdRef.current = null;
+    ignoreScrollRef.current = false;
+  }, [tabId]);
 
-    if (!followRef.current) return;
-    // Coalesce to one scroll write per frame: assigning scrollTop (rather than
-    // scrollIntoView) avoids a forced synchronous layout per streamed token.
-    if (scrollRafRef.current !== null) return;
-    scrollRafRef.current = requestAnimationFrame(() => {
-      scrollRafRef.current = null;
-      const el = containerRef.current;
-      if (el) el.scrollTop = el.scrollHeight;
+  const hasTab = Boolean(tab);
+
+  // Sending a prompt always jumps to the latest message, even if the user had
+  // scrolled up to read earlier output. Keep following through layout growth
+  // (markdown, spinner) while the user hasn't scrolled away.
+  useLayoutEffect(() => {
+    if (lastUserId && lastUserId !== lastForcedUserIdRef.current) {
+      lastForcedUserIdRef.current = lastUserId;
+      followRef.current = true;
+    }
+    if (followRef.current) scrollToBottom();
+  }, [lastUserId, messages, loading, scrollToBottom]);
+
+  // Markdown, images, and the spinner can grow after the message commit.
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
+    const observer = new ResizeObserver(() => {
+      if (followRef.current) scrollToBottom();
     });
-  }, [messages, loading]);
-
-  useEffect(
-    () => () => {
-      if (scrollRafRef.current !== null) {
-        cancelAnimationFrame(scrollRafRef.current);
-      }
-    },
-    [],
-  );
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [tabId, hasTab, scrollToBottom]);
 
   const turns = useMemo(() => groupTurns(messages ?? []), [messages]);
 
@@ -491,6 +523,7 @@ export default function ChatMessages({ tabId }: ChatMessagesProps) {
 
   return (
     <div className="chat-messages" ref={containerRef} onScroll={onScroll}>
+      <div className="chat-messages-inner" ref={contentRef}>
       {tab.messages.length === 0 ? (
         <div className="chat-empty">
           <p>Start a conversation</p>
@@ -523,14 +556,11 @@ export default function ChatMessages({ tabId }: ChatMessagesProps) {
       {tab.loading && (
         <div className="message assistant">
           <div className="message-content loading-bubble">
-            <p className="loading-indicator">
-              <span>●</span>
-              <span>●</span>
-              <span>●</span>
-            </p>
+            <GearsSpinner />
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

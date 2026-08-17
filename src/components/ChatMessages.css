@@ -1,11 +1,19 @@
 .chat-messages {
   display: flex;
   flex-direction: column;
+  min-height: 0;
   height: 100%;
   overflow-y: auto;
+  overflow-anchor: none;
   padding: 16px;
-  gap: 16px;
   background: var(--panel);
+}
+
+.chat-messages-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 100%;
 }
 
 .chat-empty {
@@ -89,8 +97,11 @@
   color: var(--text);
 }
 
-.message-content.loading-bubble {
-  padding: 10px 14px;
+.message.assistant .message-content.loading-bubble {
+  display: flex;
+  align-items: center;
+  padding: 4px 2px;
+  background: transparent;
 }
 
 .message-content p,
@@ -410,36 +421,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.loading-indicator {
-  margin: 0;
-  display: flex;
-  gap: 4px;
-  align-items: center;
-}
-
-.loading-indicator span {
-  animation: blink 1.4s infinite;
-}
-
-.loading-indicator span:nth-child(2) {
-  animation-delay: 0.2s;
-}
-
-.loading-indicator span:nth-child(3) {
-  animation-delay: 0.4s;
-}
-
-@keyframes blink {
-  0%,
-  60%,
-  100% {
-    opacity: 1;
-  }
-  30% {
-    opacity: 0.4;
-  }
 }
 
 .text-muted {
