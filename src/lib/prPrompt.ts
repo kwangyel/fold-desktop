@@ -1,3 +1,5 @@
+import type { LinkedIssueRef } from "../store/chatStore";
+
 /**
  * Prompt for the local-repo commit step. The agent reviews the diff, writes a
  * commit message, and commits — it must not merge into the target branch.
@@ -19,11 +21,34 @@ Follow these steps:
 If a step genuinely fails, explain what failed and ask the user for help. Otherwise, do not ask — stage and commit.`;
 }
 
-/** Prompt that tells the agent to open a PR against `targetBranch` (default main). */
-export function prCreationPrompt(targetBranch: string): string {
-  const base = targetBranch.trim() || "main";
-  return `The user requested a pull request. The target branch is origin/${base}.
+function linkedIssuesSection(issues: LinkedIssueRef[] | undefined): string {
+  const open = issues?.filter((issue) => issue.identifier.trim()) ?? [];
+  if (open.length === 0) return "";
 
+  const lines = open.map((issue) => {
+    if (issue.source === "github") {
+      return `- Closes ${issue.identifier} — ${issue.title}`;
+    }
+    return `- Completes ${issue.identifier} — ${issue.title} (${issue.url})`;
+  });
+
+  return `
+The user is working on these issues. Put the GitHub \`Closes #N\` / Linear \`Completes ID\` lines in the PR body (not only the title) so the PR stays linked:
+${lines.join("\n")}
+
+Do not run \`gh issue close\` or change Linear issue state yourself — Fold closes them once the PR exists. GitHub still needs \`Closes #N\` in the body so merge closes the issue if Fold cannot.
+`;
+}
+
+/** Prompt that tells the agent to open a PR against `targetBranch` (default main). */
+export function prCreationPrompt(
+  targetBranch: string,
+  linkedIssues?: LinkedIssueRef[],
+): string {
+  const base = targetBranch.trim() || "main";
+  const issues = linkedIssuesSection(linkedIssues);
+  return `The user requested a pull request. The target branch is origin/${base}.
+${issues}
 Create the PR yourself — do not stop to ask for confirmation. Complete every step below, then report the PR URL.
 
 Follow these steps to create the PR:

@@ -12,6 +12,7 @@ import { useChatStore } from "../store/chatStore";
 import { useProjectStore } from "../store/projectStore";
 import { useChangesStore } from "../store/changesStore";
 import { ghPrViewCached } from "../lib/github";
+import { closeLinkedIssuesIfPrOpen } from "../lib/linkedIssues";
 import { gitGithubRemote, writeFile } from "../lib/git";
 import "./CodeEditor.css";
 
@@ -159,6 +160,7 @@ function CenterPane() {
       try {
         const info = await ghPrViewCached(path);
         if (cancelled || !info) return;
+        void closeLinkedIssuesIfPrOpen(info, path);
         if (!autoOpened.current.has(path)) {
           autoOpened.current.add(path);
           openPrTab(path);

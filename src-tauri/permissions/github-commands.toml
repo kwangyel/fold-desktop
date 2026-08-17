@@ -17,6 +17,7 @@ commands.allow = [
   "gh_pr_view",
   "gh_list_issues",
   "gh_get_issue",
+  "gh_close_issue",
   "gh_pr_merge_method",
   "gh_pr_merge",
   "open_external",

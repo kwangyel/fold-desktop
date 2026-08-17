@@ -823,6 +823,148 @@ fn get_issue_blocking(app: &AppHandle, id: &str) -> Result<Option<LinearIssue>, 
     }
 }
 
+#[derive(Deserialize)]
+struct CloseIssueData {
+    issue: Option<CloseApiIssue>,
+}
+
+#[derive(Deserialize)]
+struct CloseApiIssue {
+    id: String,
+    state: Option<ApiState>,
+    team: Option<CloseApiTeam>,
+}
+
+#[derive(Deserialize)]
+struct CloseApiTeam {
+    states: Option<StateConnection>,
+}
+
+#[derive(Deserialize)]
+struct StateConnection {
+    #[serde(default)]
+    nodes: Vec<ApiWorkflowState>,
+}
+
+#[derive(Deserialize, Clone)]
+struct ApiWorkflowState {
+    id: String,
+    name: Option<String>,
+    #[serde(rename = "type")]
+    state_type: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct IssueUpdateData {
+    #[serde(rename = "issueUpdate")]
+    issue_update: IssueUpdatePayload,
+}
+
+#[derive(Deserialize)]
+struct IssueUpdatePayload {
+    success: Option<bool>,
+}
+
+const CLOSE_ISSUE_QUERY: &str = r#"
+query FoldIssueClose($id: String!) {
+  issue(id: $id) {
+    id
+    state { name type color }
+    team {
+      states(first: 50) {
+        nodes { id name type }
+      }
+    }
+  }
+}
+"#;
+
+const CLOSE_ISSUE_MUTATION: &str = r#"
+mutation FoldIssueClose($id: String!, $stateId: String!) {
+  issueUpdate(id: $id, input: { stateId: $stateId }) {
+    success
+  }
+}
+"#;
+
+fn pick_completed_state(states: &[ApiWorkflowState]) -> Option<&ApiWorkflowState> {
+    let completed: Vec<&ApiWorkflowState> = states
+        .iter()
+        .filter(|s| {
+            s.state_type
+                .as_deref()
+                .is_some_and(|t| t.eq_ignore_ascii_case("completed"))
+        })
+        .collect();
+    completed
+        .iter()
+        .copied()
+        .find(|s| {
+            let name = s.name.as_deref().unwrap_or("").to_ascii_lowercase();
+            name == "done" || name == "completed" || name == "closed"
+        })
+        .or_else(|| completed.first().copied())
+}
+
+fn write_scope_hint(error: &str) -> String {
+    let lower = error.to_ascii_lowercase();
+    if lower.contains("write")
+        || lower.contains("permission")
+        || lower.contains("forbidden")
+        || lower.contains("not authorized")
+        || lower.contains("scope")
+    {
+        return format!(
+            "{error} Reconnect Linear in Apps so Fold can close issues (write access)."
+        );
+    }
+    error.to_string()
+}
+
+fn close_issue_blocking(app: &AppHandle, id: &str) -> Result<(), String> {
+    let trimmed = id.trim();
+    if trimmed.is_empty() {
+        return Err("Linear issue id is required".to_string());
+    }
+
+    let data: CloseIssueData = graphql_authed(app, CLOSE_ISSUE_QUERY, json!({ "id": trimmed }))
+        .map_err(|e| write_scope_hint(&e))?;
+    let issue = data
+        .issue
+        .ok_or_else(|| format!("Linear issue not found: {trimmed}"))?;
+
+    let state_type = issue
+        .state
+        .as_ref()
+        .and_then(|s| s.state_type.as_deref())
+        .unwrap_or("");
+    if state_type.eq_ignore_ascii_case("completed")
+        || state_type.eq_ignore_ascii_case("canceled")
+    {
+        return Ok(());
+    }
+
+    let states: Vec<ApiWorkflowState> = issue
+        .team
+        .and_then(|t| t.states)
+        .map(|s| s.nodes)
+        .unwrap_or_default();
+    let completed = pick_completed_state(&states).ok_or_else(|| {
+        "No completed workflow state found for this Linear team".to_string()
+    })?;
+
+    let updated: IssueUpdateData = graphql_authed(
+        app,
+        CLOSE_ISSUE_MUTATION,
+        json!({ "id": issue.id, "stateId": completed.id }),
+    )
+    .map_err(|e| write_scope_hint(&e))?;
+    if updated.issue_update.success.unwrap_or(false) {
+        return Ok(());
+    }
+    Err("Linear did not confirm the issue was closed".to_string())
+}
+
 fn connect_blocking(app: &AppHandle, cancel: Arc<AtomicBool>) -> Result<LinearStatus, String> {
     let client_id = linear_client_id();
     let state = random_url_token(16)?;
@@ -832,7 +974,7 @@ fn connect_blocking(app: &AppHandle, cancel: Arc<AtomicBool>) -> Result<LinearSt
         "{AUTHORIZE_URL}?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}&code_challenge={}&code_challenge_method=S256&actor=user&prompt=consent",
         url_encode(&client_id),
         url_encode(&redirect_uri()),
-        url_encode("read"),
+        url_encode("read,write"),
         url_encode(&state),
         url_encode(&challenge),
     );
@@ -965,6 +1107,14 @@ pub async fn linear_get_issue(app: AppHandle, id: String) -> Result<Option<Linea
     .map_err(|e| format!("linear_get_issue failed: {e}"))?
 }
 
+/// Move a Linear issue to its team's completed workflow state.
+#[tauri::command]
+pub async fn linear_close_issue(app: AppHandle, id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || close_issue_blocking(&app, &id))
+        .await
+        .map_err(|e| format!("linear_close_issue failed: {e}"))?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1024,5 +1174,38 @@ mod tests {
         assert_eq!(issue.state_name.as_deref(), Some("Backlog"));
         assert_eq!(issue.team_key.as_deref(), Some("KIN"));
         assert_eq!(issue.assignee_name.as_deref(), Some("Kinley"));
+    }
+
+    fn state(id: &str, name: &str, state_type: &str) -> ApiWorkflowState {
+        ApiWorkflowState {
+            id: id.into(),
+            name: Some(name.into()),
+            state_type: Some(state_type.into()),
+        }
+    }
+
+    #[test]
+    fn pick_completed_state_prefers_done() {
+        let states = vec![
+            state("1", "In Progress", "started"),
+            state("2", "Done", "completed"),
+            state("3", "Canceled", "canceled"),
+        ];
+        assert_eq!(pick_completed_state(&states).map(|s| s.id.as_str()), Some("2"));
+    }
+
+    #[test]
+    fn pick_completed_state_falls_back_to_first_completed() {
+        let states = vec![
+            state("1", "Todo", "unstarted"),
+            state("2", "Shipped", "completed"),
+        ];
+        assert_eq!(pick_completed_state(&states).map(|s| s.id.as_str()), Some("2"));
+    }
+
+    #[test]
+    fn pick_completed_state_none_when_missing() {
+        let states = vec![state("1", "Todo", "unstarted")];
+        assert!(pick_completed_state(&states).is_none());
     }
 }

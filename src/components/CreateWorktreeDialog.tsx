@@ -14,6 +14,11 @@ import {
   makeLinearIssueAttachment,
 } from "../lib/attachments";
 import { queueNewChatAttachments, syncChatTabsForWorktree } from "../lib/chatTabs";
+import {
+  linkWorktreeIssue,
+  linkedIssueFromGithub,
+  linkedIssueFromLinear,
+} from "../lib/linkedIssues";
 import type { Attachment } from "../store/chatStore";
 import type { GhIssue } from "../lib/github";
 import type { LinearIssue } from "../lib/linear";
@@ -225,9 +230,11 @@ export default function CreateWorktreeDialog({ projectId, onClose }: Props) {
       const attachments: Attachment[] = [];
       if (githubIssue) {
         attachments.push(await makeGitHubIssueAttachment(githubIssue));
+        await linkWorktreeIssue(linkedIssueFromGithub(githubIssue));
       }
       if (linearIssue) {
         attachments.push(await makeLinearIssueAttachment(linearIssue));
+        await linkWorktreeIssue(linkedIssueFromLinear(linearIssue));
       }
       if (attachments.length > 0) {
         const path = useProjectStore.getState().activePath;

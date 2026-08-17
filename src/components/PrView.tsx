@@ -12,6 +12,7 @@ import {
   type PrInfo,
   type PrMergeMethod,
 } from "../lib/github";
+import { closeLinkedIssuesIfPrOpen } from "../lib/linkedIssues";
 import "./PrView.css";
 
 const MERGE_LABEL: Record<PrMergeMethod, string> = {
@@ -49,6 +50,12 @@ export default function PrView({ tabId }: { tabId: string }) {
     ghPrMergeMethod(worktreePath).then(setMethod).catch(() => {});
   }, [worktreePath]);
 
+  const prInfo = tab?.prInfo;
+  useEffect(() => {
+    if (!worktreePath || !prInfo) return;
+    void closeLinkedIssuesIfPrOpen(prInfo, worktreePath);
+  }, [worktreePath, prInfo]);
+
   if (!tab) return null;
 
   if (tab.prLoading) {
@@ -71,6 +78,9 @@ export default function PrView({ tabId }: { tabId: string }) {
     setMerging(true);
     setActionError(null);
     try {
+      // Close while we still have PR details. After merge, `gh pr view` on this
+      // branch often returns nothing, so this is the last reliable chance.
+      await closeLinkedIssuesIfPrOpen(info, worktreePath);
       await ghPrMerge(worktreePath, method);
       // The cached "open PR for this branch" answer is now stale.
       invalidatePrCache(worktreePath);

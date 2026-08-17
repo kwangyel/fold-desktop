@@ -39,6 +39,20 @@ export async function ghGetIssue(
   return invoke<GhIssue | null>("gh_get_issue", { repoPath, number });
 }
 
+/** Close a GitHub issue. Already-closed issues succeed so retries are safe. */
+export async function ghCloseIssue(
+  repoPath: string,
+  number: number,
+  comment?: string,
+): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("gh_close_issue", {
+    repoPath,
+    number,
+    comment: comment?.trim() || null,
+  });
+}
+
 /** Raw output chunk from the streamed `gh auth login` process. */
 export type GhOutput = Uint8Array | number[];
 

@@ -1,6 +1,6 @@
 [[permission]]
 identifier = "linear-commands"
-description = "Linear OAuth connect + GraphQL issue search"
+description = "Linear OAuth connect, issue search, and closing issues"
 commands.allow = [
   "linear_status",
   "linear_connect",
@@ -8,4 +8,5 @@ commands.allow = [
   "linear_disconnect",
   "linear_list_issues",
   "linear_get_issue",
+  "linear_close_issue",
 ]

@@ -172,7 +172,7 @@ function LinearRow() {
   const startLogin = useLinearStore((s) => s.startLogin);
   const disconnect = useLinearStore((s) => s.disconnect);
 
-  let subtitle = "Attach issues when creating worktrees and chatting";
+  let subtitle = "Attach issues and close them when a PR is opened";
   if (authenticated) {
     const parts = [userName || userEmail, organizationName].filter(Boolean);
     subtitle = parts.length > 0 ? `Connected as ${parts.join(" · ")}` : "Connected";
