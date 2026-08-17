@@ -5,6 +5,7 @@ import GlobalQuestionOverlay from "./GlobalQuestionOverlay";
 import BackgroundAskWatchers from "./BackgroundAskWatchers";
 import AgentNotifications from "./AgentNotifications";
 import ConflictRadarWatcher from "./ConflictRadarWatcher";
+import GearsSpinner from "./icons/GearsSpinner";
 import { closeActiveTab } from "../lib/closeActiveTab";
 import { newChatTab } from "../lib/chatTabs";
 import { useCenterViewStore, getLiveEditorContent, setLiveEditorContent } from "../store/centerViewStore";
@@ -288,6 +289,7 @@ function CenterPane() {
               onClick={() => setActiveTab(tab.id)}
               onDoubleClick={() => handleTabDoubleClick(tab.id, tab.type, tab.isPreview)}
             >
+              <TabProcessingSpinner tabId={tab.id} />
               <span className="tab-label">{tab.label}</span>
               {canCloseTab() && (
                 <button
@@ -327,3 +329,10 @@ function CenterPane() {
 
 /** Panel resizes re-render the parent every frame; this subtree doesn't need to. */
 export default memo(CenterPane);
+
+/** Narrow subscription so streaming tokens don't re-render the whole tab bar. */
+function TabProcessingSpinner({ tabId }: { tabId: string }) {
+  const loading = useChatStore((s) => Boolean(s.tabs[tabId]?.loading));
+  if (!loading) return null;
+  return <GearsSpinner size="sm" />;
+}
