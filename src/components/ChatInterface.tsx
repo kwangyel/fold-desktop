@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useChatStore } from '../store/chatStore';
 import ChatMessages from './ChatMessages';
 import ChatInput from './ChatInput';
+import ChatContextPanel from './ChatContextPanel';
 import './ChatInterface.css';
 
 interface ChatInterfaceProps {
@@ -19,6 +20,7 @@ export default function ChatInterface({ tabId }: ChatInterfaceProps) {
   return (
     <div className="chat-interface">
       <ChatMessages tabId={tabId} />
+      <ChatContextPanel tabId={tabId} />
       <ChatInput tabId={tabId} />
     </div>
   );
