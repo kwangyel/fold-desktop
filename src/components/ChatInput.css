@@ -50,6 +50,15 @@
   background: rgba(124, 92, 255, 0.08);
 }
 
+.attachment-badge.kind-handoff {
+  border-color: rgba(56, 189, 248, 0.65);
+  background: rgba(56, 189, 248, 0.1);
+}
+
+.attachment-badge.kind-handoff .attachment-icon {
+  color: rgb(56, 189, 248);
+}
+
 .attachment-icon {
   display: inline-flex;
   align-items: center;
@@ -304,6 +313,45 @@
 
 .plan-mode-btn:disabled,
 .fast-mode-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.smart-handoff-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 8px;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+}
+
+.smart-handoff-btn:hover:not(:disabled) {
+  color: var(--text);
+  background: rgba(56, 189, 248, 0.12);
+  border-color: rgba(56, 189, 248, 0.45);
+}
+
+.smart-handoff-btn.pending {
+  color: rgb(56, 189, 248);
+  border-color: rgba(56, 189, 248, 0.45);
+}
+
+.smart-handoff-btn.pending:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.smart-handoff-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }

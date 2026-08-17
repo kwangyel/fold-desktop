@@ -344,6 +344,7 @@ export async function makeGitHubIssueAttachment(
 export async function makeTranscriptAttachment(
   name: string,
   markdown: string,
+  sourceChatId?: string,
 ): Promise<Attachment> {
   const id = shortId();
   const filename = sanitizeFilename(`${name}.md`, 'transcript.md');
@@ -357,6 +358,7 @@ export async function makeTranscriptAttachment(
       size: markdown.length,
       path,
       content: markdown,
+      sourceChatId,
     };
   } catch {
     return {
@@ -366,6 +368,43 @@ export async function makeTranscriptAttachment(
       type: 'text/markdown',
       size: markdown.length,
       content: markdown,
+      sourceChatId,
+    };
+  }
+}
+
+/**
+ * Persist a compact Smart Handoff summary. Distinct from a verbatim transcript
+ * (`kind: 'handoff'`) so the composer can show a brain icon.
+ */
+export async function makeHandoffAttachment(
+  name: string,
+  markdown: string,
+  sourceChatId?: string,
+): Promise<Attachment> {
+  const id = shortId();
+  const filename = sanitizeFilename(`${name}.md`, 'handoff.md');
+  try {
+    const path = await writeTextAttachmentFile(id, filename, markdown);
+    return {
+      id,
+      name,
+      kind: 'handoff',
+      type: 'text/markdown',
+      size: markdown.length,
+      path,
+      content: markdown,
+      sourceChatId,
+    };
+  } catch {
+    return {
+      id,
+      name,
+      kind: 'handoff',
+      type: 'text/markdown',
+      size: markdown.length,
+      content: markdown,
+      sourceChatId,
     };
   }
 }
@@ -468,11 +507,13 @@ export async function materializeAttachments(
       const filename =
         att.kind === 'transcript'
           ? sanitizeFilename(`${att.name}.md`, 'transcript.md')
-          : att.kind === 'prompt'
-            ? att.name.toLowerCase().includes('pr')
-              ? 'PR instructions.md'
-              : sanitizeFilename(`${att.name}.md`, 'instructions.md')
-            : pastedTextFilename();
+          : att.kind === 'handoff'
+            ? sanitizeFilename(`${att.name}.md`, 'handoff.md')
+            : att.kind === 'prompt'
+              ? att.name.toLowerCase().includes('pr')
+                ? 'PR instructions.md'
+                : sanitizeFilename(`${att.name}.md`, 'instructions.md')
+              : pastedTextFilename();
       const path = await writeTextAttachmentFile(id, filename, att.content);
       // Keep `content` so composeAgentPrompt can inline text chips. `.fold/`
       // files live outside the worktree and agents cannot read the logical path.
@@ -507,6 +548,10 @@ export function composeAgentPrompt(
         parts.push(
           `This conversation continues an earlier chat with a different agent.\n\n${att.content.trim()}`,
         );
+      } else if (att.kind === 'handoff') {
+        parts.push(
+          `This conversation continues from a compact handoff summary of an earlier chat. Treat it as the source of truth for what was done, what is outstanding, and the next step.\n\n${att.content.trim()}`,
+        );
       } else {
         parts.push(`The user attached "${att.name}":\n\`\`\`\n${att.content}\n\`\`\``);
       }
@@ -527,6 +572,11 @@ export function composeAgentPrompt(
         parts.push(
           `This conversation continues an earlier chat with a different agent. ` +
             `Read the transcript at: ${visible} for context before responding.`,
+        );
+      } else if (att.kind === 'handoff') {
+        parts.push(
+          `This conversation continues from a compact handoff summary of an earlier chat. ` +
+            `Read the summary at: ${visible} for context before responding.`,
         );
       } else {
         parts.push(

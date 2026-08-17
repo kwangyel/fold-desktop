@@ -1,12 +1,14 @@
 import { useEffect, useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { IconChecklist, IconMessage } from "@tabler/icons-react";
+import { IconBrain, IconChecklist, IconMessage } from "@tabler/icons-react";
 import { useChatStore } from "../store/chatStore";
 import { useChatSessionStore } from "../store/chatSessionStore";
 import { useProjectStore } from "../store/projectStore";
 import { usePlanStore } from "../store/planStore";
+import { extractHandoffSummary, handoffChipName } from "../lib/handoff";
 import {
   attachmentPresenceKey,
+  buildHandoffAttachment,
   buildPlanAttachment,
   buildTranscriptAttachment,
   gatherWorktreeContext,
@@ -62,14 +64,30 @@ export default function ChatContextPanel({ tabId }: ChatContextPanelProps) {
     if (plansAvailable) void usePlanStore.getState().refresh();
   }, [plansAvailable]);
 
+  // Siblings whose live tab already has a Smart Handoff summary. Read via
+  // getState so this panel doesn't subscribe to every token of every chat.
+  const handoffSourceIds = useMemo(() => {
+    const ids = new Set<string>();
+    const tabs = useChatStore.getState().tabs;
+    for (const summary of summaries ?? []) {
+      if (summary.id === tabId) continue;
+      const messages = tabs[summary.id]?.messages;
+      if (messages && extractHandoffSummary(messages)) ids.add(summary.id);
+    }
+    return ids;
+    // Attachments changing (chip removed) is when we need a fresh look.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabId, summaries, tab?.attachments]);
+
   const items = useMemo<WorktreeContextItem[]>(
     () =>
       gatherWorktreeContext(
         tabId,
         summaries ?? [],
         plansAvailable ? plans : [],
+        handoffSourceIds,
       ),
-    [tabId, summaries, plansAvailable, plans],
+    [tabId, summaries, plansAvailable, plans, handoffSourceIds],
   );
 
   // Items already on the composer, keyed by identity (not id). Deriving this
@@ -79,7 +97,12 @@ export default function ChatContextPanel({ tabId }: ChatContextPanelProps) {
     () =>
       new Set(
         (tab?.attachments ?? [])
-          .filter((a) => a.kind === "transcript" || a.kind === "prompt")
+          .filter(
+            (a) =>
+              a.kind === "transcript" ||
+              a.kind === "prompt" ||
+              a.kind === "handoff",
+          )
           .map(attachmentPresenceKey),
       ),
     [tab?.attachments],
@@ -87,14 +110,21 @@ export default function ChatContextPanel({ tabId }: ChatContextPanelProps) {
 
   const handleAdd = async (item: WorktreeContextItem) => {
     const att =
-      item.kind === "transcript"
-        ? await buildTranscriptAttachment(
+      item.kind === "handoff"
+        ? await buildHandoffAttachment(
             worktreePath!,
             item.sourceChatId,
             item.harness,
-            transcriptChipName(item.sourceChatTitle),
+            handoffChipName(item.sourceChatTitle),
           )
-        : await buildPlanAttachment(item.plan);
+        : item.kind === "transcript"
+          ? await buildTranscriptAttachment(
+              worktreePath!,
+              item.sourceChatId,
+              item.harness,
+              transcriptChipName(item.sourceChatTitle),
+            )
+          : await buildPlanAttachment(item.plan);
     if (!att) return;
     useChatStore.getState().addAttachment(tabId, att);
   };
@@ -110,18 +140,26 @@ export default function ChatContextPanel({ tabId }: ChatContextPanelProps) {
       <div className="chat-context-items">
         {visible.map((item) => {
           const isPlan = item.kind === "plan";
+          const isHandoff = item.kind === "handoff";
           const label = isPlan ? item.plan.title : item.sourceChatTitle;
+          const title = isPlan
+            ? `Plan — ${label}`
+            : isHandoff
+              ? `Handoff — from ${label}`
+              : `Transcript — from ${label}`;
           return (
             <button
               key={item.key}
               type="button"
-              className="chat-context-item"
+              className={`chat-context-item${isHandoff ? " handoff" : ""}`}
               onClick={() => void handleAdd(item)}
-              title={isPlan ? `Plan — ${label}` : `Transcript — from ${label}`}
+              title={title}
             >
               <span className="chat-context-item-icon">
                 {isPlan ? (
                   <IconChecklist size={14} stroke={2} />
+                ) : isHandoff ? (
+                  <IconBrain size={14} stroke={2} />
                 ) : (
                   <IconMessage size={14} stroke={2} />
                 )}

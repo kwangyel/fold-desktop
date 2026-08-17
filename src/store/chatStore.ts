@@ -95,7 +95,9 @@ export type AttachmentKind =
   | 'image'
   | 'prompt'
   /** Transcript of an earlier chat, carried over on a harness switch. */
-  | 'transcript';
+  | 'transcript'
+  /** Compact Smart Handoff summary of an earlier chat. */
+  | 'handoff';
 
 export type LinkedIssueRef = {
   source: 'github' | 'linear';
@@ -121,6 +123,11 @@ export type Attachment = {
   path?: string;
   /** Present when this chip is a linked GitHub or Linear issue. */
   issue?: LinkedIssueRef;
+  /**
+   * Chat this transcript/handoff chip was built from, so the empty-chat
+   * context panel can match it back to its row after the user removes it.
+   */
+  sourceChatId?: string;
 };
 
 export type Message = {
@@ -952,7 +959,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     // Persist path-only chips in the transcript (drop bulky in-memory bodies).
     const messageAttachments =
       preparedWithIssues.length > 0
-        ? preparedWithIssues.map(({ id, name, size, type, kind, path, dataUrl, content, issue }) => ({
+        ? preparedWithIssues.map(({ id, name, size, type, kind, path, dataUrl, content, issue, sourceChatId }) => ({
             id,
             name,
             size,
@@ -964,6 +971,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             // Keep a small preview URL for images in the chat UI.
             dataUrl: kind === 'image' ? dataUrl : undefined,
             issue,
+            sourceChatId,
           }))
         : undefined;
     const userMessage: Message = {
