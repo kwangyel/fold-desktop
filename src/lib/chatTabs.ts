@@ -3,11 +3,16 @@ import { useChatSessionStore } from "../store/chatSessionStore";
 import { useChatStore, type Attachment, type NewTabOptions } from "../store/chatStore";
 import { useAgentStatusStore } from "../store/agentStatusStore";
 import { loadChat, newChatId } from "./chats";
-import { makeTranscriptAttachment } from "./attachments";
+import { makeHandoffAttachment, makeTranscriptAttachment } from "./attachments";
 import {
   renderTranscriptMarkdown,
   transcriptAttachmentName,
 } from "./chatTranscript";
+import {
+  extractHandoffSummary,
+  HANDOFF_PROMPT,
+  handoffChipName,
+} from "./handoff";
 import type { HarnessId } from "./harnesses";
 
 /**
@@ -60,6 +65,28 @@ function takePendingChatAttachments(worktreePath: string | null): Attachment[] {
   const pending = pendingChatAttachments.get(worktreePath) ?? [];
   pendingChatAttachments.delete(worktreePath);
   return pending;
+}
+
+/** Wait out an in-flight run (including a resume retry after sendPrompt returns). */
+function waitWhileTabLoading(tabId: string): Promise<void> {
+  if (!useChatStore.getState().tabs[tabId]?.loading) return Promise.resolve();
+  return new Promise((resolve) => {
+    const unsub = useChatStore.subscribe((state) => {
+      const tab = state.tabs[tabId];
+      if (!tab || !tab.loading) {
+        unsub();
+        resolve();
+      }
+    });
+    if (!useChatStore.getState().tabs[tabId]?.loading) {
+      unsub();
+      resolve();
+    }
+  });
+}
+
+function isCancelledHandoff(summary: string): boolean {
+  return /^Agent cancelled\.?$/i.test(summary.trim());
 }
 
 /** Open a fresh, unsaved chat in the given worktree. */
@@ -162,6 +189,7 @@ export async function startHarnessHandoff(
       await makeTranscriptAttachment(
         transcriptAttachmentName(fromHarness),
         markdown,
+        fromTabId,
       ),
     ];
   } catch {
@@ -172,6 +200,52 @@ export async function startHarnessHandoff(
   useChatStore.getState().initializeTab(id, {
     harnessId: toHarnessId,
     model: toModel,
+    attachments,
+  });
+  useCenterViewStore.getState().addChatTab({ id, worktreePath });
+}
+
+/**
+ * Ask the current session to write a compact handoff summary, then open a
+ * fresh chat with that summary attached — same new-tab behaviour as switching
+ * harness. The chip is removable; the empty-chat context panel can add it back.
+ */
+export async function startSmartHandoff(fromTabId: string): Promise<void> {
+  const source = useChatStore.getState().tabs[fromTabId];
+  if (!source || source.messages.length === 0 || source.loading) return;
+
+  const worktreePath =
+    source.worktreePath ??
+    useCenterViewStore.getState().tabs.find((t) => t.id === fromTabId)
+      ?.worktreePath ??
+    null;
+
+  await useChatStore.getState().sendPrompt(fromTabId, HANDOFF_PROMPT);
+  await waitWhileTabLoading(fromTabId);
+
+  const after = useChatStore.getState().tabs[fromTabId];
+  if (!after) return;
+  const summary = extractHandoffSummary(after.messages);
+  if (!summary || isCancelledHandoff(summary)) return;
+
+  const id = newChatId();
+  let attachments: Attachment[] | undefined;
+  try {
+    attachments = [
+      await makeHandoffAttachment(
+        handoffChipName(after.title),
+        summary,
+        fromTabId,
+      ),
+    ];
+  } catch {
+    // Without the summary the new chat still works, just without context.
+    attachments = undefined;
+  }
+
+  useChatStore.getState().initializeTab(id, {
+    harnessId: after.selectedHarness,
+    model: after.selectedModel,
     attachments,
   });
   useCenterViewStore.getState().addChatTab({ id, worktreePath });

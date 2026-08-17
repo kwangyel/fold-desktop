@@ -54,6 +54,10 @@
   background: rgba(124, 92, 255, 0.14);
 }
 
+.chat-context-item.handoff .chat-context-item-icon {
+  color: rgb(56, 189, 248);
+}
+
 .chat-context-item-icon {
   display: inline-flex;
   align-items: center;

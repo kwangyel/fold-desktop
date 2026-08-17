@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
   IconBrandGithub,
+  IconBrain,
   IconChecklist,
   IconFile,
   IconFileText,
@@ -29,7 +30,7 @@ import {
 } from '../lib/attachments';
 import type { GhIssue } from '../lib/github';
 import type { LinearIssue } from '../lib/linear';
-import { startHarnessHandoff } from '../lib/chatTabs';
+import { startHarnessHandoff, startSmartHandoff } from '../lib/chatTabs';
 import {
   linkAndCloseIfPrExists,
   linkedIssueFromGithub,
@@ -59,6 +60,7 @@ function AttachmentIcon({ kind }: { kind: Attachment['kind'] }) {
   const props = { size: 14, stroke: 2 } as const;
   if (kind === 'image') return <IconPhoto {...props} />;
   if (kind === 'prompt') return <IconSparkles {...props} />;
+  if (kind === 'handoff') return <IconBrain {...props} />;
   if (kind === 'transcript') return <IconMessage {...props} />;
   if (kind === 'text') return <IconFileText {...props} />;
   return <IconFile {...props} />;
@@ -73,6 +75,7 @@ export default function ChatInput({
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const [linearPickerOpen, setLinearPickerOpen] = useState(false);
   const [githubPickerOpen, setGithubPickerOpen] = useState(false);
+  const [handoffPending, setHandoffPending] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const attachWrapRef = useRef<HTMLDivElement>(null);
 
@@ -95,6 +98,7 @@ export default function ChatInput({
         attachments: t.attachments,
         loading: t.loading,
         worktreePath: t.worktreePath,
+        hasMessages: t.messages.length > 0,
       };
     }),
   );
@@ -321,6 +325,12 @@ export default function ChatInput({
     applyModelCapabilities(model, tab.modelEffort, tab.mode);
   };
 
+  const handleSmartHandoff = () => {
+    if (tab.loading || handoffPending || !tab.hasMessages) return;
+    setHandoffPending(true);
+    void startSmartHandoff(tabId).finally(() => setHandoffPending(false));
+  };
+
   return (
     <div className="chat-input-container">
       <div className="chat-input-box">
@@ -441,6 +451,20 @@ export default function ChatInput({
                 </svg>
               </button>
             )}
+
+            {!onSend && tab.hasMessages ? (
+              <button
+                type="button"
+                className={`smart-handoff-btn${handoffPending ? ' pending' : ''}`}
+                onClick={handleSmartHandoff}
+                disabled={tab.loading || handoffPending}
+                title="Summarize this chat and open a fresh one with the handoff attached"
+                aria-label="Smart Handoff"
+              >
+                <IconBrain size={14} stroke={2} />
+                {handoffPending ? 'Handing off…' : 'Smart Handoff'}
+              </button>
+            ) : null}
           </div>
 
           <div className="input-actions">
