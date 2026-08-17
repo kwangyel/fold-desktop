@@ -19,7 +19,7 @@ export function handoffChipName(sourceChatTitle: string): string {
   return `${sourceChatTitle} handoff`;
 }
 
-function isHandoffUserMessage(message: Message): boolean {
+export function isHandoffUserMessage(message: Message): boolean {
   if (message.role !== "user") return false;
   if (isHandoffPrompt(message.content ?? "")) return true;
   return (message.attachments ?? []).some(
