@@ -6,10 +6,12 @@ import RightPane from "./components/RightPane";
 import LoginScreen from "./components/LoginScreen";
 import ResizeHandle from "./components/ResizeHandle";
 import StatusBar from "./components/StatusBar";
+import UpdateRequiredScreen from "./components/UpdateRequiredScreen";
 import { setupAppMenu } from "./lib/appMenu";
 import { useAuthStore } from "./store/authStore";
 import { useHarnessStore } from "./store/harnessStore";
 import { useContextUsageStore } from "./store/contextUsageStore";
+import { useUpdateStore } from "./store/updateStore";
 import { usePanelSizes } from "./hooks/usePanelSizes";
 import "./App.css";
 
@@ -19,6 +21,8 @@ export default function App() {
   const authStatus = useAuthStore((s) => s.status);
   const initAuth = useAuthStore((s) => s.init);
   const refreshHarnesses = useHarnessStore((s) => s.refresh);
+  const updateStatus = useUpdateStore((s) => s.status);
+  const runUpdateCheck = useUpdateStore((s) => s.runCheck);
   const {
     sizes,
     adjustSidebarWidth,
@@ -32,6 +36,14 @@ export default function App() {
     void setupAppMenu();
     void initAuth();
   }, [initAuth]);
+
+  // Check for app updates on launch, then periodically. A compulsory update
+  // flips `updateStatus` to "mandatory" and blocks the app below.
+  useEffect(() => {
+    void runUpdateCheck();
+    const id = setInterval(() => void runUpdateCheck(), 6 * 60 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [runUpdateCheck]);
 
   // Detect already-connected harnesses on sign-in — don't wait for ModelPicker.
   useEffect(() => {
@@ -80,7 +92,9 @@ export default function App() {
           onMouseDown={handleTitlebarMouseDown}
         />
       </div>
-      {authStatus === "signedIn" ? (
+      {updateStatus === "mandatory" ? (
+        <UpdateRequiredScreen />
+      ) : authStatus === "signedIn" ? (
         <>
           <div className="workspace" ref={workspaceRef}>
             <Sidebar

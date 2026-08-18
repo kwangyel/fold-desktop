@@ -152,6 +152,15 @@ pub fn run() {
         }
     }));
 
+    // Auto-update (desktop only). The updater plugin downloads and verifies
+    // signed release bundles against the pubkey in `tauri.conf.json`; the
+    // process plugin provides `relaunch()` so the app can restart after an
+    // update is installed.
+    #[cfg(desktop)]
+    let builder = builder
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init());
+
     builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_deep_link::init())

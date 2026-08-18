@@ -60,6 +60,26 @@
   color: var(--muted);
 }
 
+.user-update-dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.user-dropdown-badge {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-radius: 999px;
+  padding: 2px 6px;
+}
+
 .user-dropdown {
   position: absolute;
   top: calc(100% - 4px);

@@ -1,0 +1,82 @@
+name: Release
+
+# Build, sign, notarize, and publish a macOS release + updater manifest when a
+# version tag is pushed. See scripts/bump-version.mjs for the bump/tag flow.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build (e.g. v0.2.0)"
+        required: true
+
+jobs:
+  release:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Rust (Apple Silicon + Intel targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Build, sign & upload (draft release)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          # Updater signing (minisign) — proves update integrity; verified in
+          # the app against `plugins.updater.pubkey` in tauri.conf.json.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS code signing + notarization (Gatekeeper).
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+          releaseName: "Fold __VERSION__"
+          releaseDraft: true
+          prerelease: false
+          # Universal binary → the updater manifest covers both Mac archs.
+          args: --target universal-apple-darwin
+
+      # tauri-action generates a standard latest.json; add our custom
+      # `minimumSupported` policy field (the compulsory-update lever).
+      - name: Inject minimumSupported into latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}"
+          MIN="$(tr -d '[:space:]' < .github/minimum-supported-version.txt)"
+          gh release download "$TAG" --pattern latest.json --output latest.json --clobber
+          jq --arg min "$MIN" '. + { minimumSupported: $min }' latest.json > latest.patched.json
+          gh release upload "$TAG" latest.patched.json#latest.json --clobber
+          echo "minimumSupported set to $MIN"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}"
+          gh release edit "$TAG" --draft=false
