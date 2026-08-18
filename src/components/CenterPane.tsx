@@ -7,6 +7,7 @@ import BackgroundAskWatchers from "./BackgroundAskWatchers";
 import AgentNotifications from "./AgentNotifications";
 import ConflictRadarWatcher from "./ConflictRadarWatcher";
 import HandoffPromptWatcher from "./HandoffPromptWatcher";
+import UpdatePromptWatcher from "./UpdatePromptWatcher";
 import GearsSpinner from "./icons/GearsSpinner";
 import { closeActiveTab } from "../lib/closeActiveTab";
 import { newChatTab } from "../lib/chatTabs";
@@ -328,6 +329,7 @@ function CenterPane() {
         <AgentNotifications />
         <ConflictRadarWatcher />
         <HandoffPromptWatcher />
+        <UpdatePromptWatcher />
       </div>
     </section>
   );

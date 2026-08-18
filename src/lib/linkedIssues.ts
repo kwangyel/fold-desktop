@@ -155,7 +155,7 @@ export async function listLinkedIssues(
   return loadLinkedIssuesOrRecover(worktreePath);
 }
 
-function closeComment(issue: LinkedIssue, pr: PrInfo): string {
+function closeComment(_issue: LinkedIssue, pr: PrInfo): string {
   return `Closed by Fold when PR #${pr.number} was opened: ${pr.url}`;
 }
 

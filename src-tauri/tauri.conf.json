@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Fold",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "identifier": "com.fold.dev",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -32,12 +32,21 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["com.fold.dev"]
+        "schemes": [
+          "com.fold.dev"
+        ]
       }
+    },
+    "updater": {
+      "endpoints": [
+        "https://github.com/kwangyel/fold-desktop/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRDMjJGQkYzNTI1NTlCRjgKUldUNG0xVlM4L3NpVEE0Z0w5Ym5TbDZFSGJ5b2t0dUxBd3RRKzVWaDFkdTdoN3N3R1V6WDd0K0MK"
     }
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
       "icons/32x32.png",

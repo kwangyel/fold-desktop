@@ -1,15 +1,19 @@
 import { useEffect, useState } from "react";
-import { IconChevronDown, IconLogout } from "@tabler/icons-react";
+import { IconChevronDown, IconLogout, IconSettings } from "@tabler/icons-react";
 import { fetch } from "@tauri-apps/plugin-http";
 import { resolveUserAvatarUrl } from "../lib/auth";
 import { isTauri } from "../lib/git";
 import { useAuthStore } from "../store/authStore";
+import { useUpdateStore } from "../store/updateStore";
+import SettingsDialog from "./SettingsDialog";
 import "./UserMenu.css";
 
 export default function UserMenu() {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
+  const updateStatus = useUpdateStore((s) => s.status);
   const [open, setOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [imgError, setImgError] = useState(false);
   const [avatarSrc, setAvatarSrc] = useState<string | null>(null);
 
@@ -66,6 +70,8 @@ export default function UserMenu() {
 
   const name = user.githubUsername || user.email || "Account";
   const initial = name.charAt(0).toUpperCase();
+  const updateAvailable =
+    updateStatus === "optional" || updateStatus === "mandatory";
 
   return (
     <div className="user-menu">
@@ -86,11 +92,26 @@ export default function UserMenu() {
           )}
         </span>
         <span className="user-name">{name}</span>
+        {updateAvailable && <span className="user-update-dot" aria-hidden />}
         <IconChevronDown size={14} className="user-caret" stroke={2} />
       </button>
 
       {open && (
         <div className="user-dropdown" onClick={(e) => e.stopPropagation()}>
+          <button
+            className="user-dropdown-item"
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              setSettingsOpen(true);
+            }}
+          >
+            <IconSettings size={14} stroke={1.75} />
+            Settings
+            {updateAvailable && (
+              <span className="user-dropdown-badge">Update</span>
+            )}
+          </button>
           <button
             className="user-dropdown-item danger"
             type="button"
@@ -103,6 +124,10 @@ export default function UserMenu() {
             Sign out
           </button>
         </div>
+      )}
+
+      {settingsOpen && (
+        <SettingsDialog onClose={() => setSettingsOpen(false)} />
       )}
     </div>
   );
