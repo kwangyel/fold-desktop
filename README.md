@@ -154,7 +154,6 @@ npm run tauri:dev
 
 | Script | What it does |
 | --- | --- |
-| `npm run dev` | Vite frontend only |
 | `npm run tauri:dev` | Desktop app (Tauri, no file watch) |
 | `npm run build` | Typecheck + production frontend bundle |
 
