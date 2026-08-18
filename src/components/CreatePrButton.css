@@ -4,8 +4,6 @@
   align-items: center;
   padding: 0 8px;
   flex-shrink: 0;
-  /* Keep the button visible while tabs scroll in .tabbar-tabs. */
-  border-left: 1px solid var(--border);
 }
 
 .create-pr-split {

@@ -84,7 +84,7 @@ function onWorkspaceSwitch() {
   void useReviewCommentsStore.getState().refresh();
 }
 
-/** Chat lists for every live worktree, so the sidebar can show counts. */
+/** Chat lists for every live worktree, so the chats menu can show them. */
 function refreshChatIndex(projects: Project[]) {
   const paths = projects.flatMap((p) =>
     p.worktrees.filter((w) => !w.archived).map((w) => w.path),

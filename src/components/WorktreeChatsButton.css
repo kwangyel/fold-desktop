@@ -1,0 +1,99 @@
+.worktree-chats-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 0 4px 0 8px;
+  flex-shrink: 0;
+}
+
+.worktree-chats-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.worktree-chats-btn:hover,
+.worktree-chats-btn.open {
+  color: var(--text);
+  background: var(--panel-2);
+}
+
+.worktree-chats-dropdown {
+  position: fixed;
+  z-index: 1000;
+  min-width: 240px;
+  max-width: 320px;
+  max-height: min(360px, calc(100vh - 80px));
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  padding: 4px;
+}
+
+.worktree-chats-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.worktree-chats-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  color: var(--text);
+  min-width: 0;
+}
+
+.worktree-chats-row:hover {
+  background: var(--panel-2);
+}
+
+.worktree-chats-row.active {
+  background: rgba(124, 92, 255, 0.16);
+}
+
+.worktree-chats-icon {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.worktree-chats-title {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+}
+
+.worktree-chats-rename {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 1px 4px;
+  outline: none;
+}
+
+.worktree-chats-empty {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 10px 12px;
+}

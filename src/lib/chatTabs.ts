@@ -112,8 +112,8 @@ let latestSyncTarget: string | null = null;
  * Make the open chat tabs match the active worktree.
  *
  * Called on every workspace switch: foreign tabs are dropped by
- * `closeWorkspaceTabs`, and if that leaves the worktree with nothing open we
- * reopen its most recent chat (or start a draft when it has none).
+ * `closeWorkspaceTabs`, then the worktree's most recent chat is opened
+ * (or a draft is started when it has none).
  */
 export async function syncChatTabsForWorktree(
   worktreePath: string | null,
@@ -145,18 +145,24 @@ export async function syncChatTabsForWorktree(
   // one owns the tabs.
   if (latestSyncTarget !== worktreePath) return;
 
-  const hasChat = useCenterViewStore
-    .getState()
-    .tabs.some((t) => t.type === "chat" && t.worktreePath === worktreePath);
-  if (hasChat) return;
-
   const latest = useChatSessionStore.getState().latest(worktreePath);
   if (latest) {
     await openChatTab(latest.id, worktreePath, latest.title);
-    if (latestSyncTarget !== worktreePath) return;
-  } else {
-    newChatTab(worktreePath);
+    return;
   }
+
+  const hasChat = useCenterViewStore
+    .getState()
+    .tabs.some((t) => t.type === "chat" && t.worktreePath === worktreePath);
+  if (!hasChat) newChatTab(worktreePath);
+}
+
+/** Open (or focus) the most recently updated chat for a worktree. */
+export async function openLatestChat(worktreePath: string): Promise<void> {
+  await useChatSessionStore.getState().refresh(worktreePath);
+  const latest = useChatSessionStore.getState().latest(worktreePath);
+  if (!latest) return;
+  await openChatTab(latest.id, worktreePath, latest.title);
 }
 
 /**
