@@ -14,7 +14,7 @@
   Run Claude Code, Codex, Cursor, and OpenCode side-by-side — each in its own git worktree, reviewed in one place.
 </p>
 
-<h3 align="center"><a href="https://fold.optulus.com"><ins>fold.optulus.com</ins></a> · <a href="https://github.com/kwangyel/fold-desktop/releases/latest"><ins>Download Fold</ins></a></h3>
+<h3 align="center"><a href="https://fold.optulus.com"><ins>fold.optulus.com</ins></a> · <a href="https://github.com/kwangyel/fold-desktop/releases/latest/download/Fold.dmg"><ins>Download Fold</ins></a></h3>
 
 <p align="center">
   <a href="https://fold.optulus.com"><img src="src-tauri/icons/icon.png" alt="Fold by Optulus — multi-agent coding workspaces for GitHub" width="180" /></a>
@@ -138,8 +138,8 @@ Connect the harnesses you already use — Fold talks to their CLIs (and Cursor C
 
 ### Desktop — macOS
 
-- **[Download from fold.optulus.com](https://fold.optulus.com)**
-- Or grab a build from **[GitHub Releases](https://github.com/kwangyel/fold-desktop/releases/latest)** (`.dmg`)
+- **[Download the macOS `.dmg`](https://github.com/kwangyel/fold-desktop/releases/latest/download/Fold.dmg)**
+- Website: **[fold.optulus.com](https://fold.optulus.com)**
 
 Sign in with GitHub, connect a harness, then create or clone a project.
 
