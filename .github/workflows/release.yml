@@ -73,6 +73,23 @@ jobs:
           gh release upload "$TAG" latest.patched.json#latest.json --clobber
           echo "minimumSupported set to $MIN"
 
+      # Versioned DMG names (Fold_1.0.0_x64.dmg) break /latest/download/… on the
+      # next release. Re-upload a stable Fold.dmg so the website can always use
+      # https://github.com/kwangyel/fold-desktop/releases/latest/download/Fold.dmg
+      - name: Upload stable Fold.dmg alias
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}"
+          mkdir -p /tmp/fold-dmg
+          gh release download "$TAG" --pattern "Fold_*.dmg" --dir /tmp/fold-dmg --clobber
+          SRC="$(find /tmp/fold-dmg -name 'Fold_*.dmg' -print | head -n 1)"
+          test -n "$SRC"
+          cp "$SRC" /tmp/fold-dmg/Fold.dmg
+          gh release upload "$TAG" /tmp/fold-dmg/Fold.dmg --clobber
+          echo "Uploaded Fold.dmg from $(basename "$SRC")"
+
       - name: Publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
