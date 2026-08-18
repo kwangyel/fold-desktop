@@ -1,6 +1,7 @@
 import { memo, lazy, Suspense, useEffect, useRef, useState } from "react";
 import ChatInterface from "./ChatInterface";
 import CreatePrButton from "./CreatePrButton";
+import WorktreeChatsButton from "./WorktreeChatsButton";
 import GlobalQuestionOverlay from "./GlobalQuestionOverlay";
 import BackgroundAskWatchers from "./BackgroundAskWatchers";
 import AgentNotifications from "./AgentNotifications";
@@ -315,7 +316,10 @@ function CenterPane() {
             +
           </div>
         </div>
-        <CreatePrButton />
+        <div className="tabbar-actions">
+          <WorktreeChatsButton />
+          <CreatePrButton />
+        </div>
       </div>
       <div className="center-content">
         {renderTabContent()}

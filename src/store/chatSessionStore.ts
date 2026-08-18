@@ -7,7 +7,7 @@ import {
 } from "../lib/chats";
 
 /**
- * Sidebar-facing index of persisted chats, keyed by worktree path.
+ * UI-facing index of persisted chats, keyed by worktree path.
  *
  * Chats live in per-worktree SQLite databases, so this store holds one list per
  * worktree rather than one global list. Only chats that have received at least

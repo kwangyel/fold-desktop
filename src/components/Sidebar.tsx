@@ -9,17 +9,11 @@ import {
   IconGitPullRequest,
   IconPlug,
   IconRobot,
-  IconChevronRight,
-  IconMessage,
-  IconPencil,
   IconTerminal2,
 } from "@tabler/icons-react";
-import { confirm } from "@tauri-apps/plugin-dialog";
 import { useProjectStore } from "../store/projectStore";
 import { useCenterViewStore } from "../store/centerViewStore";
-import { useChatSessionStore } from "../store/chatSessionStore";
-import { deleteChatEverywhere, openChatTab } from "../lib/chatTabs";
-import { isTauri } from "../lib/git";
+import { openLatestChat } from "../lib/chatTabs";
 import { worktreeNeedsArchiveRescue } from "../lib/projects";
 import ProjectDialog from "./ProjectDialog";
 import CreateWorktreeDialog from "./CreateWorktreeDialog";
@@ -29,7 +23,7 @@ import SetupScriptDialog from "./SetupScriptDialog";
 import UserMenu from "./UserMenu";
 import ProjectGithubAvatar from "./ProjectGithubAvatar";
 import ResizeHandle from "./ResizeHandle";
-import { ChatStatusDot, WorktreeStatusDot } from "./AgentStatusDot";
+import { WorktreeStatusDot } from "./AgentStatusDot";
 import ConflictChip from "./ConflictChip";
 import {
   selectTargetBranch,
@@ -49,149 +43,7 @@ type ContextMenu =
       archived: boolean;
       x: number;
       y: number;
-    }
-  | {
-      kind: "chat";
-      worktreePath: string;
-      chatId: string;
-      title: string;
-      x: number;
-      y: number;
     };
-
-/**
- * Saved chats for one worktree, collapsed by default.
- *
- * The list itself is loaded eagerly with the project (see
- * `projectStore.refreshChatIndex`) so the count is available without
- * expanding; only chats that have actually been sent a prompt appear here.
- */
-function WorktreeChats({
-  projectId,
-  worktreeId,
-  worktreePath,
-  onOpenMenu,
-  renamingChatId,
-  onRenameDone,
-}: {
-  projectId: string;
-  worktreeId: string;
-  worktreePath: string;
-  onOpenMenu: (menu: ContextMenu) => void;
-  /** Chat currently being retitled inline, if it belongs to this worktree. */
-  renamingChatId: string | null;
-  onRenameDone: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const chats = useChatSessionStore((s) => s.byWorktree[worktreePath]);
-  const activeTabId = useCenterViewStore((s) => s.activeTabId);
-  const selectWorktree = useProjectStore((s) => s.selectWorktree);
-
-  const count = chats?.length ?? 0;
-  // Keep the section visible while a rename is in flight even if it collapsed.
-  const isRenamingHere = Boolean(
-    renamingChatId && chats?.some((c) => c.id === renamingChatId),
-  );
-  useEffect(() => {
-    if (isRenamingHere) setOpen(true);
-  }, [isRenamingHere]);
-
-  if (count === 0 && !open) return null;
-
-  return (
-    <div className="chats-group">
-      <button
-        type="button"
-        className="chats-toggle"
-        aria-expanded={open}
-        onClick={(e) => {
-          e.stopPropagation();
-          setOpen((v) => !v);
-          // Pick up chats written since the project was loaded.
-          void useChatSessionStore.getState().refresh(worktreePath);
-        }}
-      >
-        <span className={`chats-chevron ${open ? "open" : ""}`}>
-          <IconChevronRight size={12} stroke={2} />
-        </span>
-        Chats
-        <span className="chats-count">{count}</span>
-      </button>
-
-      {open &&
-        (count === 0 ? (
-          <div className="chat-list-empty">No saved chats yet.</div>
-        ) : (
-          <div className="chat-list">
-            {chats?.map((chat) => (
-              <div
-                key={chat.id}
-                className={`chat-row ${activeTabId === chat.id ? "active" : ""}`}
-                title={chat.title}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void (async () => {
-                    // Opening a chat implies working in its worktree.
-                    await selectWorktree(projectId, worktreeId);
-                    await openChatTab(chat.id, worktreePath, chat.title);
-                  })();
-                }}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  onOpenMenu({
-                    kind: "chat",
-                    worktreePath,
-                    chatId: chat.id,
-                    title: chat.title,
-                    x: e.clientX,
-                    y: e.clientY,
-                  });
-                }}
-              >
-                <IconMessage size={12} stroke={1.75} className="chat-icon" />
-                {renamingChatId === chat.id ? (
-                  <input
-                    className="chat-rename-input"
-                    defaultValue={chat.title}
-                    autoFocus
-                    onClick={(e) => e.stopPropagation()}
-                    onBlur={onRenameDone}
-                    onKeyDown={(e) => {
-                      if (e.key === "Escape") {
-                        onRenameDone();
-                        return;
-                      }
-                      if (e.key !== "Enter") return;
-                      const next = e.currentTarget.value.trim();
-                      if (next && next !== chat.title) {
-                        void useChatSessionStore
-                          .getState()
-                          .rename(worktreePath, chat.id, next);
-                        useCenterViewStore.getState().renameTab(chat.id, next);
-                      }
-                      onRenameDone();
-                    }}
-                  />
-                ) : (
-                  <span className="chat-title">{chat.title}</span>
-                )}
-                <ChatStatusDot chatId={chat.id} />
-              </div>
-            ))}
-          </div>
-        ))}
-    </div>
-  );
-}
-
-/** Native confirm dialog in Tauri, browser confirm otherwise. */
-async function confirmDelete(message: string, title: string): Promise<boolean> {
-  if (isTauri()) {
-    return confirm(message, { title, kind: "warning" });
-  }
-  return window.confirm(message);
-}
 
 type Props = {
   width?: number;
@@ -222,7 +74,6 @@ export default function Sidebar({ width, topRatio = 0.38, onSplitDrag }: Props) 
     name: string;
   } | null>(null);
   const [menu, setMenu] = useState<ContextMenu | null>(null);
-  const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
 
   useEffect(() => {
     load();
@@ -343,48 +194,51 @@ export default function Sidebar({ width, topRatio = 0.38, onSplitDrag }: Props) 
                     {activeWorktrees.map((wt) => {
                       const isActive = isActiveProject && activeWtId === wt.id;
                       return (
-                        <div key={wt.id}>
-                          <div
-                            className={`worktree-row ${isActive ? "active" : ""}`}
-                            onClick={() => void selectWorktree(p.id, wt.id)}
-                            onContextMenu={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              setMenu({
-                                kind: "worktree",
-                                projectId: p.id,
-                                worktreeId: wt.id,
-                                name: wt.name,
-                                archived: false,
-                                x: e.clientX,
-                                y: e.clientY,
-                              });
-                            }}
-                            title={wt.path}
-                          >
-                            <IconGitBranch
-                              size={13}
-                              stroke={1.75}
-                              className="worktree-icon"
-                            />
-                            <div className="meta">
-                              <div className="name">{wt.name}</div>
-                              <div className="sub">{wt.branch}</div>
-                            </div>
-                            <ConflictChip
-                              worktreeId={wt.id}
-                              targetBranch={projectTarget}
-                            />
-                            <WorktreeStatusDot worktreePath={wt.path} />
-                          </div>
-                          <WorktreeChats
-                            projectId={p.id}
-                            worktreeId={wt.id}
-                            worktreePath={wt.path}
-                            onOpenMenu={setMenu}
-                            renamingChatId={renamingChatId}
-                            onRenameDone={() => setRenamingChatId(null)}
+                        <div
+                          key={wt.id}
+                          className={`worktree-row ${isActive ? "active" : ""}`}
+                          onClick={() => {
+                            void (async () => {
+                              const alreadyActive = isActive;
+                              try {
+                                await selectWorktree(p.id, wt.id);
+                              } catch {
+                                return;
+                              }
+                              // Switching already opens the latest chat; a
+                              // re-click on the active row should too.
+                              if (alreadyActive) await openLatestChat(wt.path);
+                            })();
+                          }}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setMenu({
+                              kind: "worktree",
+                              projectId: p.id,
+                              worktreeId: wt.id,
+                              name: wt.name,
+                              archived: false,
+                              x: e.clientX,
+                              y: e.clientY,
+                            });
+                          }}
+                          title={wt.path}
+                        >
+                          <IconGitBranch
+                            size={13}
+                            stroke={1.75}
+                            className="worktree-icon"
                           />
+                          <div className="meta">
+                            <div className="name">{wt.name}</div>
+                            <div className="sub">{wt.branch}</div>
+                          </div>
+                          <ConflictChip
+                            worktreeId={wt.id}
+                            targetBranch={projectTarget}
+                          />
+                          <WorktreeStatusDot worktreePath={wt.path} />
                         </div>
                       );
                     })}
@@ -425,36 +279,6 @@ export default function Sidebar({ width, topRatio = 0.38, onSplitDrag }: Props) 
               >
                 <IconTrash size={14} stroke={1.75} />
                 Remove from list
-              </button>
-            </>
-          ) : menu.kind === "chat" ? (
-            <>
-              <button
-                className="context-menu-item"
-                onClick={() => {
-                  setRenamingChatId(menu.chatId);
-                  setMenu(null);
-                }}
-              >
-                <IconPencil size={14} stroke={1.75} />
-                Rename chat
-              </button>
-              <button
-                className="context-menu-item danger"
-                onClick={() => {
-                  const { worktreePath, chatId, title } = menu;
-                  setMenu(null);
-                  void (async () => {
-                    const ok = await confirmDelete(
-                      `Delete chat "${title}"? Its transcript cannot be recovered.`,
-                      "Delete chat",
-                    );
-                    if (ok) await deleteChatEverywhere(worktreePath, chatId);
-                  })();
-                }}
-              >
-                <IconTrash size={14} stroke={1.75} />
-                Delete chat
               </button>
             </>
           ) : (

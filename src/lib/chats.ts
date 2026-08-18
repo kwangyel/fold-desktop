@@ -9,11 +9,11 @@ import type { HarnessId } from "./harnesses";
  * removing the worktree drops its chats along with its plans and asks.
  *
  * Every call passes the worktree explicitly — unlike `readFile` / `writeFile`,
- * which resolve against the active project — so the sidebar can list chats for
+ * which resolve against the active project — so chats can be listed for
  * worktrees that are not currently open.
  */
 
-/** Row backing one entry in the sidebar's per-worktree chat list. */
+/** Row backing one entry in a worktree's persisted chat list. */
 export type ChatSummary = {
   id: string;
   title: string;
@@ -67,7 +67,7 @@ export function newChatId(): string {
   return `chat-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
-/** First few words of the opening prompt, used as the sidebar label. */
+/** First few words of the opening prompt, used as the chat title. */
 export function chatTitleFromPrompt(prompt: string, fallback = "New chat"): string {
   const words = prompt.trim().replace(/\s+/g, " ").split(" ").slice(0, 10).join(" ");
   if (!words) return fallback;
