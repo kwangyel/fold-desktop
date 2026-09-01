@@ -13,7 +13,7 @@ on:
         required: true
 
 jobs:
-  release:
+  release-macos:
     runs-on: macos-latest
     permissions:
       contents: write
@@ -90,6 +90,88 @@ jobs:
           gh release upload "$TAG" /tmp/fold-dmg/Fold.dmg --clobber
           echo "Uploaded Fold.dmg from $(basename "$SRC")"
 
+  # Linux build: produces a portable AppImage attached to the same draft release.
+  # Download-only — deliberately does NOT touch latest.json (the macOS updater
+  # manifest), so `includeUpdaterJson: false` below.
+  release-linux:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # Tauri + AppImage system dependencies (webkit2gtk, appindicator, patchelf…).
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Build & upload AppImage (draft release)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+          releaseName: "Fold __VERSION__"
+          releaseDraft: true
+          prerelease: false
+          # Only build the AppImage; skip .deb/.rpm.
+          args: --bundles appimage
+          # Do not upload/overwrite latest.json — Linux is download-only and the
+          # macOS updater manifest must stay intact.
+          includeUpdaterJson: false
+
+      # Versioned AppImage names (Fold_1.0.0_amd64.AppImage) break /latest/download/…
+      # on the next release. Re-upload a stable Fold.AppImage so the website/README can
+      # always use
+      # https://github.com/kwangyel/fold-desktop/releases/latest/download/Fold.AppImage
+      - name: Upload stable Fold.AppImage alias
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}"
+          mkdir -p /tmp/fold-appimage
+          gh release download "$TAG" --pattern "*.AppImage" --dir /tmp/fold-appimage --clobber
+          SRC="$(find /tmp/fold-appimage -name '*.AppImage' -print | head -n 1)"
+          test -n "$SRC"
+          cp "$SRC" /tmp/fold-appimage/Fold.AppImage
+          gh release upload "$TAG" /tmp/fold-appimage/Fold.AppImage --clobber
+          echo "Uploaded Fold.AppImage from $(basename "$SRC")"
+
+  # Publish only after both platform builds have attached their artifacts, so the
+  # released version always has both the DMG and the AppImage.
+  publish:
+    needs: [release-macos, release-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
       - name: Publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
