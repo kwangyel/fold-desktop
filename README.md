@@ -7,6 +7,7 @@
   <a href="https://github.com/kwangyel/fold-desktop"><img src="https://img.shields.io/github/stars/kwangyel/fold-desktop?style=flat&amp;label=%E2%98%85&amp;color=6cb6ff" alt="GitHub stars" /></a>
   <a href="https://github.com/kwangyel/fold-desktop/releases"><img src="https://img.shields.io/github/v/release/kwangyel/fold-desktop?style=flat&amp;color=6cb6ff" alt="Latest release" /></a>
   <img src="https://img.shields.io/badge/macOS-4493F8?style=flat-square" alt="Supported platform: macOS" />
+  <img src="https://img.shields.io/badge/Linux-4493F8?style=flat-square" alt="Supported platform: Linux" />
 </p>
 
 <p align="center">
@@ -140,6 +141,16 @@ Connect the harnesses you already use — Fold talks to their CLIs (and Cursor C
 
 - **[Download the macOS `.dmg`](https://github.com/kwangyel/fold-desktop/releases/latest/download/Fold.dmg)**
 - Website: **[fold.optulus.com](https://fold.optulus.com)**
+
+### Desktop — Linux
+
+- **[Download the Linux `.AppImage`](https://github.com/kwangyel/fold-desktop/releases/latest/download/Fold.AppImage)**
+- Make it executable and run:
+
+  ```sh
+  chmod +x Fold.AppImage
+  ./Fold.AppImage
+  ```
 
 Sign in with GitHub, connect a harness, then create or clone a project.
 
