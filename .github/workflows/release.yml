@@ -141,7 +141,11 @@ jobs:
           releaseDraft: true
           prerelease: false
           # Only build the AppImage; skip .deb/.rpm.
-          args: --bundles appimage
+          # createUpdaterArtifacts is true in tauri.conf.json (for macOS
+          # auto-update). On Linux that requires TAURI_SIGNING_PRIVATE_KEY even
+          # though we never publish latest.json from this job — disable it so
+          # the AppImage can upload as a plain download.
+          args: --bundles appimage --config '{"bundle":{"createUpdaterArtifacts":false}}'
           # Do not upload/overwrite latest.json — Linux is download-only and the
           # macOS updater manifest must stay intact.
           includeUpdaterJson: false
